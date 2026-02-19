@@ -1,0 +1,198 @@
+import { eq, and, isNull, sql, desc } from 'drizzle-orm'
+import { db } from '../config/db'
+import { orders, packageImages } from '../../drizzle/schema'
+import { encrypt, decrypt } from '../utils/encryption'
+import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
+import { generateTrackingNumber } from '../utils/tracking'
+import { broadcastToUser } from '../websocket/handlers'
+import { sendOrderStatusUpdateEmail } from '../notifications/email'
+import { sendOrderStatusWhatsApp } from '../notifications/whatsapp'
+import type { PaginationParams } from '../types'
+import { OrderStatus } from '../types/enums'
+
+export interface CreateOrderInput {
+  senderId: string
+  recipientName: string
+  recipientAddress: string
+  recipientPhone: string
+  recipientEmail?: string
+  origin: string
+  destination: string
+  weight?: string
+  declaredValue?: string
+  description?: string
+  createdBy: string
+}
+
+export interface UpdateOrderStatusInput {
+  status: OrderStatus
+  updatedBy: string
+  // For notification purposes
+  senderEmail?: string
+  senderPhone?: string
+}
+
+export class OrdersService {
+  async createOrder(input: CreateOrderInput) {
+    const trackingNumber = generateTrackingNumber()
+
+    const [order] = await db
+      .insert(orders)
+      .values({
+        trackingNumber,
+        senderId: input.senderId,
+        recipientName: encrypt(input.recipientName),
+        recipientAddress: encrypt(input.recipientAddress),
+        recipientPhone: encrypt(input.recipientPhone),
+        recipientEmail: input.recipientEmail ? encrypt(input.recipientEmail) : null,
+        origin: input.origin,
+        destination: input.destination,
+        weight: input.weight ?? null,
+        declaredValue: input.declaredValue ?? null,
+        description: input.description ?? null,
+        createdBy: input.createdBy,
+      })
+      .returning()
+
+    return this.decryptOrder(order)
+  }
+
+  async getOrderById(id: string) {
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
+      .limit(1)
+
+    return order ? this.decryptOrder(order) : null
+  }
+
+  async getOrderByTrackingNumber(trackingNumber: string) {
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.trackingNumber, trackingNumber), isNull(orders.deletedAt)))
+      .limit(1)
+
+    return order ? this.decryptOrder(order) : null
+  }
+
+  async updateOrderStatus(
+    id: string,
+    input: UpdateOrderStatusInput,
+  ) {
+    const [updated] = await db
+      .update(orders)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
+      .returning()
+
+    if (!updated) return null
+
+    const decrypted = this.decryptOrder(updated)
+
+    // Push real-time update to the sender
+    broadcastToUser(updated.senderId, {
+      type: 'order:status_updated',
+      data: {
+        orderId: updated.id,
+        trackingNumber: updated.trackingNumber,
+        status: updated.status,
+      },
+    })
+
+    // Send notifications (fire-and-forget — don't let notification failures block the response)
+    if (input.senderEmail) {
+      sendOrderStatusUpdateEmail({
+        to: input.senderEmail,
+        recipientName: decrypted.recipientName,
+        trackingNumber: decrypted.trackingNumber,
+        status: input.status,
+      }).catch((err) => {
+        // Log but do not crash — notification is non-critical
+        console.error('Failed to send status update email', err)
+      })
+    }
+
+    if (input.senderPhone) {
+      sendOrderStatusWhatsApp({
+        phone: input.senderPhone,
+        recipientName: decrypted.recipientName,
+        trackingNumber: decrypted.trackingNumber,
+        status: input.status,
+      }).catch((err) => {
+        console.error('Failed to send WhatsApp status update', err)
+      })
+    }
+
+    return decrypted
+  }
+
+  async listOrders(
+    params: PaginationParams & {
+      status?: OrderStatus
+      senderId?: string
+    },
+  ) {
+    const offset = getPaginationOffset(params.page, params.limit)
+
+    const conditions = [
+      isNull(orders.deletedAt),
+      params.status ? eq(orders.status, params.status) : undefined,
+      params.senderId ? eq(orders.senderId, params.senderId) : undefined,
+    ].filter(Boolean)
+
+    const baseWhere = and(...(conditions as NonNullable<(typeof conditions)[0]>[]))
+
+    const [data, countResult] = await Promise.all([
+      db
+        .select()
+        .from(orders)
+        .where(baseWhere)
+        .orderBy(desc(orders.createdAt))
+        .limit(params.limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(orders)
+        .where(baseWhere),
+    ])
+
+    const total = countResult[0]?.count ?? 0
+    return buildPaginatedResult(
+      data.map((o) => this.decryptOrder(o)),
+      total,
+      params,
+    )
+  }
+
+  async softDeleteOrder(id: string) {
+    const [deleted] = await db
+      .update(orders)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
+      .returning({ id: orders.id })
+
+    return deleted ?? null
+  }
+
+  async getOrderImages(orderId: string) {
+    return db
+      .select()
+      .from(packageImages)
+      .where(eq(packageImages.orderId, orderId))
+      .orderBy(packageImages.createdAt)
+  }
+
+  private decryptOrder(order: typeof orders.$inferSelect) {
+    return {
+      ...order,
+      recipientName: decrypt(order.recipientName),
+      recipientAddress: decrypt(order.recipientAddress),
+      recipientPhone: decrypt(order.recipientPhone),
+      recipientEmail: order.recipientEmail ? decrypt(order.recipientEmail) : null,
+    }
+  }
+}
+
+export const ordersService = new OrdersService()
