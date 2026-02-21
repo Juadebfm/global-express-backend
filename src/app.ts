@@ -67,8 +67,8 @@ export async function buildApp() {
   // ─── WebSocket ────────────────────────────────────────────────────────────
   await app.register(websocketPlugin)
 
-  // ─── Swagger (disabled in production) ────────────────────────────────────
-  if (env.NODE_ENV !== 'production') {
+  // ─── Swagger ──────────────────────────────────────────────────────────────
+  if (true) {
     await app.register(swagger, {
       openapi: {
         info: {

@@ -2,11 +2,11 @@
   "name": "global-express-backend",
   "version": "1.0.0",
   "description": "Shipment Order Tracking System Backend API",
-  "main": "dist/server.js",
+  "main": "dist/src/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "seed:superadmin": "tsx scripts/seed-superadmin.ts"
+    "seed:superadmin": "tsx scripts/seed-superadmin.ts",
+    "seed:data": "tsx scripts/seed-data.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",

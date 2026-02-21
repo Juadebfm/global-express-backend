@@ -82,3 +82,20 @@ export async function sendAccountAlertEmail(params: {
     text: params.message,
   })
 }
+
+export async function sendPasswordResetOtpEmail(params: {
+  to: string
+  otp: string
+}): Promise<void> {
+  await sendEmail({
+    to: params.to,
+    subject: 'Your Password Reset Code',
+    html: `
+      <h2>Password Reset Request</h2>
+      <p>Use the code below to reset your password. It expires in <strong>10 minutes</strong>.</p>
+      <h1 style="letter-spacing: 8px; font-size: 36px;">${params.otp}</h1>
+      <p>If you did not request a password reset, ignore this email.</p>
+    `,
+    text: `Your password reset code is: ${params.otp}\n\nIt expires in 10 minutes.`,
+  })
+}

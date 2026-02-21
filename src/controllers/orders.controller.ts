@@ -9,6 +9,43 @@ import { successResponse } from '../utils/response'
 import type { OrderStatus } from '../types/enums'
 import { UserRole } from '../types/enums'
 
+const STATUS_LABELS: Record<string, string> = {
+  pending: 'Pending',
+  picked_up: 'Picked Up',
+  in_transit: 'In Transit',
+  out_for_delivery: 'Out for Delivery',
+  delivered: 'Delivered',
+  failed_delivery: 'Delivery Failed',
+  returned: 'Returned to Sender',
+  cancelled: 'Cancelled',
+}
+
+function formatLastUpdate(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date
+  const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const timePart = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+  return `${datePart} · ${timePart}`
+}
+
+function buildTrackingResponse(params: {
+  trackingNumber: string
+  origin: string
+  destination: string
+  status: string
+  updatedAt: Date | string
+}) {
+  return {
+    trackingNumber: params.trackingNumber,
+    status: params.status,
+    statusLabel: STATUS_LABELS[params.status] ?? params.status,
+    origin: params.origin,
+    destination: params.destination,
+    estimatedDelivery: null,
+    lastUpdate: formatLastUpdate(params.updatedAt),
+    lastLocation: params.destination,
+  }
+}
+
 export const ordersController = {
   async createOrder(
     request: FastifyRequest<{
@@ -150,14 +187,13 @@ export const ordersController = {
     const order = await ordersService.getOrderByTrackingNumber(trackingNumber)
     if (order) {
       return reply.send(
-        successResponse({
+        successResponse(buildTrackingResponse({
           trackingNumber: order.trackingNumber,
           origin: order.origin,
           destination: order.destination,
           status: order.status,
-          createdAt: order.createdAt,
           updatedAt: order.updatedAt,
-        }),
+        })),
       )
     }
 
@@ -165,14 +201,13 @@ export const ordersController = {
     const bulkItem = await bulkOrdersService.getBulkItemByTrackingNumber(trackingNumber)
     if (bulkItem) {
       return reply.send(
-        successResponse({
+        successResponse(buildTrackingResponse({
           trackingNumber: bulkItem.trackingNumber,
           origin: bulkItem.origin,
           destination: bulkItem.destination,
           status: bulkItem.status,
-          createdAt: bulkItem.createdAt.toISOString(),
           updatedAt: bulkItem.updatedAt.toISOString(),
-        }),
+        })),
       )
     }
 
