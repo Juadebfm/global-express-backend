@@ -9,6 +9,7 @@ import { paymentsRoutes } from './payments.routes'
 import { uploadsRoutes } from './uploads.routes'
 import { reportsRoutes } from './reports.routes'
 import { webhooksRoutes } from './webhooks.routes'
+import { internalRoutes } from './internal.routes'
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
@@ -38,4 +39,5 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(uploadsRoutes, { prefix: '/api/v1/uploads' })
   await app.register(reportsRoutes, { prefix: '/api/v1/reports' })
   await app.register(webhooksRoutes, { prefix: '/webhooks' })
+  await app.register(internalRoutes, { prefix: '/api/v1/internal' })
 }

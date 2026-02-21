@@ -3,6 +3,7 @@ import { eq, and, desc, sql } from 'drizzle-orm'
 import axios from 'axios'
 import { db } from '../config/db'
 import { payments } from '../../drizzle/schema'
+import { adminNotificationsService } from './admin-notifications.service'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { env } from '../config/env'
 import type { PaginationParams } from '../types'
@@ -153,6 +154,14 @@ export class PaymentsService {
         .where(eq(payments.paystackReference, event.data.reference))
         .returning()
 
+      // Fire-and-forget: notify superadmin of successful payment
+      adminNotificationsService.notify({
+        type: 'payment_received',
+        title: 'Payment Received',
+        body: `Payment received for reference ${event.data.reference}`,
+        metadata: { paymentId: payment?.id ?? null, reference: event.data.reference },
+      })
+
       return { processed: true, paymentId: payment?.id ?? null }
     }
 
@@ -161,6 +170,14 @@ export class PaymentsService {
         .update(payments)
         .set({ status: PaymentStatus.FAILED, updatedAt: new Date() })
         .where(eq(payments.paystackReference, event.data.reference))
+
+      // Fire-and-forget: notify superadmin of failed payment
+      adminNotificationsService.notify({
+        type: 'payment_failed',
+        title: 'Payment Failed',
+        body: `Payment failed for reference ${event.data.reference}`,
+        metadata: { reference: event.data.reference },
+      })
 
       return { processed: true }
     }

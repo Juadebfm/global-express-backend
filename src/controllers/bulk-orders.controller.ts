@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { bulkOrdersService } from '../services/bulk-orders.service'
+import { broadcastToUser } from '../websocket/handlers'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import type { OrderStatus } from '../types/enums'
@@ -87,6 +88,19 @@ export const bulkOrdersController = {
       request,
       metadata: { status: request.body.status },
     })
+
+    // Push real-time update to each customer who has an item in this bulk order
+    for (const item of updated.items) {
+      broadcastToUser(item.customerId, {
+        type: 'order_status_updated',
+        data: {
+          orderId: item.id,
+          trackingNumber: item.trackingNumber,
+          status: item.status,
+          updatedAt: item.updatedAt,
+        },
+      })
+    }
 
     return reply.send(successResponse(updated))
   },

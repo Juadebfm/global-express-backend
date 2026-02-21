@@ -2,6 +2,8 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { ordersService } from '../services/orders.service'
 import { bulkOrdersService } from '../services/bulk-orders.service'
 import { usersService } from '../services/users.service'
+import { adminNotificationsService } from '../services/admin-notifications.service'
+import { broadcastToUser } from '../websocket/handlers'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import type { OrderStatus } from '../types/enums'
@@ -68,6 +70,14 @@ export const ordersController = {
       resourceType: 'order',
       resourceId: order.id,
       request,
+    })
+
+    // Fire-and-forget: notify superadmin of new order
+    adminNotificationsService.notify({
+      type: 'new_order',
+      title: 'New Order Created',
+      body: `Order ${order.trackingNumber} was created`,
+      metadata: { orderId: order.id, trackingNumber: order.trackingNumber, senderId },
     })
 
     return reply.code(201).send(successResponse(order))
@@ -201,6 +211,17 @@ export const ordersController = {
       resourceId: updated.id,
       request,
       metadata: { status: request.body.status },
+    })
+
+    // Push real-time update to the customer if they have an active WebSocket connection
+    broadcastToUser(updated.senderId, {
+      type: 'order_status_updated',
+      data: {
+        orderId: updated.id,
+        trackingNumber: updated.trackingNumber,
+        status: updated.status,
+        updatedAt: updated.updatedAt,
+      },
     })
 
     return reply.send(successResponse(updated))

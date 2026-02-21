@@ -4,7 +4,15 @@ export const userRoleEnum = pgEnum('user_role', ['superadmin', 'admin', 'staff',
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
-  clerkId: text('clerk_id').notNull().unique(),
+  // Clerk ID — present for customer accounts, null for internal staff/admin/superadmin
+  clerkId: text('clerk_id').unique(),
+
+  // ─── Internal auth (staff / admin / superadmin only — not used for Clerk accounts) ──
+  // bcrypt hash of the password; null for Clerk-managed customer accounts
+  passwordHash: text('password_hash'),
+  // HMAC-SHA256(email.toLowerCase(), ENCRYPTION_KEY) — deterministic lookup key for login
+  // Cannot query by encrypted email (random IV), so we store this hash instead
+  emailHash: text('email_hash').unique(),
 
   // ─── Identity (PII — AES-256 encrypted at rest) ───────────────────────────
   email: text('email').notNull().unique(),

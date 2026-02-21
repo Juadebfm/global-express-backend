@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import { Webhook } from 'svix'
 import { env } from '../config/env'
 import { usersService } from '../services/users.service'
@@ -53,8 +54,31 @@ export async function webhooksRoutes(fastify: FastifyInstance): Promise<void> {
     schema: {
       tags: ['Webhooks'],
       summary: 'Clerk user lifecycle webhook',
-      description:
-        'Receives `user.updated` and `user.deleted` events from Clerk to keep the local database in sync. Requires CLERK_WEBHOOK_SECRET to be configured.',
+      description: `Receives Clerk user lifecycle events and syncs the local database.
+
+**Events handled:**
+- \`user.updated\` — syncs email, name, and phone to the database
+- \`user.deleted\` — soft-deletes the user in the database
+
+All other event types are acknowledged but ignored.
+
+**Headers required by Clerk (set automatically by Clerk's delivery system):**
+- \`svix-id\`
+- \`svix-timestamp\`
+- \`svix-signature\`
+
+**Setup:**
+1. Go to Clerk Dashboard → Webhooks → Add Endpoint
+2. URL: \`https://your-domain.com/webhooks/clerk\`
+3. Subscribe to: \`user.updated\`, \`user.deleted\`
+4. Copy the Signing Secret → set as \`CLERK_WEBHOOK_SECRET\` in \`.env\`
+
+> Returns \`503\` if \`CLERK_WEBHOOK_SECRET\` is not configured.`,
+      response: {
+        200: z.object({ received: z.literal(true) }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        503: z.object({ success: z.literal(false), message: z.string() }),
+      },
     },
     handler: async (request, reply) => {
       // Fail fast if the secret isn't configured — prevents silent misconfiguration

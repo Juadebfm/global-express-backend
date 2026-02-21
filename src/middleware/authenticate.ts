@@ -1,18 +1,27 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import { createClerkClient, verifyToken } from '@clerk/backend'
+import { createClerkClient, verifyToken as verifyClerkToken } from '@clerk/backend'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
 import { encrypt, decrypt } from '../utils/encryption'
+import { internalAuthService } from '../services/internal-auth.service'
+import { adminNotificationsService } from '../services/admin-notifications.service'
 
 const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY })
 
 /**
- * Verifies the Clerk Bearer JWT and attaches the resolved DB user to `request.user`.
- * If the user exists in Clerk but not in our DB (e.g. first login), they are auto-created.
+ * Unified authentication middleware — handles two token types:
  *
+ *   1. Internal JWT  — issued by POST /api/v1/internal/auth/login
+ *                      for staff / admin / superadmin accounts.
+ *                      Identified by `type: 'internal'` claim in the payload.
+ *
+ *   2. Clerk JWT     — issued by Clerk after customer sign-in.
+ *                      All other Bearer tokens fall into this path.
+ *
+ * Attaches `request.user` identically for both paths.
  * Must be used as a preHandler on every protected route.
  */
 export async function authenticate(
@@ -30,10 +39,67 @@ export async function authenticate(
 
   const token = authHeader.slice(7)
 
+  // ─── Peek at the JWT payload without verifying — check for internal token ──
+  // We decode (not verify) to read the `type` claim so we know which path to take.
+  // Actual verification happens inside each branch.
+  let tokenType: string | undefined
+  try {
+    const parts = token.split('.')
+    if (parts.length === 3) {
+      const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+      tokenType = decoded?.type
+    }
+  } catch {
+    // malformed token — will fail in the appropriate branch below
+  }
+
+  // ─── Branch 1: Internal JWT ───────────────────────────────────────────────
+  if (tokenType === 'internal') {
+    let payload: ReturnType<typeof internalAuthService.verifyToken>
+
+    try {
+      payload = internalAuthService.verifyToken(token)
+    } catch {
+      reply.code(401).send({ success: false, message: 'Unauthorized — invalid or expired token' })
+      return
+    }
+
+    try {
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.id, payload.sub), isNull(users.deletedAt)))
+        .limit(1)
+
+      if (!user) {
+        reply.code(401).send({ success: false, message: 'Unauthorized — account not found' })
+        return
+      }
+
+      if (!user.isActive) {
+        reply.code(403).send({ success: false, message: 'Forbidden — account is inactive' })
+        return
+      }
+
+      request.user = {
+        id: user.id,
+        clerkId: null, // internal users have no Clerk account
+        role: user.role,
+        email: decrypt(user.email),
+      }
+    } catch (err) {
+      request.log.error({ err }, 'Internal auth database lookup failed')
+      reply.code(500).send({ success: false, message: 'Internal server error during authentication' })
+    }
+
+    return
+  }
+
+  // ─── Branch 2: Clerk JWT (customers) ─────────────────────────────────────
   let clerkId: string
 
   try {
-    const payload = await verifyToken(token, { secretKey: env.CLERK_SECRET_KEY })
+    const payload = await verifyClerkToken(token, { secretKey: env.CLERK_SECRET_KEY })
 
     if (!payload?.sub) {
       reply.code(401).send({ success: false, message: 'Unauthorized — invalid token payload' })
@@ -98,6 +164,14 @@ export async function authenticate(
       role: newUser.role,
       email: primaryEmail.emailAddress,
     }
+
+    // Fire-and-forget: notify superadmin of new customer signup
+    adminNotificationsService.notify({
+      type: 'new_customer',
+      title: 'New Customer Signup',
+      body: `A new customer signed up: ${primaryEmail.emailAddress}`,
+      metadata: { userId: newUser.id, email: primaryEmail.emailAddress },
+    })
   } catch (err) {
     request.log.error({ err }, 'Authentication database lookup failed')
     reply.code(500).send({ success: false, message: 'Internal server error during authentication' })

@@ -46,6 +46,13 @@ const envSchema = z.object({
   // Optional — if not set the /webhooks/clerk endpoint returns 503.
   CLERK_WEBHOOK_SECRET: z.string().optional(),
 
+  // ─── Internal JWT (staff / admin / superadmin) ───────────────────────────
+  // Secret for signing internal JWTs — must be at least 32 chars (use a 64-char hex string)
+  // Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  // Token expiry for internal sessions — e.g. "8h", "1d"
+  JWT_EXPIRES_IN: z.string().default('8h'),
+
   // ─── Security ─────────────────────────────────────────────────────────────
   // 64-char hex string = 32 bytes for AES-256
   ENCRYPTION_KEY: z
