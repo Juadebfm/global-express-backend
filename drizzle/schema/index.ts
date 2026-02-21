@@ -1,5 +1,7 @@
 export * from './users'
 export * from './orders'
+export * from './bulk-shipments'
+export * from './bulk-shipment-items'
 export * from './package-images'
 export * from './payments'
 export * from './audit-logs'

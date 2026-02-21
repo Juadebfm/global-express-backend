@@ -1,3 +1,8 @@
+export enum OrderDirection {
+  OUTBOUND = 'outbound',
+  INBOUND = 'inbound',
+}
+
 export enum UserRole {
   SUPERADMIN = 'superadmin',
   ADMIN = 'admin',

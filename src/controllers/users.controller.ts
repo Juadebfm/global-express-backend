@@ -2,7 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { usersService } from '../services/users.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
-import type { UserRole } from '../types/enums'
+import { UserRole } from '../types/enums'
 import type { PaginationParams } from '../types'
 
 export const usersController = {
@@ -19,9 +19,16 @@ export const usersController = {
   async updateMe(
     request: FastifyRequest<{
       Body: {
-        firstName?: string
-        lastName?: string
+        firstName?: string | null
+        lastName?: string | null
+        businessName?: string | null
         phone?: string | null
+        whatsappNumber?: string | null
+        addressStreet?: string | null
+        addressCity?: string | null
+        addressState?: string | null
+        addressCountry?: string | null
+        addressPostalCode?: string | null
         consentMarketing?: boolean
       }
     }>,
@@ -55,7 +62,7 @@ export const usersController = {
 
   async listUsers(
     request: FastifyRequest<{
-      Querystring: PaginationParams & { role?: string }
+      Querystring: PaginationParams & { role?: string; isActive?: boolean }
     }>,
     reply: FastifyReply,
   ) {
@@ -63,6 +70,7 @@ export const usersController = {
       page: Number(request.query.page) || 1,
       limit: Number(request.query.limit) || 20,
       role: request.query.role as UserRole | undefined,
+      isActive: request.query.isActive,
     })
 
     return reply.send(successResponse(result))
@@ -84,7 +92,19 @@ export const usersController = {
   async updateUser(
     request: FastifyRequest<{
       Params: { id: string }
-      Body: { firstName?: string; lastName?: string; phone?: string | null; isActive?: boolean }
+      Body: {
+        firstName?: string | null
+        lastName?: string | null
+        businessName?: string | null
+        phone?: string | null
+        whatsappNumber?: string | null
+        addressStreet?: string | null
+        addressCity?: string | null
+        addressState?: string | null
+        addressCountry?: string | null
+        addressPostalCode?: string | null
+        isActive?: boolean
+      }
     }>,
     reply: FastifyReply,
   ) {
@@ -112,7 +132,21 @@ export const usersController = {
     }>,
     reply: FastifyReply,
   ) {
-    const updated = await usersService.updateUserRole(request.params.id, request.body.role)
+    const requesterRole = request.user.role
+    const newRole = request.body.role
+
+    // Admins can only assign staff or user — only superadmin can assign admin/superadmin
+    if (
+      requesterRole === UserRole.ADMIN &&
+      (newRole === UserRole.ADMIN || newRole === UserRole.SUPERADMIN)
+    ) {
+      return reply.code(403).send({
+        success: false,
+        message: 'Forbidden — admins can only assign staff or user roles',
+      })
+    }
+
+    const updated = await usersService.updateUserRole(request.params.id, newRole)
 
     if (!updated) {
       return reply.code(404).send({ success: false, message: 'User not found' })

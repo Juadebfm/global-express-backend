@@ -29,15 +29,17 @@ export interface PresignedUrlResult {
 export class UploadsService {
   /**
    * Generates a presigned PUT URL so the client can upload directly to R2.
-   * Files never pass through this server.
+   * Pass either orderId (solo order) or bulkItemId (bulk shipment item).
    */
   async generatePresignedUrl(params: {
-    orderId: string
+    orderId?: string
+    bulkItemId?: string
     contentType: string
   }): Promise<PresignedUrlResult> {
-    const { orderId, contentType } = params
+    const { orderId, bulkItemId, contentType } = params
     const fileExtension = contentType.split('/')[1] ?? 'bin'
-    const r2Key = `orders/${orderId}/${randomUUID()}.${fileExtension}`
+    const folder = orderId ? `orders/${orderId}` : `bulk-items/${bulkItemId}`
+    const r2Key = `${folder}/${randomUUID()}.${fileExtension}`
     const expiresInSeconds = 300 // 5 minutes
 
     const command = new PutObjectCommand({
@@ -54,9 +56,11 @@ export class UploadsService {
 
   /**
    * Called by the client after a successful R2 upload to persist the image record.
+   * Pass either orderId or bulkItemId.
    */
   async confirmUpload(params: {
-    orderId: string
+    orderId?: string
+    bulkItemId?: string
     r2Key: string
     uploadedBy: string
   }) {
@@ -65,7 +69,8 @@ export class UploadsService {
     const [image] = await db
       .insert(packageImages)
       .values({
-        orderId: params.orderId,
+        orderId: params.orderId ?? null,
+        bulkItemId: params.bulkItemId ?? null,
         r2Key: params.r2Key,
         r2Url: publicUrl,
         uploadedBy: params.uploadedBy,
@@ -80,6 +85,14 @@ export class UploadsService {
       .select()
       .from(packageImages)
       .where(eq(packageImages.orderId, orderId))
+      .orderBy(packageImages.createdAt)
+  }
+
+  async getBulkItemImages(bulkItemId: string) {
+    return db
+      .select()
+      .from(packageImages)
+      .where(eq(packageImages.bulkItemId, bulkItemId))
       .orderBy(packageImages.createdAt)
   }
 

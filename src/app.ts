@@ -100,10 +100,14 @@ export async function buildApp() {
   }
 
   // ─── Webhook raw body capture ─────────────────────────────────────────────
-  // We need the raw body string to verify the Paystack HMAC-SHA512 signature.
-  // Hook into preParsing to capture the raw body before Fastify's JSON parser.
+  // Raw body is required for signature verification:
+  //   • Paystack HMAC-SHA512  →  /payments/webhook
+  //   • Clerk svix signature  →  /webhooks/*
   app.addHook('preParsing', async (request, _reply, payload) => {
-    if (request.url.includes('/payments/webhook')) {
+    if (
+      request.url.includes('/payments/webhook') ||
+      request.url.includes('/webhooks/')
+    ) {
       const chunks: Buffer[] = []
       for await (const chunk of payload) {
         chunks.push(chunk as Buffer)

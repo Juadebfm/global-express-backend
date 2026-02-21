@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { ordersService } from '../services/orders.service'
+import { bulkOrdersService } from '../services/bulk-orders.service'
 import { usersService } from '../services/users.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
@@ -17,6 +18,7 @@ export const ordersController = {
         recipientEmail?: string
         origin: string
         destination: string
+        orderDirection?: 'outbound' | 'inbound'
         weight?: string
         declaredValue?: string
         description?: string
@@ -24,8 +26,26 @@ export const ordersController = {
     }>,
     reply: FastifyReply,
   ) {
-    // Staff create orders on behalf of clients — default senderId to themselves if not provided
-    const senderId = request.body.senderId ?? request.user.id
+    const userRole = request.user.role as UserRole
+
+    // Customers always create for themselves — only staff+ can specify a different senderId
+    const senderId =
+      userRole === UserRole.USER
+        ? request.user.id
+        : (request.body.senderId ?? request.user.id)
+
+    // Customers must have a complete profile (name, phone, full address) before placing an order.
+    // Staff creating on behalf of a customer bypass this check.
+    if (userRole === UserRole.USER) {
+      const profile = await usersService.getUserById(request.user.id)
+      if (!profile || !usersService.isProfileComplete(profile)) {
+        return reply.code(422).send({
+          success: false,
+          message:
+            'Please complete your profile before placing an order. Required: name (or business name), phone number, and full address (street, city, state, country, postal code).',
+        })
+      }
+    }
 
     const order = await ordersService.createOrder({
       senderId,
@@ -35,6 +55,7 @@ export const ordersController = {
       recipientEmail: request.body.recipientEmail,
       origin: request.body.origin,
       destination: request.body.destination,
+      orderDirection: request.body.orderDirection,
       weight: request.body.weight,
       declaredValue: request.body.declaredValue,
       description: request.body.description,
@@ -76,6 +97,20 @@ export const ordersController = {
     return reply.send(successResponse(result))
   },
 
+  async getMyShipments(
+    request: FastifyRequest<{
+      Querystring: { page?: string; limit?: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await ordersService.getMyShipments(request.user.id, {
+      page: Number(request.query.page) || 1,
+      limit: Number(request.query.limit) || 20,
+    })
+
+    return reply.send(successResponse(result))
+  },
+
   async getOrderById(
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
@@ -99,23 +134,39 @@ export const ordersController = {
     request: FastifyRequest<{ Params: { trackingNumber: string } }>,
     reply: FastifyReply,
   ) {
-    const order = await ordersService.getOrderByTrackingNumber(request.params.trackingNumber)
+    const { trackingNumber } = request.params
 
-    if (!order) {
-      return reply.code(404).send({ success: false, message: 'Shipment not found' })
+    // Check solo orders first
+    const order = await ordersService.getOrderByTrackingNumber(trackingNumber)
+    if (order) {
+      return reply.send(
+        successResponse({
+          trackingNumber: order.trackingNumber,
+          origin: order.origin,
+          destination: order.destination,
+          status: order.status,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt,
+        }),
+      )
     }
 
-    // Return limited public-safe fields for the tracking page
-    return reply.send(
-      successResponse({
-        trackingNumber: order.trackingNumber,
-        origin: order.origin,
-        destination: order.destination,
-        status: order.status,
-        createdAt: order.createdAt,
-        updatedAt: order.updatedAt,
-      }),
-    )
+    // Check bulk shipment items
+    const bulkItem = await bulkOrdersService.getBulkItemByTrackingNumber(trackingNumber)
+    if (bulkItem) {
+      return reply.send(
+        successResponse({
+          trackingNumber: bulkItem.trackingNumber,
+          origin: bulkItem.origin,
+          destination: bulkItem.destination,
+          status: bulkItem.status,
+          createdAt: bulkItem.createdAt.toISOString(),
+          updatedAt: bulkItem.updatedAt.toISOString(),
+        }),
+      )
+    }
+
+    return reply.code(404).send({ success: false, message: 'Shipment not found' })
   },
 
   async updateOrderStatus(
@@ -125,7 +176,6 @@ export const ordersController = {
     }>,
     reply: FastifyReply,
   ) {
-    // Fetch sender to get contact info for notifications
     const order = await ordersService.getOrderById(request.params.id)
     if (!order) {
       return reply.code(404).send({ success: false, message: 'Order not found' })

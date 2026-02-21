@@ -1,6 +1,6 @@
 import { eq, and, isNull, sql, desc } from 'drizzle-orm'
 import { db } from '../config/db'
-import { orders, packageImages } from '../../drizzle/schema'
+import { orders, packageImages, bulkShipmentItems, bulkShipments } from '../../drizzle/schema'
 import { encrypt, decrypt } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { generateTrackingNumber } from '../utils/tracking'
@@ -18,6 +18,7 @@ export interface CreateOrderInput {
   recipientEmail?: string
   origin: string
   destination: string
+  orderDirection?: 'outbound' | 'inbound'
   weight?: string
   declaredValue?: string
   description?: string
@@ -47,6 +48,7 @@ export class OrdersService {
         recipientEmail: input.recipientEmail ? encrypt(input.recipientEmail) : null,
         origin: input.origin,
         destination: input.destination,
+        orderDirection: input.orderDirection ?? 'outbound',
         weight: input.weight ?? null,
         declaredValue: input.declaredValue ?? null,
         description: input.description ?? null,
@@ -77,10 +79,7 @@ export class OrdersService {
     return order ? this.decryptOrder(order) : null
   }
 
-  async updateOrderStatus(
-    id: string,
-    input: UpdateOrderStatusInput,
-  ) {
+  async updateOrderStatus(id: string, input: UpdateOrderStatusInput) {
     const [updated] = await db
       .update(orders)
       .set({ status: input.status, updatedAt: new Date() })
@@ -109,7 +108,6 @@ export class OrdersService {
         trackingNumber: decrypted.trackingNumber,
         status: input.status,
       }).catch((err) => {
-        // Log but do not crash — notification is non-critical
         console.error('Failed to send status update email', err)
       })
     }
@@ -166,6 +164,93 @@ export class OrdersService {
     )
   }
 
+  /**
+   * Unified customer shipments view — combines solo orders + bulk items for a user.
+   * Customers see everything in one list without knowing which is solo vs bulk.
+   */
+  async getMyShipments(userId: string, params: PaginationParams) {
+    // Fetch all solo orders and bulk items for the user in parallel
+    const [soloOrders, userBulkItems] = await Promise.all([
+      db
+        .select()
+        .from(orders)
+        .where(and(eq(orders.senderId, userId), isNull(orders.deletedAt)))
+        .orderBy(desc(orders.createdAt)),
+      db
+        .select({
+          id: bulkShipmentItems.id,
+          trackingNumber: bulkShipmentItems.trackingNumber,
+          status: bulkShipmentItems.status,
+          recipientName: bulkShipmentItems.recipientName,
+          recipientAddress: bulkShipmentItems.recipientAddress,
+          recipientPhone: bulkShipmentItems.recipientPhone,
+          recipientEmail: bulkShipmentItems.recipientEmail,
+          weight: bulkShipmentItems.weight,
+          declaredValue: bulkShipmentItems.declaredValue,
+          description: bulkShipmentItems.description,
+          createdAt: bulkShipmentItems.createdAt,
+          updatedAt: bulkShipmentItems.updatedAt,
+          origin: bulkShipments.origin,
+          destination: bulkShipments.destination,
+        })
+        .from(bulkShipmentItems)
+        .innerJoin(bulkShipments, eq(bulkShipmentItems.bulkShipmentId, bulkShipments.id))
+        .where(
+          and(eq(bulkShipmentItems.customerId, userId), isNull(bulkShipments.deletedAt)),
+        )
+        .orderBy(desc(bulkShipmentItems.createdAt)),
+    ])
+
+    const normalizedSolo = soloOrders.map((o) => ({
+      type: 'solo' as const,
+      id: o.id,
+      trackingNumber: o.trackingNumber,
+      origin: o.origin,
+      destination: o.destination,
+      status: o.status,
+      orderDirection: o.orderDirection as string,
+      recipientName: decrypt(o.recipientName),
+      recipientAddress: decrypt(o.recipientAddress),
+      recipientPhone: decrypt(o.recipientPhone),
+      recipientEmail: o.recipientEmail ? decrypt(o.recipientEmail) : null,
+      weight: o.weight,
+      declaredValue: o.declaredValue,
+      description: o.description,
+      createdAt: o.createdAt.toISOString(),
+      updatedAt: o.updatedAt.toISOString(),
+    }))
+
+    const normalizedBulk = userBulkItems.map((item) => ({
+      type: 'bulk_item' as const,
+      id: item.id,
+      trackingNumber: item.trackingNumber,
+      origin: item.origin,
+      destination: item.destination,
+      status: item.status,
+      orderDirection: null as string | null,
+      recipientName: decrypt(item.recipientName),
+      recipientAddress: decrypt(item.recipientAddress),
+      recipientPhone: decrypt(item.recipientPhone),
+      recipientEmail: item.recipientEmail ? decrypt(item.recipientEmail) : null,
+      weight: item.weight,
+      declaredValue: item.declaredValue,
+      description: item.description,
+      createdAt: item.createdAt.toISOString(),
+      updatedAt: item.updatedAt.toISOString(),
+    }))
+
+    // Combine and sort by createdAt descending
+    const combined = [...normalizedSolo, ...normalizedBulk].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    )
+
+    const total = combined.length
+    const offset = getPaginationOffset(params.page, params.limit)
+    const data = combined.slice(offset, offset + params.limit)
+
+    return buildPaginatedResult(data, total, params)
+  }
+
   async softDeleteOrder(id: string) {
     const [deleted] = await db
       .update(orders)
@@ -191,6 +276,9 @@ export class OrdersService {
       recipientAddress: decrypt(order.recipientAddress),
       recipientPhone: decrypt(order.recipientPhone),
       recipientEmail: order.recipientEmail ? decrypt(order.recipientEmail) : null,
+      createdAt: order.createdAt.toISOString(),
+      updatedAt: order.updatedAt.toISOString(),
+      deletedAt: order.deletedAt?.toISOString() ?? null,
     }
   }
 }

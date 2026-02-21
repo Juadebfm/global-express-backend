@@ -11,7 +11,7 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
 
   // ─── Database ─────────────────────────────────────────────────────────────
-  DATABASE_URL: z.string().url('DATABASE_URL must be a valid URL'),
+  DATABASE_URL: z.url({ message: 'DATABASE_URL must be a valid URL' }),
 
   // ─── Clerk Authentication ─────────────────────────────────────────────────
   CLERK_SECRET_KEY: z.string().min(1, 'CLERK_SECRET_KEY is required'),
@@ -22,20 +22,29 @@ const envSchema = z.object({
   R2_ACCESS_KEY_ID: z.string().min(1, 'R2_ACCESS_KEY_ID is required'),
   R2_SECRET_ACCESS_KEY: z.string().min(1, 'R2_SECRET_ACCESS_KEY is required'),
   R2_BUCKET_NAME: z.string().min(1, 'R2_BUCKET_NAME is required'),
-  R2_PUBLIC_URL: z.string().url('R2_PUBLIC_URL must be a valid URL'),
+  R2_PUBLIC_URL: z.url({ message: 'R2_PUBLIC_URL must be a valid URL' }),
 
-  // ─── SendGrid ─────────────────────────────────────────────────────────────
-  SENDGRID_API_KEY: z.string().min(1, 'SENDGRID_API_KEY is required'),
-  SENDGRID_FROM_EMAIL: z.string().email('SENDGRID_FROM_EMAIL must be a valid email'),
-  SENDGRID_FROM_NAME: z.string().min(1, 'SENDGRID_FROM_NAME is required'),
+  // ─── Resend ───────────────────────────────────────────────────────────────
+  RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required'),
+  RESEND_FROM_EMAIL: z.email({ message: 'RESEND_FROM_EMAIL must be a valid email' }),
+  RESEND_FROM_NAME: z.string().min(1, 'RESEND_FROM_NAME is required'),
 
-  // ─── WhatsApp Business Cloud API ──────────────────────────────────────────
-  WHATSAPP_PHONE_NUMBER_ID: z.string().min(1, 'WHATSAPP_PHONE_NUMBER_ID is required'),
-  WHATSAPP_ACCESS_TOKEN: z.string().min(1, 'WHATSAPP_ACCESS_TOKEN is required'),
+  // ─── Termii SMS / WhatsApp (optional) ────────────────────────────────────
+  TERMII_API_KEY: z.string().optional(),
+  // Alphanumeric sender ID (max 11 chars). Defaults to "talert" on trial.
+  TERMII_SENDER_ID: z.string().optional(),
+  // Set to "whatsapp" to send via WhatsApp (requires Termii WhatsApp registration)
+  // Leave blank to default to SMS
+  TERMII_CHANNEL: z.enum(['generic', 'dnd', 'whatsapp']).optional(),
 
   // ─── Paystack ─────────────────────────────────────────────────────────────
   PAYSTACK_SECRET_KEY: z.string().min(1, 'PAYSTACK_SECRET_KEY is required'),
   PAYSTACK_PUBLIC_KEY: z.string().min(1, 'PAYSTACK_PUBLIC_KEY is required'),
+
+  // ─── Clerk Webhook ────────────────────────────────────────────────────────
+  // Signing secret from Clerk Dashboard → Webhooks.
+  // Optional — if not set the /webhooks/clerk endpoint returns 503.
+  CLERK_WEBHOOK_SECRET: z.string().optional(),
 
   // ─── Security ─────────────────────────────────────────────────────────────
   // 64-char hex string = 32 bytes for AES-256
@@ -52,7 +61,7 @@ const parsed = envSchema.safeParse(process.env)
 
 if (!parsed.success) {
   console.error('\n❌  Invalid or missing environment variables:\n')
-  const errors = parsed.error.flatten().fieldErrors
+  const errors = parsed.error.flatten((i) => i.message).fieldErrors
   for (const [field, messages] of Object.entries(errors)) {
     console.error(`  • ${field}: ${messages?.join(', ')}`)
   }

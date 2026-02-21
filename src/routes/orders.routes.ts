@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
-import { OrderStatus } from '../types/enums'
+import { OrderStatus, OrderDirection } from '../types/enums'
 
 const orderResponseSchema = z.object({
   id: z.string().uuid(),
@@ -17,6 +17,7 @@ const orderResponseSchema = z.object({
   origin: z.string(),
   destination: z.string(),
   status: z.nativeEnum(OrderStatus),
+  orderDirection: z.nativeEnum(OrderDirection),
   weight: z.string().nullable(),
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
@@ -36,6 +37,25 @@ const paginatedOrdersSchema = z.object({
   }),
 })
 
+const myShipmentSchema = z.object({
+  type: z.enum(['solo', 'bulk_item']),
+  id: z.string().uuid(),
+  trackingNumber: z.string(),
+  origin: z.string(),
+  destination: z.string(),
+  status: z.nativeEnum(OrderStatus),
+  orderDirection: z.string().nullable(),
+  recipientName: z.string(),
+  recipientAddress: z.string(),
+  recipientPhone: z.string(),
+  recipientEmail: z.string().nullable(),
+  weight: z.string().nullable(),
+  declaredValue: z.string().nullable(),
+  description: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
 export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
@@ -45,6 +65,7 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
     schema: {
       tags: ['Orders — Public'],
       summary: 'Track a shipment by tracking number (public)',
+      description: 'Works for both solo orders and bulk shipment items.',
       params: z.object({ trackingNumber: z.string().min(1) }),
       response: {
         200: z.object({
@@ -64,13 +85,47 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
     handler: ordersController.trackByTrackingNumber,
   })
 
+  // ─── Customer unified shipments view ──────────────────────────────────────
+
+  app.get('/my-shipments', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Orders'],
+      summary: 'My shipments (unified — solo orders + bulk items)',
+      description:
+        'Returns all packages belonging to the authenticated user regardless of whether they are solo orders or part of a bulk shipment.',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        page: z.coerce.number().int().positive().optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(myShipmentSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+      },
+    },
+    handler: ordersController.getMyShipments,
+  })
+
   // ─── Authenticated ────────────────────────────────────────────────────────
 
   app.post('/', {
-    preHandler: [authenticate, requireStaffOrAbove],
+    preHandler: [authenticate],
     schema: {
       tags: ['Orders'],
       summary: 'Create a new shipment order',
+      description:
+        'Customers create orders for themselves. Staff/admin can create on behalf of a customer by providing senderId.',
       security: [{ bearerAuth: [] }],
       body: z.object({
         senderId: z.string().uuid().optional(),
@@ -80,6 +135,7 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
         recipientEmail: z.string().email().optional(),
         origin: z.string().min(1),
         destination: z.string().min(1),
+        orderDirection: z.nativeEnum(OrderDirection).optional().default(OrderDirection.OUTBOUND),
         weight: z.string().optional(),
         declaredValue: z.string().optional(),
         description: z.string().optional(),
@@ -95,7 +151,7 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
     preHandler: [authenticate],
     schema: {
       tags: ['Orders'],
-      summary: 'List orders (users see only their own; staff+ see all)',
+      summary: 'List orders (customers see only their own; staff+ see all)',
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         page: z.coerce.number().int().positive().optional().default(1),
@@ -170,7 +226,8 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
           data: z.array(
             z.object({
               id: z.string().uuid(),
-              orderId: z.string().uuid(),
+              orderId: z.string().uuid().nullable(),
+              bulkItemId: z.string().uuid().nullable(),
               r2Key: z.string(),
               r2Url: z.string(),
               uploadedBy: z.string().uuid(),

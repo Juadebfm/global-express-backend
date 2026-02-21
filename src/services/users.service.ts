@@ -9,16 +9,24 @@ import { UserRole } from '../types/enums'
 export interface CreateUserInput {
   clerkId: string
   email: string
-  firstName: string
-  lastName: string
+  firstName?: string | null
+  lastName?: string | null
+  businessName?: string | null
   phone?: string
   role?: UserRole
 }
 
 export interface UpdateUserInput {
-  firstName?: string
-  lastName?: string
+  firstName?: string | null
+  lastName?: string | null
+  businessName?: string | null
   phone?: string | null
+  whatsappNumber?: string | null
+  addressStreet?: string | null
+  addressCity?: string | null
+  addressState?: string | null
+  addressCountry?: string | null
+  addressPostalCode?: string | null
   isActive?: boolean
   consentMarketing?: boolean
 }
@@ -32,8 +40,9 @@ export class UsersService {
       .values({
         clerkId: input.clerkId,
         email: encrypt(input.email),
-        firstName: encrypt(input.firstName),
-        lastName: encrypt(input.lastName),
+        firstName: input.firstName ? encrypt(input.firstName) : null,
+        lastName: input.lastName ? encrypt(input.lastName) : null,
+        businessName: input.businessName ? encrypt(input.businessName) : null,
         phone: input.phone ? encrypt(input.phone) : null,
         role: input.role ?? UserRole.USER,
       })
@@ -67,11 +76,28 @@ export class UsersService {
       updatedAt: new Date(),
     }
 
-    if (input.firstName !== undefined) patch.firstName = encrypt(input.firstName)
-    if (input.lastName !== undefined) patch.lastName = encrypt(input.lastName)
+    if (input.firstName !== undefined) {
+      patch.firstName = input.firstName ? encrypt(input.firstName) : null
+    }
+    if (input.lastName !== undefined) {
+      patch.lastName = input.lastName ? encrypt(input.lastName) : null
+    }
+    if (input.businessName !== undefined) {
+      patch.businessName = input.businessName ? encrypt(input.businessName) : null
+    }
     if (input.phone !== undefined) {
       patch.phone = input.phone ? encrypt(input.phone) : null
     }
+    if (input.whatsappNumber !== undefined) {
+      patch.whatsappNumber = input.whatsappNumber ? encrypt(input.whatsappNumber) : null
+    }
+    if (input.addressStreet !== undefined) {
+      patch.addressStreet = input.addressStreet ? encrypt(input.addressStreet) : null
+    }
+    if (input.addressCity !== undefined) patch.addressCity = input.addressCity
+    if (input.addressState !== undefined) patch.addressState = input.addressState
+    if (input.addressCountry !== undefined) patch.addressCountry = input.addressCountry
+    if (input.addressPostalCode !== undefined) patch.addressPostalCode = input.addressPostalCode
     if (input.isActive !== undefined) patch.isActive = input.isActive
     if (input.consentMarketing !== undefined) patch.consentMarketing = input.consentMarketing
 
@@ -105,14 +131,14 @@ export class UsersService {
   }
 
   async listUsers(
-    params: PaginationParams & { role?: UserRole; search?: string },
+    params: PaginationParams & { role?: UserRole; search?: string; isActive?: boolean },
   ) {
     const offset = getPaginationOffset(params.page, params.limit)
 
-    // Build base query (no search on encrypted fields — search only on role/id)
     const baseWhere = and(
       isNull(users.deletedAt),
       params.role ? eq(users.role, params.role) : undefined,
+      params.isActive !== undefined ? eq(users.isActive, params.isActive) : undefined,
     )
 
     const [data, countResult] = await Promise.all([
@@ -137,20 +163,82 @@ export class UsersService {
     )
   }
 
+  /**
+   * Called by the Clerk webhook handler when a user.updated event is received.
+   * Only fields present in the payload are updated; undefined fields are left unchanged.
+   */
+  async syncFromClerk(
+    clerkId: string,
+    data: {
+      email?: string
+      firstName?: string
+      lastName?: string
+      phone?: string | null
+    },
+  ) {
+    const patch: Partial<typeof users.$inferInsert> = {
+      updatedAt: new Date(),
+    }
+
+    if (data.email !== undefined) patch.email = encrypt(data.email)
+    if (data.firstName !== undefined) {
+      patch.firstName = data.firstName ? encrypt(data.firstName) : null
+    }
+    if (data.lastName !== undefined) {
+      patch.lastName = data.lastName ? encrypt(data.lastName) : null
+    }
+    if (data.phone !== undefined) {
+      patch.phone = data.phone ? encrypt(data.phone) : null
+    }
+
+    const [updated] = await db
+      .update(users)
+      .set(patch)
+      .where(eq(users.clerkId, clerkId))
+      .returning()
+
+    return updated ? this.decryptUser(updated) : null
+  }
+
   /** GDPR: export all personal data for a user. */
   async exportUserData(id: string) {
     const user = await this.getUserById(id)
     return user
   }
 
-  /** Strips internal DB fields not appropriate for API responses. */
+  /**
+   * Returns true if the user has all fields required to place an order:
+   *   - At least one of: (firstName + lastName) or businessName
+   *   - phone
+   *   - all 5 address fields
+   */
+  isProfileComplete(user: ReturnType<UsersService['decryptUser']>): boolean {
+    const hasName = (user.firstName && user.lastName) || user.businessName
+    const hasPhone = !!user.phone
+    const hasAddress =
+      !!user.addressStreet &&
+      !!user.addressCity &&
+      !!user.addressState &&
+      !!user.addressCountry &&
+      !!user.addressPostalCode
+
+    return !!(hasName && hasPhone && hasAddress)
+  }
+
   private decryptUser(user: typeof users.$inferSelect) {
     return {
       ...user,
       email: decrypt(user.email),
-      firstName: decrypt(user.firstName),
-      lastName: decrypt(user.lastName),
+      firstName: user.firstName ? decrypt(user.firstName) : null,
+      lastName: user.lastName ? decrypt(user.lastName) : null,
+      businessName: user.businessName ? decrypt(user.businessName) : null,
       phone: user.phone ? decrypt(user.phone) : null,
+      whatsappNumber: user.whatsappNumber ? decrypt(user.whatsappNumber) : null,
+      addressStreet: user.addressStreet ? decrypt(user.addressStreet) : null,
+      // city/state/country/postalCode are stored plain
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
+      deletedAt: user.deletedAt?.toISOString() ?? null,
     }
   }
 }

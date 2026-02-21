@@ -1,7 +1,7 @@
-import sgMail from '@sendgrid/mail'
+import { Resend } from 'resend'
 import { env } from '../config/env'
 
-sgMail.setApiKey(env.SENDGRID_API_KEY)
+const resend = new Resend(env.RESEND_API_KEY)
 
 interface SendEmailParams {
   to: string
@@ -13,12 +13,9 @@ interface SendEmailParams {
 async function sendEmail(params: SendEmailParams): Promise<void> {
   const { to, subject, html, text } = params
 
-  await sgMail.send({
+  await resend.emails.send({
+    from: `${env.RESEND_FROM_NAME} <${env.RESEND_FROM_EMAIL}>`,
     to,
-    from: {
-      email: env.SENDGRID_FROM_EMAIL,
-      name: env.SENDGRID_FROM_NAME,
-    },
     subject,
     html,
     ...(text ? { text } : {}),

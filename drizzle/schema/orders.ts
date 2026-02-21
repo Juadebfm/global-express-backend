@@ -19,6 +19,8 @@ export const orderStatusEnum = pgEnum('order_status', [
   'returned',
 ])
 
+export const orderDirectionEnum = pgEnum('order_direction', ['outbound', 'inbound'])
+
 export const orders = pgTable(
   'orders',
   {
@@ -35,6 +37,7 @@ export const orders = pgTable(
     origin: text('origin').notNull(),
     destination: text('destination').notNull(),
     status: orderStatusEnum('status').notNull().default('pending'),
+    orderDirection: orderDirectionEnum('order_direction').notNull().default('outbound'),
     weight: numeric('weight', { precision: 10, scale: 2 }),
     declaredValue: numeric('declared_value', { precision: 12, scale: 2 }),
     description: text('description'),

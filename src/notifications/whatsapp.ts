@@ -1,30 +1,24 @@
 import axios from 'axios'
 import { env } from '../config/env'
 
-const WHATSAPP_API_URL = `https://graph.facebook.com/v21.0/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`
+const TERMII_API_URL = 'https://v3.api.termii.com/api/sms/send'
 
-interface SendTextMessageParams {
-  /** Phone number with country code, no '+' prefix. E.g. "2348012345678" */
-  to: string
-  message: string
+function isTermiiConfigured(): boolean {
+  return !!env.TERMII_API_KEY
 }
 
-async function sendWhatsAppTextMessage(params: SendTextMessageParams): Promise<void> {
-  await axios.post(
-    WHATSAPP_API_URL,
-    {
-      messaging_product: 'whatsapp',
-      to: params.to,
-      type: 'text',
-      text: { body: params.message },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-    },
-  )
+async function sendPhoneNotification(to: string, message: string): Promise<void> {
+  if (!isTermiiConfigured()) return
+
+  await axios.post(TERMII_API_URL, {
+    api_key: env.TERMII_API_KEY,
+    to,
+    from: env.TERMII_SENDER_ID ?? 'talert',
+    sms: message,
+    type: 'plain',
+    // 'whatsapp' when WhatsApp registration is done, otherwise 'generic' SMS
+    channel: env.TERMII_CHANNEL ?? 'generic',
+  })
 }
 
 export async function sendOrderStatusWhatsApp(params: {
@@ -36,10 +30,10 @@ export async function sendOrderStatusWhatsApp(params: {
   const { phone, recipientName, trackingNumber, status } = params
   const statusLabel = status.replace(/_/g, ' ').toUpperCase()
 
-  await sendWhatsAppTextMessage({
-    to: phone,
-    message: `Hi ${recipientName}! Your shipment *#${trackingNumber}* has been updated to: *${statusLabel}*.\n\nTrack your shipment for more details.`,
-  })
+  await sendPhoneNotification(
+    phone,
+    `Hi ${recipientName}! Your shipment #${trackingNumber} has been updated to: ${statusLabel}. Track your shipment for more details.`,
+  )
 }
 
 export async function sendOrderConfirmationWhatsApp(params: {
@@ -51,8 +45,8 @@ export async function sendOrderConfirmationWhatsApp(params: {
 }): Promise<void> {
   const { phone, recipientName, trackingNumber, origin, destination } = params
 
-  await sendWhatsAppTextMessage({
-    to: phone,
-    message: `Hi ${recipientName}! Your shipment order has been confirmed.\n\n*Tracking Number:* ${trackingNumber}\n*From:* ${origin}\n*To:* ${destination}\n\nWe will keep you updated!`,
-  })
+  await sendPhoneNotification(
+    phone,
+    `Hi ${recipientName}! Your shipment order has been confirmed.\nTracking Number: ${trackingNumber}\nFrom: ${origin}\nTo: ${destination}\nWe will keep you updated!`,
+  )
 }

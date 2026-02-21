@@ -86,8 +86,8 @@ export async function authenticate(
       .values({
         clerkId,
         email: encrypt(primaryEmail.emailAddress),
-        firstName: encrypt(clerkUser.firstName ?? ''),
-        lastName: encrypt(clerkUser.lastName ?? ''),
+        firstName: clerkUser.firstName ? encrypt(clerkUser.firstName) : null,
+        lastName: clerkUser.lastName ? encrypt(clerkUser.lastName) : null,
         role: UserRole.USER,
       })
       .returning()

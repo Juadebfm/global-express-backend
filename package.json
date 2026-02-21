@@ -25,14 +25,15 @@
     "@fastify/rate-limit": "^10.2.1",
     "@fastify/swagger": "^9.7.0",
     "@fastify/swagger-ui": "^5.2.2",
-    "fastify-type-provider-zod": "^6.1.0",
     "@fastify/websocket": "^11.0.2",
-    "@sendgrid/mail": "^8.1.4",
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.39.1",
     "fastify": "^5.7.0",
+    "fastify-type-provider-zod": "^6.1.0",
     "postgres": "^3.4.5",
+    "resend": "^4.8.0",
+    "svix": "^1.85.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
