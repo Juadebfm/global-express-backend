@@ -22,6 +22,10 @@ export interface CreateOrderInput {
   weight?: string
   declaredValue?: string
   description?: string
+  shipmentType?: 'air' | 'ocean' | 'road'
+  priority?: 'standard' | 'express' | 'economy'
+  departureDate?: Date | null
+  eta?: Date | null
   createdBy: string
 }
 
@@ -52,6 +56,10 @@ export class OrdersService {
         weight: input.weight ?? null,
         declaredValue: input.declaredValue ?? null,
         description: input.description ?? null,
+        shipmentType: input.shipmentType ?? null,
+        priority: input.priority ?? null,
+        departureDate: input.departureDate ?? null,
+        eta: input.eta ?? null,
         createdBy: input.createdBy,
       })
       .returning()
@@ -279,6 +287,8 @@ export class OrdersService {
       createdAt: order.createdAt.toISOString(),
       updatedAt: order.updatedAt.toISOString(),
       deletedAt: order.deletedAt?.toISOString() ?? null,
+      departureDate: order.departureDate?.toISOString() ?? null,
+      eta: order.eta?.toISOString() ?? null,
     }
   }
 }

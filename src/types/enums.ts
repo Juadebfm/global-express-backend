@@ -26,3 +26,15 @@ export enum PaymentStatus {
   FAILED = 'failed',
   ABANDONED = 'abandoned',
 }
+
+export enum ShipmentType {
+  AIR = 'air',
+  OCEAN = 'ocean',
+  ROAD = 'road',
+}
+
+export enum Priority {
+  STANDARD = 'standard',
+  EXPRESS = 'express',
+  ECONOMY = 'economy',
+}

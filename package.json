@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "seed:superadmin": "tsx scripts/seed-superadmin.ts",
-    "seed:data": "tsx scripts/seed-data.ts"
+    "seed:data": "tsx scripts/seed-data.ts",
+    "seed:gabriel": "tsx scripts/seed-dashboard-user.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",

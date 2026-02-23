@@ -21,6 +21,10 @@ export const orderStatusEnum = pgEnum('order_status', [
 
 export const orderDirectionEnum = pgEnum('order_direction', ['outbound', 'inbound'])
 
+export const shipmentTypeEnum = pgEnum('shipment_type', ['air', 'ocean', 'road'])
+
+export const priorityEnum = pgEnum('priority', ['standard', 'express', 'economy'])
+
 export const orders = pgTable(
   'orders',
   {
@@ -41,6 +45,10 @@ export const orders = pgTable(
     weight: numeric('weight', { precision: 10, scale: 2 }),
     declaredValue: numeric('declared_value', { precision: 12, scale: 2 }),
     description: text('description'),
+    shipmentType: shipmentTypeEnum('shipment_type'),
+    priority: priorityEnum('priority'),
+    departureDate: timestamp('departure_date'),
+    eta: timestamp('eta'),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),

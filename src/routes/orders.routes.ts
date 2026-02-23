@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
-import { OrderStatus, OrderDirection } from '../types/enums'
+import { OrderStatus, OrderDirection, ShipmentType, Priority } from '../types/enums'
 
 const orderResponseSchema = z.object({
   id: z.string().uuid().describe('Order UUID'),
@@ -21,6 +21,10 @@ const orderResponseSchema = z.object({
   weight: z.string().nullable().describe('Package weight (e.g. "2.5kg")'),
   declaredValue: z.string().nullable().describe('Declared monetary value (e.g. "15000")'),
   description: z.string().nullable().describe('Package description / contents'),
+  shipmentType: z.nativeEnum(ShipmentType).nullable().describe('Transport mode: air | ocean | road'),
+  priority: z.nativeEnum(Priority).nullable().describe('Service priority: standard | express | economy'),
+  departureDate: z.string().nullable().describe('Departure date (ISO 8601)'),
+  eta: z.string().nullable().describe('Estimated delivery date (ISO 8601)'),
   createdBy: z.string().uuid().describe('UUID of the staff/user who created the order'),
   deletedAt: z.string().nullable(),
   createdAt: z.string(),
@@ -52,6 +56,10 @@ const myShipmentSchema = z.object({
   weight: z.string().nullable(),
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
+  shipmentType: z.nativeEnum(ShipmentType).nullable(),
+  priority: z.nativeEnum(Priority).nullable(),
+  departureDate: z.string().nullable(),
+  eta: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -176,6 +184,10 @@ Works for both solo orders and bulk shipment items.
         weight: z.string().optional().describe('Package weight with unit (e.g. "2.5kg")'),
         declaredValue: z.string().optional().describe('Declared monetary value in local currency (e.g. "15000")'),
         description: z.string().optional().describe('Package contents / description'),
+        shipmentType: z.nativeEnum(ShipmentType).optional().describe('Transport mode: air | ocean | road'),
+        priority: z.nativeEnum(Priority).optional().describe('Service priority: standard | express | economy'),
+        departureDate: z.string().datetime().optional().describe('Departure date (ISO 8601)'),
+        eta: z.string().datetime().optional().describe('Estimated delivery date (ISO 8601)'),
       }),
       response: {
         201: z.object({ success: z.literal(true), data: orderResponseSchema }),

@@ -61,6 +61,10 @@ export const ordersController = {
         weight?: string
         declaredValue?: string
         description?: string
+        shipmentType?: 'air' | 'ocean' | 'road'
+        priority?: 'standard' | 'express' | 'economy'
+        departureDate?: string
+        eta?: string
       }
     }>,
     reply: FastifyReply,
@@ -98,6 +102,10 @@ export const ordersController = {
       weight: request.body.weight,
       declaredValue: request.body.declaredValue,
       description: request.body.description,
+      shipmentType: request.body.shipmentType,
+      priority: request.body.priority,
+      departureDate: request.body.departureDate ? new Date(request.body.departureDate) : undefined,
+      eta: request.body.eta ? new Date(request.body.eta) : undefined,
       createdBy: request.user.id,
     })
 
