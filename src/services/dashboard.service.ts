@@ -11,32 +11,50 @@ const ACTIVE_STATUSES = [
   OrderStatus.OUT_FOR_DELIVERY,
 ]
 
+/**
+ * Computes a period-over-period % change.
+ * Returns null when previous === 0 (no baseline — FE hides the badge).
+ * value is always positive; direction indicates growth or decline.
+ */
+function calcChange(
+  current: number,
+  previous: number,
+): { value: number; direction: 'up' | 'down' } | null {
+  if (previous === 0) return null
+  const pct = Math.round(((current - previous) / previous) * 1000) / 10
+  return { value: Math.abs(pct), direction: pct >= 0 ? 'up' : 'down' }
+}
+
 export class DashboardService {
   /**
-   * KPI stats — counts by status + financial summary.
+   * KPI stats — counts by status + financial summary + period-over-period change.
    *
    * Admin/staff/superadmin: global data across all orders.
    * Customer (role=user):   filtered to their own orders + their own payments.
+   *
+   * Change fields compare last 30 days vs the prior 30 days (days 31–60).
+   * Returns null when the prior period had 0 activity (no baseline to compare).
    */
   async getStats(userId: string, role: string) {
     const isCustomer = role === UserRole.USER
 
-    // Order counts by status
+    const now = new Date()
+    const now30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    const now60 = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000)
+
+    const userFilter = isCustomer ? eq(orders.senderId, userId) : undefined
+
+    // ── All-time status counts ─────────────────────────────────────────────────
     const countQuery = db
       .select({
         status: orders.status,
         count: sql<number>`count(*)::int`,
       })
       .from(orders)
-      .where(
-        and(
-          isNull(orders.deletedAt),
-          isCustomer ? eq(orders.senderId, userId) : undefined,
-        ),
-      )
+      .where(and(isNull(orders.deletedAt), userFilter))
       .groupBy(orders.status)
 
-    // Financial: admin sees global revenue, customer sees their own total spent
+    // ── All-time financial total ───────────────────────────────────────────────
     const financialQuery = isCustomer
       ? db
           .select({ total: sql<string>`coalesce(sum(amount), 0)::text` })
@@ -47,7 +65,7 @@ export class DashboardService {
           .from(payments)
           .where(sql`status = 'successful'`)
 
-    // Delivered today (admin: all orders; customer: their own)
+    // ── Delivered today ────────────────────────────────────────────────────────
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
     const deliveredTodayQuery = db
@@ -58,15 +76,45 @@ export class DashboardService {
           isNull(orders.deletedAt),
           eq(orders.status, OrderStatus.DELIVERED),
           gte(orders.updatedAt, todayStart),
-          isCustomer ? eq(orders.senderId, userId) : undefined,
+          userFilter,
         ),
       )
 
-    const [statusRows, [financial], [deliveredToday]] = await Promise.all([
-      countQuery,
-      financialQuery,
-      deliveredTodayQuery,
-    ])
+    // ── Period-over-period count changes (single query, conditional aggregation) ─
+    // current = last 30 days | prev = days 31–60 ago
+    const changeQuery = db
+      .select({
+        currentOrders:    sql<number>`count(*) filter (where created_at >= ${now30})::int`,
+        prevOrders:       sql<number>`count(*) filter (where created_at >= ${now60} and created_at < ${now30})::int`,
+        currentActive:    sql<number>`count(*) filter (where status in ('in_transit', 'out_for_delivery') and created_at >= ${now30})::int`,
+        prevActive:       sql<number>`count(*) filter (where status in ('in_transit', 'out_for_delivery') and created_at >= ${now60} and created_at < ${now30})::int`,
+        currentPending:   sql<number>`count(*) filter (where status in ('pending', 'picked_up') and created_at >= ${now30})::int`,
+        prevPending:      sql<number>`count(*) filter (where status in ('pending', 'picked_up') and created_at >= ${now60} and created_at < ${now30})::int`,
+        currentDelivered: sql<number>`count(*) filter (where status = 'delivered' and updated_at >= ${now30})::int`,
+        prevDelivered:    sql<number>`count(*) filter (where status = 'delivered' and updated_at >= ${now60} and updated_at < ${now30})::int`,
+      })
+      .from(orders)
+      .where(and(isNull(orders.deletedAt), userFilter))
+
+    // ── Period-over-period financial change ────────────────────────────────────
+    const finChangeQuery = isCustomer
+      ? db
+          .select({
+            current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30}), 0)::text`,
+            prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60} and created_at < ${now30}), 0)::text`,
+          })
+          .from(payments)
+          .where(and(eq(payments.userId, userId), sql`status = 'successful'`))
+      : db
+          .select({
+            current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30}), 0)::text`,
+            prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60} and created_at < ${now30}), 0)::text`,
+          })
+          .from(payments)
+          .where(sql`status = 'successful'`)
+
+    const [statusRows, [financial], [deliveredToday], [changeRow], [finChange]] =
+      await Promise.all([countQuery, financialQuery, deliveredTodayQuery, changeQuery, finChangeQuery])
 
     // Map status rows to named counts
     const countByStatus = Object.fromEntries(statusRows.map((r) => [r.status, r.count]))
@@ -75,20 +123,35 @@ export class DashboardService {
       (countByStatus[OrderStatus.IN_TRANSIT] ?? 0) +
       (countByStatus[OrderStatus.OUT_FOR_DELIVERY] ?? 0)
 
+    const pendingCount =
+      (countByStatus[OrderStatus.PENDING] ?? 0) +
+      (countByStatus[OrderStatus.PICKED_UP] ?? 0)
+
+    const finCurrent = parseFloat(finChange?.current ?? '0')
+    const finPrev    = parseFloat(finChange?.prev    ?? '0')
+
     return {
-      totalOrders: statusRows.reduce((sum, r) => sum + r.count, 0),
-      activeShipments: activeCount,
-      pendingOrders:
-        (countByStatus[OrderStatus.PENDING] ?? 0) +
-        (countByStatus[OrderStatus.PICKED_UP] ?? 0),
-      deliveredToday: deliveredToday?.count ?? 0,
-      deliveredTotal: countByStatus[OrderStatus.DELIVERED] ?? 0,
+      totalOrders:          statusRows.reduce((sum, r) => sum + r.count, 0),
+      totalOrdersChange:    calcChange(changeRow?.currentOrders ?? 0, changeRow?.prevOrders ?? 0),
+      activeShipments:         activeCount,
+      activeShipmentsChange:   calcChange(changeRow?.currentActive ?? 0, changeRow?.prevActive ?? 0),
+      pendingOrders:         pendingCount,
+      pendingOrdersChange:   calcChange(changeRow?.currentPending ?? 0, changeRow?.prevPending ?? 0),
+      deliveredToday:        deliveredToday?.count ?? 0,
+      deliveredTotal:         countByStatus[OrderStatus.DELIVERED] ?? 0,
+      deliveredTotalChange:   calcChange(changeRow?.currentDelivered ?? 0, changeRow?.prevDelivered ?? 0),
       cancelled: countByStatus[OrderStatus.CANCELLED] ?? 0,
-      returned: countByStatus[OrderStatus.RETURNED] ?? 0,
+      returned:  countByStatus[OrderStatus.RETURNED]  ?? 0,
       // admin/staff see revenueMtd; customer sees totalSpent (their own payments)
       ...(isCustomer
-        ? { totalSpent: financial?.total ?? '0' }
-        : { revenueMtd: financial?.total ?? '0' }),
+        ? {
+            totalSpent:       financial?.total ?? '0',
+            totalSpentChange: calcChange(finCurrent, finPrev),
+          }
+        : {
+            revenueMtd:       financial?.total ?? '0',
+            revenueMtdChange: calcChange(finCurrent, finPrev),
+          }),
     }
   }
 

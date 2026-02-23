@@ -4,23 +4,32 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { dashboardController } from '../controllers/dashboard.controller'
 import { authenticate } from '../middleware/authenticate'
 
+// Reusable change indicator schema — null means no prior-period baseline
+const changeSchema = z
+  .object({ value: z.number(), direction: z.enum(['up', 'down']) })
+  .nullable()
+  .describe('Period-over-period % change (last 30d vs prior 30d). null = no baseline.')
+
 export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
   // ─── GET /dashboard/stats ─────────────────────────────────────────────────
-  // KPI counts by status + financial summary.
+  // KPI counts by status + financial summary + period-over-period % change.
   // Role-gated: customers see their own data; admin/staff/superadmin see global.
 
   app.get('/stats', {
     preHandler: [authenticate],
     schema: {
       tags: ['Dashboard'],
-      summary: 'KPI stats — shipment counts + financial summary',
-      description: `Returns shipment counts by status and a financial figure.
+      summary: 'KPI stats — shipment counts + financial summary + % change',
+      description: `Returns shipment counts by status, a financial figure, and period-over-period % change indicators.
 
 **Customers** see only their own orders. The financial field is \`totalSpent\` (sum of their successful payments).
 
 **Admin / Staff / Superadmin** see global counts across all orders. The financial field is \`revenueMtd\` (all-time revenue from successful payments).
+
+**Change fields** (e.g. \`totalOrdersChange\`) compare the last 30 days against the prior 30 days.
+Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\` when there is no prior-period baseline.
 
 **Response fields:**
 - \`totalOrders\` — all orders (customer: theirs only)
@@ -37,14 +46,20 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: z.object({
             totalOrders: z.number(),
+            totalOrdersChange: changeSchema,
             activeShipments: z.number(),
+            activeShipmentsChange: changeSchema,
             pendingOrders: z.number(),
+            pendingOrdersChange: changeSchema,
             deliveredToday: z.number(),
             deliveredTotal: z.number(),
+            deliveredTotalChange: changeSchema,
             cancelled: z.number(),
             returned: z.number(),
             revenueMtd: z.string().optional().describe('Admin/staff only — global revenue'),
+            revenueMtdChange: changeSchema.optional().describe('Admin/staff only'),
             totalSpent: z.string().optional().describe('Customer only — their own payment total'),
+            totalSpentChange: changeSchema.optional().describe('Customer only'),
           }),
         }),
         401: z.object({ success: z.literal(false), message: z.string() }),
@@ -129,5 +144,76 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     handler: dashboardController.getActiveDeliveries,
+  })
+
+  // ─── GET /dashboard ───────────────────────────────────────────────────────
+  // Combined endpoint — returns stats + trends + activeDeliveries in one call.
+
+  const statsSchema = z.object({
+    totalOrders: z.number(),
+    totalOrdersChange: changeSchema,
+    activeShipments: z.number(),
+    activeShipmentsChange: changeSchema,
+    pendingOrders: z.number(),
+    pendingOrdersChange: changeSchema,
+    deliveredToday: z.number(),
+    deliveredTotal: z.number(),
+    deliveredTotalChange: changeSchema,
+    cancelled: z.number(),
+    returned: z.number(),
+    revenueMtd: z.string().optional(),
+    revenueMtdChange: changeSchema.optional(),
+    totalSpent: z.string().optional(),
+    totalSpentChange: changeSchema.optional(),
+  })
+
+  const trendsSchema = z.array(
+    z.object({
+      month: z.number(),
+      deliveredWeight: z.string(),
+      activeWeight: z.string(),
+    }),
+  )
+
+  const activeDeliveriesSchema = z.array(
+    z.object({
+      destination: z.string(),
+      shipmentType: z.enum(['air', 'ocean', 'road']).nullable(),
+      activeCount: z.number(),
+      nextEta: z.string().nullable(),
+      status: z.enum(['on_time', 'delayed', 'unknown']),
+    }),
+  )
+
+  app.get('/', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Dashboard'],
+      summary: 'Full dashboard — stats + trends + active deliveries in one call',
+      description: `Returns all dashboard data in a single request. Runs all 3 queries in parallel.
+
+**Role gating** (same rules as the individual endpoints):
+- Customers see their own data (\`totalSpent\` instead of \`revenueMtd\`)
+- Admin / Staff / Superadmin see global data
+
+**Query params:**
+- \`year\` — year for the trends graph (defaults to current year)`,
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        year: z.coerce.number().int().min(2020).max(2100).optional().describe('Year for trends graph (defaults to current year)'),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            stats: statsSchema,
+            trends: trendsSchema,
+            activeDeliveries: activeDeliveriesSchema,
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: dashboardController.getAll,
   })
 }
