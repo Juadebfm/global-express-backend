@@ -5,7 +5,11 @@ import { internalAuthService } from '../services/internal-auth.service'
 import { usersService } from '../services/users.service'
 import { adminNotificationsService } from '../services/admin-notifications.service'
 import { authenticate } from '../middleware/authenticate'
-import { requireSuperAdmin, requireAdminOrAbove } from '../middleware/requireRole'
+import {
+  requireSuperAdmin,
+  requireAdminOrAbove,
+  requireStaffOrAbove,
+} from '../middleware/requireRole'
 import { ipWhitelist } from '../middleware/ipWhitelist'
 import { UserRole } from '../types/enums'
 
@@ -50,6 +54,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
           }),
         }),
         401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: async (request, reply) => {
@@ -181,10 +186,12 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Internal user changes their own password.
    */
   app.patch('/me/password', {
-    preHandler: [authenticate],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Internal — Auth'],
       summary: 'Change own password',
+      description:
+        'Changes password for authenticated internal operators only (staff/admin/superadmin). Customer (Clerk) accounts must use Clerk-managed password/2FA flows.',
       security: [{ bearerAuth: [] }],
       body: z.object({
         currentPassword: z.string().min(1),
@@ -193,6 +200,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
         401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: async (request, reply) => {
@@ -365,3 +373,4 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     },
   })
 }
+

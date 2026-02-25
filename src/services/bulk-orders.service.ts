@@ -174,28 +174,35 @@ export class BulkOrdersService {
         recipientName: bulkShipmentItems.recipientName,
         customerEmail: users.email,
         customerPhone: users.phone,
+        notifyEmailAlerts: users.notifyEmailAlerts,
+        notifySmsAlerts: users.notifySmsAlerts,
+        notifyInAppAlerts: users.notifyInAppAlerts,
       })
       .from(bulkShipmentItems)
       .innerJoin(users, eq(bulkShipmentItems.customerId, users.id))
       .where(eq(bulkShipmentItems.bulkShipmentId, id))
 
     for (const item of itemsWithCustomers) {
-      broadcastToUser(item.customerId, {
-        type: 'order:status_updated',
-        data: { trackingNumber: item.trackingNumber, status },
-      })
+      if (item.notifyInAppAlerts) {
+        broadcastToUser(item.customerId, {
+          type: 'order:status_updated',
+          data: { trackingNumber: item.trackingNumber, status },
+        })
+      }
 
       const recipientName = decrypt(item.recipientName)
       const customerEmail = decrypt(item.customerEmail)
 
-      sendOrderStatusUpdateEmail({
-        to: customerEmail,
-        recipientName,
-        trackingNumber: item.trackingNumber,
-        status,
-      }).catch((err) => console.error('Failed to send bulk status email', err))
+      if (item.notifyEmailAlerts) {
+        sendOrderStatusUpdateEmail({
+          to: customerEmail,
+          recipientName,
+          trackingNumber: item.trackingNumber,
+          status,
+        }).catch((err) => console.error('Failed to send bulk status email', err))
+      }
 
-      if (item.customerPhone) {
+      if (item.customerPhone && item.notifySmsAlerts) {
         sendOrderStatusWhatsApp({
           phone: decrypt(item.customerPhone),
           recipientName,

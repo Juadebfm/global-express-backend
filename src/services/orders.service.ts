@@ -1,4 +1,4 @@
-import { eq, and, isNull, sql, desc } from 'drizzle-orm'
+﻿import { eq, and, isNull, sql, desc } from 'drizzle-orm'
 import { db } from '../config/db'
 import { orders, packageImages, bulkShipmentItems, bulkShipments } from '../../drizzle/schema'
 import { encrypt, decrypt } from '../utils/encryption'
@@ -56,6 +56,9 @@ export interface UpdateOrderStatusInput {
   // For notification purposes
   senderEmail?: string
   senderPhone?: string
+  notifyEmailAlerts?: boolean
+  notifySmsAlerts?: boolean
+  notifyInAppAlerts?: boolean
 }
 
 export class OrdersService {
@@ -130,18 +133,20 @@ export class OrdersService {
     })
 
     // Persist in-app notification for the sender (fire-and-forget)
-    notifyUser({
-      userId: updated.senderId,
-      orderId: updated.id,
-      type: 'order_status_update',
-      title: ORDER_STATUS_TITLES[input.status] ?? 'Order Updated',
-      subtitle: decrypted.trackingNumber,
-      body: (ORDER_STATUS_BODIES[input.status] ?? ((t: string) => `Order ${t} has been updated.`))(decrypted.trackingNumber),
-      metadata: { orderId: updated.id, trackingNumber: updated.trackingNumber, status: input.status },
-    })
+    if (input.notifyInAppAlerts ?? true) {
+      notifyUser({
+        userId: updated.senderId,
+        orderId: updated.id,
+        type: 'order_status_update',
+        title: ORDER_STATUS_TITLES[input.status] ?? 'Order Updated',
+        subtitle: decrypted.trackingNumber,
+        body: (ORDER_STATUS_BODIES[input.status] ?? ((t: string) => `Order ${t} has been updated.`))(decrypted.trackingNumber),
+        metadata: { orderId: updated.id, trackingNumber: updated.trackingNumber, status: input.status },
+      })
+    }
 
     // Send notifications (fire-and-forget — don't let notification failures block the response)
-    if (input.senderEmail) {
+    if (input.senderEmail && (input.notifyEmailAlerts ?? true)) {
       sendOrderStatusUpdateEmail({
         to: input.senderEmail,
         recipientName: decrypted.recipientName,
@@ -152,7 +157,7 @@ export class OrdersService {
       })
     }
 
-    if (input.senderPhone) {
+    if (input.senderPhone && (input.notifySmsAlerts ?? true)) {
       sendOrderStatusWhatsApp({
         phone: input.senderPhone,
         recipientName: decrypted.recipientName,

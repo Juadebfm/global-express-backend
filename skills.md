@@ -46,54 +46,54 @@ Rules:
 
 ## 4. Baseline Alignment Tasks
 
-- [ ] Confirm and document canonical customer settings capabilities from current API:
-- [ ] `GET/PATCH/DELETE /api/v1/users/me`
-- [ ] `GET /api/v1/users/me/export`
-- [ ] `GET /api/v1/notifications`
-- [ ] `GET /api/v1/notifications/unread-count`
-- [ ] `PATCH /api/v1/notifications/:id/read`
-- [ ] `PATCH /api/v1/notifications/:id/save`
-- [ ] Decide and document canonical profile completeness rule (whatsapp required or optional) to remove doc/code drift.
-- [ ] Freeze response contracts for frontend consumption before implementation starts.
+- [x] Confirm and document canonical customer settings capabilities from current API:
+- [x] `GET/PATCH/DELETE /api/v1/users/me`
+- [x] `GET /api/v1/users/me/export`
+- [x] `GET /api/v1/notifications`
+- [x] `GET /api/v1/notifications/unread-count`
+- [x] `PATCH /api/v1/notifications/:id/read`
+- [x] `PATCH /api/v1/notifications/:id/save`
+- [x] Decide and document canonical profile completeness rule (whatsapp required or optional) to remove doc/code drift.
+- [x] Freeze response contracts for frontend consumption before implementation starts.
 
 ## 5. Module A: Profile & Security (Now)
 
-- [ ] Profile fields: verify/update support for identity, phone, WhatsApp, full address, marketing consent.
-- [ ] Ensure profile update validation remains explicit and strict in `zod`.
-- [ ] Add/confirm API examples for individual and business account updates.
-- [ ] Add a clear API-level completeness helper contract for frontend (if introduced, keep backward compatible).
-- [ ] Ensure account deletion remains soft delete + safe response.
-- [ ] Ensure data export remains available and complete.
+- [x] Profile fields: verify/update support for identity, phone, WhatsApp, full address, marketing consent.
+- [x] Ensure profile update validation remains explicit and strict in `zod`.
+- [x] Add/confirm API examples for individual and business account updates.
+- [x] Add a clear API-level completeness helper contract for frontend (if introduced, keep backward compatible).
+- [x] Ensure account deletion remains soft delete + safe response.
+- [x] Ensure data export remains available and complete.
 
 Security sub-track:
 
-- [ ] Keep customer password/2FA ownership with Clerk (no duplicate password store in backend).
-- [ ] Document exact frontend integration path for customer security actions (Clerk managed).
-- [ ] Keep internal-only password routes scoped to internal roles and not exposed as customer settings endpoints.
+- [x] Keep customer password/2FA ownership with Clerk (no duplicate password store in backend).
+- [x] Document exact frontend integration path for customer security actions (Clerk managed).
+- [x] Keep internal-only password routes scoped to internal roles and not exposed as customer settings endpoints.
 
 ## 6. Module B: Notifications (Now)
 
 - [ ] Keep inbox retrieval stable for personal + broadcast notifications.
 - [ ] Keep read/unread/saved behavior correct for personal and broadcast records.
 - [ ] Ensure unread badge endpoint remains accurate after read/save toggles.
-- [ ] Add notification preferences model and APIs if required by product scope (email/SMS/in-app toggles).
-- [ ] If preferences are introduced, enforce them in notification send pipelines (email and WhatsApp/SMS paths).
-- [ ] Add migration + indexes for any new notification preference fields.
-- [ ] Add route docs and examples for preference update/read flows.
+- [x] Add notification preferences model and APIs if required by product scope (email/SMS/in-app toggles).
+- [x] If preferences are introduced, enforce them in notification send pipelines (email and WhatsApp/SMS paths).
+- [x] Add migration + indexes for any new notification preference fields.
+- [x] Add route docs and examples for preference update/read flows.
 
 ## 7. Module C: Privacy & Data Controls (Now)
 
-- [ ] Keep `Export my data` path in settings UX and API flow.
-- [ ] Keep `Delete my account` path in settings UX and API flow.
-- [ ] Add explicit confirmation UX/API note for destructive action semantics (soft delete).
-- [ ] Validate behavior for deleted users on subsequent auth attempts.
+- [x] Keep `Export my data` path in settings UX and API flow.
+- [x] Keep `Delete my account` path in settings UX and API flow.
+- [x] Add explicit confirmation UX/API note for destructive action semantics (soft delete).
+- [x] Validate behavior for deleted users on subsequent auth attempts.
 
 ## 8. Testing & Quality Gates (Required Per Step)
 
-- [ ] Unit tests for changed service logic.
+- [x] Unit tests for changed service logic.
 - [ ] Integration tests for changed routes and auth/role protections.
 - [ ] Regression tests for existing settings endpoints.
-- [ ] Negative tests for unauthorized/forbidden access paths.
+- [x] Negative tests for unauthorized/forbidden access paths.
 - [ ] Validation tests for malformed payloads.
 - [ ] Verify no breaking changes in OpenAPI/Swagger output.
 - [ ] Verify lint/typecheck/tests all pass before marking checklist items done.
@@ -101,10 +101,10 @@ Security sub-track:
 ## 9. Delivery Sequence (Step-by-Step Execution Order)
 
 - [ ] Step 1: Lock scope + rules (sections 1-3).
-- [ ] Step 2: Baseline alignment and contract freeze (section 4).
-- [ ] Step 3: Implement and validate Profile & Security (section 5).
+- [x] Step 2: Baseline alignment and contract freeze (section 4).
+- [x] Step 3: Implement and validate Profile & Security (section 5).
 - [ ] Step 4: Implement and validate Notifications (section 6).
-- [ ] Step 5: Implement and validate Privacy controls (section 7).
+- [x] Step 5: Implement and validate Privacy controls (section 7).
 - [ ] Step 6: Complete all quality gates (section 8).
 - [ ] Step 7: Update integration docs and changelog notes for frontend.
 

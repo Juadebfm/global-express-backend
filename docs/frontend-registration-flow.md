@@ -89,7 +89,7 @@ const token = await getToken()  // from useAuth() hook
 }
 ```
 
-**After sync:** Check `isProfileComplete` on the frontend (see logic below). If incomplete, redirect to the profile completion screen.
+**After sync:** call `GET /api/v1/users/me/completeness`. If `isComplete` is false, redirect to the profile completion screen.
 
 ---
 
@@ -105,27 +105,27 @@ The backend requires **all of the following** before a customer can place an ord
 |-------|------|
 | Name | Either (`firstName` + `lastName`) **or** `businessName` — at least one set |
 | `phone` | Required |
-| `whatsappNumber` | Required (can be same as phone — send the same value) |
+| `whatsappNumber` | Optional (can be same as phone) |
 | `addressStreet` | Required |
 | `addressCity` | Required |
 | `addressState` | Required |
 | `addressCountry` | Required |
 | `addressPostalCode` | Required |
 
-### Frontend `isProfileComplete` check
+### Profile completeness endpoint
 
-```ts
-function isProfileComplete(user: UserProfile): boolean {
-  const hasName = (user.firstName && user.lastName) || user.businessName
-  const hasPhone = !!user.phone
-  const hasAddress =
-    user.addressStreet &&
-    user.addressCity &&
-    user.addressState &&
-    user.addressCountry &&
-    user.addressPostalCode
+```http
+GET /api/v1/users/me/completeness
+Authorization: Bearer <clerk_session_jwt>
+```
 
-  return !!(hasName && hasPhone && hasAddress)
+```json
+{
+  "success": true,
+  "data": {
+    "isComplete": false,
+    "missingFields": ["addressStreet", "addressCity", "addressState"]
+  }
 }
 ```
 
@@ -171,7 +171,7 @@ Content-Type: application/json
 ```
 
 > `firstName`/`lastName` are optional if `businessName` is provided, but you can collect both.
-> `whatsappNumber` can be the same value as `phone` — always send it explicitly.
+> `whatsappNumber` can be the same value as `phone` and is optional for profile completeness.
 
 ### Response
 
@@ -204,13 +204,16 @@ async function handleOtpVerification(code: string) {
 
   // 4. Sync to backend
   const token = await getToken()
-  const { data: user } = await apiFetch('/api/v1/auth/sync', {
+  await apiFetch('/api/v1/auth/sync', {
     method: 'POST',
     token,
   })
 
   // 5. Redirect based on profile completeness
-  if (isProfileComplete(user)) {
+  const { data: completeness } = await apiFetch('/api/v1/users/me/completeness', {
+    token,
+  })
+  if (completeness.isComplete) {
     navigate('/dashboard')
   } else {
     navigate('/complete-profile')
@@ -234,7 +237,9 @@ async function handleProfileCompletion(form: ProfileForm) {
 
 ## UX Notes
 
-- **WhatsApp field**: Show a checkbox "My WhatsApp number is the same as my phone number". If checked, copy the phone value into `whatsappNumber` before submitting — always send both fields to the API.
+- **WhatsApp field**: Show a checkbox "My WhatsApp number is the same as my phone number". If checked, copy the phone value into `whatsappNumber` before submitting. `whatsappNumber` remains optional for profile completeness.
 - **Business toggle**: Show a toggle "I'm registering as a business". If on, show `businessName` field (required) + optional `firstName`/`lastName`. If off, show `firstName` + `lastName` (both required).
-- **Profile completion banner**: On the dashboard, show a persistent banner if `isProfileComplete(user)` is false, prompting the user to finish their profile. Block the "New Order" button until complete.
+- **Profile completion banner**: On the dashboard, call `/api/v1/users/me/completeness`. If `isComplete` is false, show a persistent banner prompting the user to finish profile fields. Block the "New Order" button until complete.
 - **Order creation 422**: If the backend returns `422` on `POST /api/v1/orders`, redirect the user to the profile completion screen.
+
+

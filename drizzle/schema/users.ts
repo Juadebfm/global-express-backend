@@ -40,6 +40,10 @@ export const users = pgTable('users', {
   role: userRoleEnum('role').notNull().default('user'),
   isActive: boolean('is_active').notNull().default(true),
   consentMarketing: boolean('consent_marketing').notNull().default(false),
+  // Notification channel preferences (transactional events)
+  notifyEmailAlerts: boolean('notify_email_alerts').notNull().default(true),
+  notifySmsAlerts: boolean('notify_sms_alerts').notNull().default(true),
+  notifyInAppAlerts: boolean('notify_in_app_alerts').notNull().default(true),
 
   // Soft delete — never hard delete user records
   deletedAt: timestamp('deleted_at'),

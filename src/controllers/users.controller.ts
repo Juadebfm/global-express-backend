@@ -16,6 +16,16 @@ export const usersController = {
     return reply.send(successResponse(user))
   },
 
+  async getMyProfileCompleteness(request: FastifyRequest, reply: FastifyReply) {
+    const user = await usersService.getUserById(request.user.id)
+
+    if (!user) {
+      return reply.code(404).send({ success: false, message: 'User not found' })
+    }
+
+    return reply.send(successResponse(usersService.getProfileCompleteness(user)))
+  },
+
   async updateMe(
     request: FastifyRequest<{
       Body: {
@@ -30,6 +40,9 @@ export const usersController = {
         addressCountry?: string | null
         addressPostalCode?: string | null
         consentMarketing?: boolean
+        notifyEmailAlerts?: boolean
+        notifySmsAlerts?: boolean
+        notifyInAppAlerts?: boolean
       }
     }>,
     reply: FastifyReply,
@@ -58,6 +71,38 @@ export const usersController = {
     // GDPR: user can export all their personal data
     const data = await usersService.exportUserData(request.user.id)
     return reply.send(successResponse(data))
+  },
+
+  async getMyNotificationPreferences(request: FastifyRequest, reply: FastifyReply) {
+    const preferences = await usersService.getNotificationPreferences(request.user.id)
+    if (!preferences) {
+      return reply.code(404).send({ success: false, message: 'User not found' })
+    }
+
+    return reply.send(successResponse(preferences))
+  },
+
+  async updateMyNotificationPreferences(
+    request: FastifyRequest<{
+      Body: {
+        notifyEmailAlerts?: boolean
+        notifySmsAlerts?: boolean
+        notifyInAppAlerts?: boolean
+        consentMarketing?: boolean
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const preferences = await usersService.updateNotificationPreferences(
+      request.user.id,
+      request.body,
+    )
+
+    if (!preferences) {
+      return reply.code(404).send({ success: false, message: 'User not found' })
+    }
+
+    return reply.send(successResponse(preferences))
   },
 
   async listUsers(

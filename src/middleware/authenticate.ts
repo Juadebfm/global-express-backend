@@ -1,4 +1,4 @@
-import type { FastifyRequest, FastifyReply } from 'fastify'
+﻿import type { FastifyRequest, FastifyReply } from 'fastify'
 import { createClerkClient, verifyToken as verifyClerkToken } from '@clerk/backend'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
@@ -12,13 +12,13 @@ import { adminNotificationsService } from '../services/admin-notifications.servi
 const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY })
 
 /**
- * Unified authentication middleware — handles two token types:
+ * Unified authentication middleware â€” handles two token types:
  *
- *   1. Internal JWT  — issued by POST /api/v1/internal/auth/login
+ *   1. Internal JWT  â€” issued by POST /api/v1/internal/auth/login
  *                      for staff / admin / superadmin accounts.
  *                      Identified by `type: 'internal'` claim in the payload.
  *
- *   2. Clerk JWT     — issued by Clerk after customer sign-in.
+ *   2. Clerk JWT     â€” issued by Clerk after customer sign-in.
  *                      All other Bearer tokens fall into this path.
  *
  * Attaches `request.user` identically for both paths.
@@ -33,13 +33,13 @@ export async function authenticate(
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     reply
       .code(401)
-      .send({ success: false, message: 'Unauthorized — missing or invalid Authorization header' })
+      .send({ success: false, message: 'Unauthorized â€” missing or invalid Authorization header' })
     return
   }
 
   const token = authHeader.slice(7)
 
-  // ─── Peek at the JWT payload without verifying — check for internal token ──
+  // â”€â”€â”€ Peek at the JWT payload without verifying â€” check for internal token â”€â”€
   // We decode (not verify) to read the `type` claim so we know which path to take.
   // Actual verification happens inside each branch.
   let tokenType: string | undefined
@@ -50,17 +50,17 @@ export async function authenticate(
       tokenType = decoded?.type
     }
   } catch {
-    // malformed token — will fail in the appropriate branch below
+    // malformed token â€” will fail in the appropriate branch below
   }
 
-  // ─── Branch 1: Internal JWT ───────────────────────────────────────────────
+  // â”€â”€â”€ Branch 1: Internal JWT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (tokenType === 'internal') {
     let payload: ReturnType<typeof internalAuthService.verifyToken>
 
     try {
       payload = internalAuthService.verifyToken(token)
     } catch {
-      reply.code(401).send({ success: false, message: 'Unauthorized — invalid or expired token' })
+      reply.code(401).send({ success: false, message: 'Unauthorized â€” invalid or expired token' })
       return
     }
 
@@ -72,12 +72,12 @@ export async function authenticate(
         .limit(1)
 
       if (!user) {
-        reply.code(401).send({ success: false, message: 'Unauthorized — account not found' })
+        reply.code(401).send({ success: false, message: 'Unauthorized â€” account not found' })
         return
       }
 
       if (!user.isActive) {
-        reply.code(403).send({ success: false, message: 'Forbidden — account is inactive' })
+        reply.code(403).send({ success: false, message: 'Forbidden â€” account is inactive' })
         return
       }
 
@@ -95,20 +95,20 @@ export async function authenticate(
     return
   }
 
-  // ─── Branch 2: Clerk JWT (customers) ─────────────────────────────────────
+  // â”€â”€â”€ Branch 2: Clerk JWT (customers) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let clerkId: string
 
   try {
     const payload = await verifyClerkToken(token, { secretKey: env.CLERK_SECRET_KEY })
 
     if (!payload?.sub) {
-      reply.code(401).send({ success: false, message: 'Unauthorized — invalid token payload' })
+      reply.code(401).send({ success: false, message: 'Unauthorized â€” invalid token payload' })
       return
     }
 
     clerkId = payload.sub
   } catch {
-    reply.code(401).send({ success: false, message: 'Unauthorized — token verification failed' })
+    reply.code(401).send({ success: false, message: 'Unauthorized â€” token verification failed' })
     return
   }
 
@@ -121,7 +121,7 @@ export async function authenticate(
 
     if (existingUser) {
       if (!existingUser.isActive) {
-        reply.code(403).send({ success: false, message: 'Forbidden — account is inactive' })
+        reply.code(403).send({ success: false, message: 'Forbidden â€” account is inactive' })
         return
       }
 
@@ -134,7 +134,19 @@ export async function authenticate(
       return
     }
 
-    // User authenticated with Clerk but not yet in our DB — auto-provision on first login
+    // If a soft-deleted user exists with this Clerk ID, do not auto-reprovision.
+    // This preserves account deletion semantics and avoids unique constraint conflicts.
+    const [deletedUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.clerkId, clerkId))
+      .limit(1)
+
+    if (deletedUser) {
+      reply.code(403).send({ success: false, message: 'Forbidden — account has been deleted' })
+      return
+    }
+    // User authenticated with Clerk but not yet in our DB â€” auto-provision on first login
     const clerkUser = await clerk.users.getUser(clerkId)
     const primaryEmail = clerkUser.emailAddresses.find(
       (e) => e.id === clerkUser.primaryEmailAddressId,
@@ -143,7 +155,7 @@ export async function authenticate(
     if (!primaryEmail) {
       reply
         .code(422)
-        .send({ success: false, message: 'Unprocessable — no verified email found in Clerk' })
+        .send({ success: false, message: 'Unprocessable â€” no verified email found in Clerk' })
       return
     }
 
@@ -177,3 +189,4 @@ export async function authenticate(
     reply.code(500).send({ success: false, message: 'Internal server error during authentication' })
   }
 }
+

@@ -241,6 +241,9 @@ export const ordersController = {
       updatedBy: request.user.id,
       senderEmail: sender?.email,
       senderPhone: sender?.phone ?? undefined,
+      notifyEmailAlerts: sender?.notifyEmailAlerts,
+      notifySmsAlerts: sender?.notifySmsAlerts,
+      notifyInAppAlerts: sender?.notifyInAppAlerts,
     })
 
     if (!updated) {

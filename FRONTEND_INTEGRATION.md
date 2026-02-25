@@ -53,7 +53,7 @@ The signup form must collect **all of the following** in one flow (not split int
 | `email` | Yes | Used for Clerk auth |
 | `password` | Yes | Used for Clerk auth |
 | `phone` | Yes | Direct line (e.g. +2348012345678) |
-| `whatsappNumber` | Yes | WhatsApp number (can be same as phone) |
+| `whatsappNumber` | Optional | WhatsApp number (can be same as phone) |
 | `addressStreet` | Yes | Flat field — not nested |
 | `addressCity` | Yes | |
 | `addressState` | Yes | |
@@ -178,7 +178,7 @@ function SignUpPage() {
 1. **Step 1** — User fills email + password + name → Clerk creates account, sends verification email
 2. **Step 2** — User enters OTP code from email → Clerk verifies, creates session
 3. (Clerk webhook fires in the background → backend auto-creates the user record)
-4. **Step 3** — User fills phone, WhatsApp, address → frontend calls `PATCH /api/v1/users/me` → profile saved
+4. **Step 3** - User fills phone, address, and optional WhatsApp -> frontend calls `PATCH /api/v1/users/me` -> profile saved
 5. **Done** — User is fully registered with complete profile, redirect to dashboard
 
 > **Important:** Step 3 must complete before the user can place orders. If they close the browser after step 2, they will be prompted to complete their details on next login (see section 3 below).
@@ -200,25 +200,11 @@ Or use `useSignIn()` hook for a fully custom login form.
 
 ## 3. Guard: Incomplete Profile After Login
 
-On login, call `GET /api/v1/users/me` and compute profile completeness from the returned fields.
-The API does **not** return an `isProfileComplete` flag — compute it yourself:
+On login, call `GET /api/v1/users/me/completeness` and use the API response directly.
 
 ```tsx
 import { useEffect } from 'react'
 import { useAuth } from '@clerk/clerk-react'
-
-// Mirror the same logic the backend uses in usersService.isProfileComplete()
-function isProfileComplete(user: any): boolean {
-  const hasName = (user.firstName && user.lastName) || user.businessName
-  const hasPhone = !!user.phone
-  const hasAddress =
-    !!user.addressStreet &&
-    !!user.addressCity &&
-    !!user.addressState &&
-    !!user.addressCountry &&
-    !!user.addressPostalCode
-  return !!(hasName && hasPhone && hasAddress)
-}
 
 function AppGuard({ children }) {
   const { isSignedIn } = useAuth()
@@ -226,14 +212,68 @@ function AppGuard({ children }) {
 
   useEffect(() => {
     if (!isSignedIn) return
-    authFetch('/users/me').then(res => {
-      if (res.success && !isProfileComplete(res.data)) {
+    authFetch('/users/me/completeness').then(res => {
+      if (res.success && !res.data.isComplete) {
         window.location.href = '/complete-profile'
       }
     })
   }, [isSignedIn])
 
   return children
+}
+```
+
+Response shape:
+
+```json
+{
+  "success": true,
+  "data": {
+    "isComplete": false,
+    "missingFields": ["addressStreet", "addressCity", "addressState"]
+  }
+}
+```
+
+---
+
+## 3.1 Account Security (Customer)
+
+Customer account security is owned by Clerk, not backend customer endpoints.
+
+- Password reset and forgot-password flows: use Clerk SDK flows.
+- 2FA and session/device security: use Clerk account security management.
+- Do not call internal operator password endpoints from customer UI.
+
+Backend guardrails:
+
+- `PATCH /api/v1/internal/me/password` is restricted to internal roles (`staff`, `admin`, `superadmin`).
+- Customer settings should link to Clerk security UI for password/2FA actions.
+
+---
+
+## 3.2 Notification Preferences (Customer)
+
+Use these endpoints for settings toggles:
+
+- `GET /api/v1/users/me/notification-preferences`
+- `PATCH /api/v1/users/me/notification-preferences`
+
+Patch body fields (all optional):
+
+- `notifyEmailAlerts` (transactional emails)
+- `notifySmsAlerts` (SMS/WhatsApp alerts)
+- `notifyInAppAlerts` (in-app alerts)
+- `consentMarketing` (marketing emails)
+
+Example:
+
+```json
+{
+  "notifyEmailAlerts": true,
+  "notifySmsAlerts": false,
+  "notifyInAppAlerts": true,
+  "consentMarketing": false
 }
 ```
 
@@ -411,13 +451,15 @@ Landing Page
   └─ Sign Up
        ├─ Step 1: Email + Password + Name  (Clerk creates account)
        ├─ Step 2: Email OTP verification   (Clerk sends code)
-       └─ Step 3: Phone + WhatsApp + Address  (PATCH /api/v1/users/me)
+       └─ Step 3: Phone + Address (+ optional WhatsApp)  (PATCH /api/v1/users/me)
             └─ Dashboard
                  ├─ My Shipments  (GET /orders/my-shipments)
                  ├─ Track Shipment  (GET /orders/track/:trackingNumber)
                  ├─ Create Order  (POST /orders)
                  │    └─ Pay  (POST /payments/initialize → redirect → verify)
-                 └─ Account Settings  (PATCH /users/me)
+                 └─ Account Settings
+                      ├─ Profile  (PATCH /users/me)
+                      └─ Notification Prefs  (GET/PATCH /users/me/notification-preferences)
 ```
 
 ---
@@ -429,3 +471,4 @@ VITE_CLERK_PUBLISHABLE_KEY=pk_live_...
 VITE_API_BASE_URL=https://your-app-name-snowy-waterfall-9062.fly.dev/api/v1
 VITE_WS_URL=wss://your-app-name-snowy-waterfall-9062.fly.dev/ws
 ```
+

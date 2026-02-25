@@ -9,7 +9,7 @@ import { UserRole } from '../types/enums'
 
 const userResponseSchema = z.object({
   id: z.string().uuid().describe('Internal user UUID'),
-  clerkId: z.string().describe('Clerk external user ID'),
+  clerkId: z.string().nullable().describe('Clerk external user ID (null for internal accounts)'),
   // Identity
   email: z.string().email().describe('Primary email address (decrypted)'),
   firstName: z.string().nullable().describe('First name (null if business account)'),
@@ -28,9 +28,36 @@ const userResponseSchema = z.object({
   role: z.nativeEnum(UserRole).describe('Account role: user | staff | admin | superadmin'),
   isActive: z.boolean().describe('Whether the account is active'),
   consentMarketing: z.boolean().describe('Marketing email consent'),
+  notifyEmailAlerts: z.boolean().describe('Whether transactional email alerts are enabled'),
+  notifySmsAlerts: z.boolean().describe('Whether SMS/WhatsApp alerts are enabled'),
+  notifyInAppAlerts: z.boolean().describe('Whether in-app alerts are enabled'),
   deletedAt: z.string().nullable().describe('Soft-delete timestamp (null = active)'),
   createdAt: z.string(),
   updatedAt: z.string(),
+})
+
+const profileCompletenessSchema = z.object({
+  isComplete: z.boolean().describe('Whether the profile has all fields required for order creation'),
+  missingFields: z
+    .array(
+      z.enum([
+        'name',
+        'phone',
+        'addressStreet',
+        'addressCity',
+        'addressState',
+        'addressCountry',
+        'addressPostalCode',
+      ]),
+    )
+    .describe('List of missing required fields. Empty when profile is complete.'),
+})
+
+const notificationPreferencesSchema = z.object({
+  notifyEmailAlerts: z.boolean().describe('Enable/disable transactional email alerts'),
+  notifySmsAlerts: z.boolean().describe('Enable/disable SMS/WhatsApp alerts'),
+  notifyInAppAlerts: z.boolean().describe('Enable/disable in-app alerts'),
+  consentMarketing: z.boolean().describe('Enable/disable marketing emails'),
 })
 
 export async function usersRoutes(fastify: FastifyInstance): Promise<void> {
@@ -52,6 +79,28 @@ export async function usersRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     handler: usersController.getMe,
+  })
+
+  app.get('/me/completeness', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'Get current user profile completeness',
+      description: `Returns whether the authenticated profile is complete enough to place an order.
+
+Rules:
+- Name requirement: either (\`firstName\` + \`lastName\`) or \`businessName\`
+- \`phone\` is required
+- Full address is required (\`addressStreet\`, \`addressCity\`, \`addressState\`, \`addressCountry\`, \`addressPostalCode\`)
+- \`whatsappNumber\` is optional for completeness`,
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({ success: z.literal(true), data: profileCompletenessSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.getMyProfileCompleteness,
   })
 
   app.patch('/me', {
@@ -105,6 +154,9 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
         addressCountry: z.string().min(1).nullable().optional().describe('Country'),
         addressPostalCode: z.string().min(1).nullable().optional().describe('Postal / ZIP code'),
         consentMarketing: z.boolean().optional().describe('Opt in/out of marketing emails'),
+        notifyEmailAlerts: z.boolean().optional().describe('Enable/disable transactional email alerts'),
+        notifySmsAlerts: z.boolean().optional().describe('Enable/disable SMS/WhatsApp alerts'),
+        notifyInAppAlerts: z.boolean().optional().describe('Enable/disable in-app alerts'),
       }),
       response: {
         200: z.object({ success: z.literal(true), data: userResponseSchema }),
@@ -112,6 +164,46 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
       },
     },
     handler: usersController.updateMe,
+  })
+
+  app.get('/me/notification-preferences', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'Get current user notification preferences',
+      description:
+        'Returns channel-level notification preferences for the authenticated user.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({ success: z.literal(true), data: notificationPreferencesSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.getMyNotificationPreferences,
+  })
+
+  app.patch('/me/notification-preferences', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'Update current user notification preferences',
+      description:
+        'Updates channel-level notification preferences for the authenticated user. All fields are optional.',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        notifyEmailAlerts: z.boolean().optional().describe('Enable/disable transactional email alerts'),
+        notifySmsAlerts: z.boolean().optional().describe('Enable/disable SMS/WhatsApp alerts'),
+        notifyInAppAlerts: z.boolean().optional().describe('Enable/disable in-app alerts'),
+        consentMarketing: z.boolean().optional().describe('Enable/disable marketing emails'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: notificationPreferencesSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.updateMyNotificationPreferences,
   })
 
   app.delete('/me', {

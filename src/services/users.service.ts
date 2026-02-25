@@ -29,9 +29,41 @@ export interface UpdateUserInput {
   addressPostalCode?: string | null
   isActive?: boolean
   consentMarketing?: boolean
+  notifyEmailAlerts?: boolean
+  notifySmsAlerts?: boolean
+  notifyInAppAlerts?: boolean
+}
+
+export interface UpdateNotificationPreferencesInput {
+  notifyEmailAlerts?: boolean
+  notifySmsAlerts?: boolean
+  notifyInAppAlerts?: boolean
+  consentMarketing?: boolean
+}
+
+export interface NotificationPreferences {
+  notifyEmailAlerts: boolean
+  notifySmsAlerts: boolean
+  notifyInAppAlerts: boolean
+  consentMarketing: boolean
 }
 
 export type UserRecord = Awaited<ReturnType<UsersService['getUserById']>>
+export type DecryptedUser = NonNullable<UserRecord>
+
+export type ProfileCompletenessMissingField =
+  | 'name'
+  | 'phone'
+  | 'addressStreet'
+  | 'addressCity'
+  | 'addressState'
+  | 'addressCountry'
+  | 'addressPostalCode'
+
+export interface ProfileCompletenessResult {
+  isComplete: boolean
+  missingFields: ProfileCompletenessMissingField[]
+}
 
 export class UsersService {
   async createUser(input: CreateUserInput) {
@@ -100,6 +132,9 @@ export class UsersService {
     if (input.addressPostalCode !== undefined) patch.addressPostalCode = input.addressPostalCode
     if (input.isActive !== undefined) patch.isActive = input.isActive
     if (input.consentMarketing !== undefined) patch.consentMarketing = input.consentMarketing
+    if (input.notifyEmailAlerts !== undefined) patch.notifyEmailAlerts = input.notifyEmailAlerts
+    if (input.notifySmsAlerts !== undefined) patch.notifySmsAlerts = input.notifySmsAlerts
+    if (input.notifyInAppAlerts !== undefined) patch.notifyInAppAlerts = input.notifyInAppAlerts
 
     const [updated] = await db
       .update(users)
@@ -108,6 +143,47 @@ export class UsersService {
       .returning()
 
     return updated ? this.decryptUser(updated) : null
+  }
+
+  async getNotificationPreferences(id: string): Promise<NotificationPreferences | null> {
+    const user = await this.getUserById(id)
+    if (!user) return null
+
+    return {
+      notifyEmailAlerts: user.notifyEmailAlerts,
+      notifySmsAlerts: user.notifySmsAlerts,
+      notifyInAppAlerts: user.notifyInAppAlerts,
+      consentMarketing: user.consentMarketing,
+    }
+  }
+
+  async updateNotificationPreferences(
+    id: string,
+    input: UpdateNotificationPreferencesInput,
+  ): Promise<NotificationPreferences | null> {
+    const patch: Partial<typeof users.$inferInsert> = {
+      updatedAt: new Date(),
+    }
+
+    if (input.notifyEmailAlerts !== undefined) patch.notifyEmailAlerts = input.notifyEmailAlerts
+    if (input.notifySmsAlerts !== undefined) patch.notifySmsAlerts = input.notifySmsAlerts
+    if (input.notifyInAppAlerts !== undefined) patch.notifyInAppAlerts = input.notifyInAppAlerts
+    if (input.consentMarketing !== undefined) patch.consentMarketing = input.consentMarketing
+
+    const [updated] = await db
+      .update(users)
+      .set(patch)
+      .where(and(eq(users.id, id), isNull(users.deletedAt)))
+      .returning()
+
+    if (!updated) return null
+
+    return {
+      notifyEmailAlerts: updated.notifyEmailAlerts,
+      notifySmsAlerts: updated.notifySmsAlerts,
+      notifyInAppAlerts: updated.notifyInAppAlerts,
+      consentMarketing: updated.consentMarketing,
+    }
   }
 
   async updateUserRole(id: string, role: UserRole) {
@@ -207,22 +283,32 @@ export class UsersService {
   }
 
   /**
-   * Returns true if the user has all fields required to place an order:
+   * Returns profile completeness and missing field keys required to place an order:
    *   - At least one of: (firstName + lastName) or businessName
    *   - phone
    *   - all 5 address fields
    */
-  isProfileComplete(user: ReturnType<UsersService['decryptUser']>): boolean {
-    const hasName = (user.firstName && user.lastName) || user.businessName
-    const hasPhone = !!user.phone
-    const hasAddress =
-      !!user.addressStreet &&
-      !!user.addressCity &&
-      !!user.addressState &&
-      !!user.addressCountry &&
-      !!user.addressPostalCode
+  getProfileCompleteness(user: DecryptedUser): ProfileCompletenessResult {
+    const missingFields: ProfileCompletenessMissingField[] = []
 
-    return !!(hasName && hasPhone && hasAddress)
+    const hasName = (user.firstName && user.lastName) || user.businessName
+    if (!hasName) missingFields.push('name')
+
+    if (!user.phone) missingFields.push('phone')
+    if (!user.addressStreet) missingFields.push('addressStreet')
+    if (!user.addressCity) missingFields.push('addressCity')
+    if (!user.addressState) missingFields.push('addressState')
+    if (!user.addressCountry) missingFields.push('addressCountry')
+    if (!user.addressPostalCode) missingFields.push('addressPostalCode')
+
+    return {
+      isComplete: missingFields.length === 0,
+      missingFields,
+    }
+  }
+
+  isProfileComplete(user: DecryptedUser): boolean {
+    return this.getProfileCompleteness(user).isComplete
   }
 
   private decryptUser(user: typeof users.$inferSelect) {
@@ -236,6 +322,9 @@ export class UsersService {
       whatsappNumber: user.whatsappNumber ? decrypt(user.whatsappNumber) : null,
       addressStreet: user.addressStreet ? decrypt(user.addressStreet) : null,
       // city/state/country/postalCode are stored plain
+      notifyEmailAlerts: user.notifyEmailAlerts,
+      notifySmsAlerts: user.notifySmsAlerts,
+      notifyInAppAlerts: user.notifyInAppAlerts,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
       deletedAt: user.deletedAt?.toISOString() ?? null,
