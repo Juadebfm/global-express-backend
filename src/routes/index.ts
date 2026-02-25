@@ -11,6 +11,10 @@ import { reportsRoutes } from './reports.routes'
 import { webhooksRoutes } from './webhooks.routes'
 import { internalRoutes } from './internal.routes'
 import { dashboardRoutes } from './dashboard.routes'
+import { notificationsRoutes } from './notifications.routes'
+import { shipmentsRoutes } from './shipments.routes'
+import { teamRoutes } from './team.routes'
+import { adminRoutes } from './admin.routes'
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
@@ -42,4 +46,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(webhooksRoutes, { prefix: '/webhooks' })
   await app.register(internalRoutes, { prefix: '/api/v1/internal' })
   await app.register(dashboardRoutes, { prefix: '/api/v1/dashboard' })
+  await app.register(notificationsRoutes, { prefix: '/api/v1/notifications' })
+  await app.register(shipmentsRoutes, { prefix: '/api/v1/shipments' })
+  await app.register(teamRoutes, { prefix: '/api/v1/team' })
+  await app.register(adminRoutes, { prefix: '/api/v1/admin' })
 }

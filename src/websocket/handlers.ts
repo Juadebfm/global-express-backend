@@ -126,6 +126,21 @@ export async function handleWebSocketConnection(
 }
 
 /**
+ * Broadcasts a JSON payload to every open WebSocket connection (all users).
+ * Used for system-wide announcements.
+ */
+export function broadcastToAll(data: unknown): void {
+  const message = JSON.stringify(data)
+  for (const [, sockets] of connectedClients) {
+    for (const socket of sockets) {
+      if (socket.readyState === socket.OPEN) {
+        socket.send(message)
+      }
+    }
+  }
+}
+
+/**
  * Broadcasts a JSON payload to all open sockets for a specific user.
  * No-ops silently if the user has no active connections.
  */

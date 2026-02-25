@@ -1,4 +1,4 @@
-import { sql, eq, isNull, and, gte } from 'drizzle-orm'
+import { sql, eq, isNull, and, gte, lt } from 'drizzle-orm'
 import { db } from '../config/db'
 import { orders, payments } from '../../drizzle/schema'
 import { OrderStatus, UserRole } from '../types/enums'
@@ -41,6 +41,9 @@ export class DashboardService {
     const now = new Date()
     const now30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
     const now60 = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000)
+    // Raw sql templates need ISO strings — the postgres driver can't serialize Date objects in FILTER clauses
+    const now30s = now30.toISOString()
+    const now60s = now60.toISOString()
 
     const userFilter = isCustomer ? eq(orders.senderId, userId) : undefined
 
@@ -84,14 +87,14 @@ export class DashboardService {
     // current = last 30 days | prev = days 31–60 ago
     const changeQuery = db
       .select({
-        currentOrders:    sql<number>`count(*) filter (where created_at >= ${now30})::int`,
-        prevOrders:       sql<number>`count(*) filter (where created_at >= ${now60} and created_at < ${now30})::int`,
-        currentActive:    sql<number>`count(*) filter (where status in ('in_transit', 'out_for_delivery') and created_at >= ${now30})::int`,
-        prevActive:       sql<number>`count(*) filter (where status in ('in_transit', 'out_for_delivery') and created_at >= ${now60} and created_at < ${now30})::int`,
-        currentPending:   sql<number>`count(*) filter (where status in ('pending', 'picked_up') and created_at >= ${now30})::int`,
-        prevPending:      sql<number>`count(*) filter (where status in ('pending', 'picked_up') and created_at >= ${now60} and created_at < ${now30})::int`,
-        currentDelivered: sql<number>`count(*) filter (where status = 'delivered' and updated_at >= ${now30})::int`,
-        prevDelivered:    sql<number>`count(*) filter (where status = 'delivered' and updated_at >= ${now60} and updated_at < ${now30})::int`,
+        currentOrders:    sql<number>`count(*) filter (where created_at >= ${now30s}::timestamptz)::int`,
+        prevOrders:       sql<number>`count(*) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
+        currentActive:    sql<number>`count(*) filter (where status in ('in_transit', 'out_for_delivery') and created_at >= ${now30s}::timestamptz)::int`,
+        prevActive:       sql<number>`count(*) filter (where status in ('in_transit', 'out_for_delivery') and created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
+        currentPending:   sql<number>`count(*) filter (where status in ('pending', 'picked_up') and created_at >= ${now30s}::timestamptz)::int`,
+        prevPending:      sql<number>`count(*) filter (where status in ('pending', 'picked_up') and created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
+        currentDelivered: sql<number>`count(*) filter (where status = 'delivered' and updated_at >= ${now30s}::timestamptz)::int`,
+        prevDelivered:    sql<number>`count(*) filter (where status = 'delivered' and updated_at >= ${now60s}::timestamptz and updated_at < ${now30s}::timestamptz)::int`,
       })
       .from(orders)
       .where(and(isNull(orders.deletedAt), userFilter))
@@ -100,15 +103,15 @@ export class DashboardService {
     const finChangeQuery = isCustomer
       ? db
           .select({
-            current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30}), 0)::text`,
-            prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60} and created_at < ${now30}), 0)::text`,
+            current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30s}::timestamptz), 0)::text`,
+            prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz), 0)::text`,
           })
           .from(payments)
           .where(and(eq(payments.userId, userId), sql`status = 'successful'`))
       : db
           .select({
-            current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30}), 0)::text`,
-            prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60} and created_at < ${now30}), 0)::text`,
+            current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30s}::timestamptz), 0)::text`,
+            prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz), 0)::text`,
           })
           .from(payments)
           .where(sql`status = 'successful'`)
@@ -177,7 +180,7 @@ export class DashboardService {
         and(
           isNull(orders.deletedAt),
           gte(orders.createdAt, yearStart),
-          sql`created_at < ${yearEnd}`,
+          lt(orders.createdAt, yearEnd),
           isCustomer ? eq(orders.senderId, userId) : undefined,
         ),
       )

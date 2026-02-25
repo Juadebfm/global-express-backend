@@ -7,8 +7,29 @@ import { generateTrackingNumber } from '../utils/tracking'
 import { broadcastToUser } from '../websocket/handlers'
 import { sendOrderStatusUpdateEmail } from '../notifications/email'
 import { sendOrderStatusWhatsApp } from '../notifications/whatsapp'
+import { notifyUser } from './notifications.service'
 import type { PaginationParams } from '../types'
 import { OrderStatus } from '../types/enums'
+
+const ORDER_STATUS_TITLES: Record<string, string> = {
+  pending:           'Order Received',
+  picked_up:         'Order Picked Up',
+  in_transit:        'Shipment In Transit',
+  out_for_delivery:  'Out for Delivery',
+  delivered:         'Order Delivered',
+  cancelled:         'Order Cancelled',
+  returned:          'Order Returned',
+}
+
+const ORDER_STATUS_BODIES: Record<string, (tracking: string) => string> = {
+  pending:           (t) => `Your order ${t} has been received and is being processed.`,
+  picked_up:         (t) => `Your package ${t} has been picked up and is on its way to the warehouse.`,
+  in_transit:        (t) => `Your shipment ${t} is now in transit to its destination.`,
+  out_for_delivery:  (t) => `Your package ${t} is out for delivery and should arrive soon.`,
+  delivered:         (t) => `Your order ${t} has been delivered successfully.`,
+  cancelled:         (t) => `Your order ${t} has been cancelled.`,
+  returned:          (t) => `Your order ${t} has been returned to sender.`,
+}
 
 export interface CreateOrderInput {
   senderId: string
@@ -106,6 +127,17 @@ export class OrdersService {
         trackingNumber: updated.trackingNumber,
         status: updated.status,
       },
+    })
+
+    // Persist in-app notification for the sender (fire-and-forget)
+    notifyUser({
+      userId: updated.senderId,
+      orderId: updated.id,
+      type: 'order_status_update',
+      title: ORDER_STATUS_TITLES[input.status] ?? 'Order Updated',
+      subtitle: decrypted.trackingNumber,
+      body: (ORDER_STATUS_BODIES[input.status] ?? ((t: string) => `Order ${t} has been updated.`))(decrypted.trackingNumber),
+      metadata: { orderId: updated.id, trackingNumber: updated.trackingNumber, status: input.status },
     })
 
     // Send notifications (fire-and-forget — don't let notification failures block the response)

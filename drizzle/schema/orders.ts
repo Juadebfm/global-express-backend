@@ -5,6 +5,7 @@ import {
   timestamp,
   pgEnum,
   numeric,
+  integer,
   index,
 } from 'drizzle-orm/pg-core'
 import { users } from './users'
@@ -52,6 +53,7 @@ export const orders = pgTable(
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),
+    packageCount: integer('package_count').notNull().default(1),
     // Soft delete — no cascading hard deletes on orders
     deletedAt: timestamp('deleted_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
