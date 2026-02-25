@@ -1,6 +1,7 @@
 import { pgTable, uuid, text, timestamp, pgEnum, boolean } from 'drizzle-orm/pg-core'
 
 export const userRoleEnum = pgEnum('user_role', ['superadmin', 'admin', 'staff', 'user'])
+export const preferredLanguageEnum = pgEnum('preferred_language', ['en', 'ko'])
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -44,6 +45,7 @@ export const users = pgTable('users', {
   notifyEmailAlerts: boolean('notify_email_alerts').notNull().default(true),
   notifySmsAlerts: boolean('notify_sms_alerts').notNull().default(true),
   notifyInAppAlerts: boolean('notify_in_app_alerts').notNull().default(true),
+  preferredLanguage: preferredLanguageEnum('preferred_language').notNull().default('en'),
 
   // Soft delete — never hard delete user records
   deletedAt: timestamp('deleted_at'),

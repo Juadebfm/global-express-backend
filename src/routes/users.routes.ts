@@ -5,7 +5,7 @@ import { usersController } from '../controllers/users.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
 import { ipWhitelist } from '../middleware/ipWhitelist'
-import { UserRole } from '../types/enums'
+import { PreferredLanguage, UserRole } from '../types/enums'
 
 const userResponseSchema = z.object({
   id: z.string().uuid().describe('Internal user UUID'),
@@ -31,6 +31,9 @@ const userResponseSchema = z.object({
   notifyEmailAlerts: z.boolean().describe('Whether transactional email alerts are enabled'),
   notifySmsAlerts: z.boolean().describe('Whether SMS/WhatsApp alerts are enabled'),
   notifyInAppAlerts: z.boolean().describe('Whether in-app alerts are enabled'),
+  preferredLanguage: z
+    .nativeEnum(PreferredLanguage)
+    .describe('Preferred language for localized dynamic content'),
   deletedAt: z.string().nullable().describe('Soft-delete timestamp (null = active)'),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -157,6 +160,10 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
         notifyEmailAlerts: z.boolean().optional().describe('Enable/disable transactional email alerts'),
         notifySmsAlerts: z.boolean().optional().describe('Enable/disable SMS/WhatsApp alerts'),
         notifyInAppAlerts: z.boolean().optional().describe('Enable/disable in-app alerts'),
+        preferredLanguage: z
+          .nativeEnum(PreferredLanguage)
+          .optional()
+          .describe('Preferred language: en | ko'),
       }),
       response: {
         200: z.object({ success: z.literal(true), data: userResponseSchema }),
@@ -335,6 +342,10 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
         addressCountry: z.string().min(1).nullable().optional().describe('Country'),
         addressPostalCode: z.string().min(1).nullable().optional().describe('Postal code'),
         isActive: z.boolean().optional().describe('Activate or deactivate the account'),
+        preferredLanguage: z
+          .nativeEnum(PreferredLanguage)
+          .optional()
+          .describe('Preferred language: en | ko'),
       }),
       response: {
         200: z.object({ success: z.literal(true), data: userResponseSchema }),

@@ -2,7 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { usersService } from '../services/users.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
-import { UserRole } from '../types/enums'
+import { PreferredLanguage, UserRole } from '../types/enums'
 import type { PaginationParams } from '../types'
 
 export const usersController = {
@@ -43,6 +43,7 @@ export const usersController = {
         notifyEmailAlerts?: boolean
         notifySmsAlerts?: boolean
         notifyInAppAlerts?: boolean
+        preferredLanguage?: PreferredLanguage
       }
     }>,
     reply: FastifyReply,
@@ -149,6 +150,7 @@ export const usersController = {
         addressCountry?: string | null
         addressPostalCode?: string | null
         isActive?: boolean
+        preferredLanguage?: PreferredLanguage
       }
     }>,
     reply: FastifyReply,

@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
-import { OrderStatus, OrderDirection, ShipmentType, Priority } from '../types/enums'
+import { OrderStatus, OrderDirection, ShipmentType, Priority, TransportMode } from '../types/enums'
 
 const orderResponseSchema = z.object({
   id: z.string().uuid().describe('Order UUID'),
@@ -22,14 +22,82 @@ const orderResponseSchema = z.object({
   declaredValue: z.string().nullable().describe('Declared monetary value (e.g. "15000")'),
   description: z.string().nullable().describe('Package description / contents'),
   shipmentType: z.nativeEnum(ShipmentType).nullable().describe('Transport mode: air | ocean | road'),
+  transportMode: z.nativeEnum(TransportMode).nullable().describe('Normalized transport mode for V2 flow: air | sea'),
+  isPreorder: z.boolean().describe('Whether the order was created as a pre-order'),
   priority: z.nativeEnum(Priority).nullable().describe('Service priority: standard | express | economy'),
   departureDate: z.string().nullable().describe('Departure date (ISO 8601)'),
   eta: z.string().nullable().describe('Estimated delivery date (ISO 8601)'),
+  statusV2: z.string().nullable().describe('V2 operational status'),
+  customerStatusV2: z.string().nullable().describe('Customer-facing mapped V2 status'),
+  priceCalculatedAt: z.string().nullable().describe('Timestamp when warehouse verification calculated price'),
+  priceCalculatedBy: z.string().uuid().nullable().describe('User who calculated/verified warehouse pricing'),
+  calculatedChargeUsd: z.string().nullable().describe('Auto-calculated freight amount in USD'),
+  finalChargeUsd: z.string().nullable().describe('Final charge shown to customer in USD'),
+  pricingSource: z.string().nullable().describe('Pricing source used for final charge'),
+  priceAdjustmentReason: z.string().nullable().describe('Reason for manual adjustment when applied'),
+  paymentCollectionStatus: z
+    .enum(['UNPAID', 'PAYMENT_IN_PROGRESS', 'PAID_IN_FULL'])
+    .describe('Payment collection state for pickup validation'),
   createdBy: z.string().uuid().describe('UUID of the staff/user who created the order'),
   deletedAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
+
+const warehouseVerifyPackageSchema = z
+  .object({
+    description: z.string().optional().describe('Package description'),
+    itemType: z.string().optional().describe('Item type/category'),
+    quantity: z.number().int().positive().optional().describe('Package/item quantity (default: 1)'),
+    lengthCm: z.number().positive().optional().describe('Length in centimeters'),
+    widthCm: z.number().positive().optional().describe('Width in centimeters'),
+    heightCm: z.number().positive().optional().describe('Height in centimeters'),
+    weightKg: z.number().positive().optional().describe('Actual weight in kilograms'),
+    cbm: z.number().positive().optional().describe('Volume in cubic meters (exact, no rounding)'),
+    isRestricted: z.boolean().optional().describe('Whether package contains a restricted item'),
+    restrictedReason: z.string().optional().describe('Restricted item reason'),
+    restrictedOverrideApproved: z.boolean().optional().describe('Admin override approval flag'),
+    restrictedOverrideReason: z.string().optional().describe('Reason for restricted item override'),
+  })
+  .superRefine((value, ctx) => {
+    if (value.restrictedOverrideApproved && !value.restrictedOverrideReason?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['restrictedOverrideReason'],
+        message: 'restrictedOverrideReason is required when restrictedOverrideApproved is true',
+      })
+    }
+  })
+
+const warehouseVerifyBodySchema = z
+  .object({
+    transportMode: z
+      .nativeEnum(TransportMode)
+      .optional()
+      .describe('Explicit transport mode override: air | sea'),
+    packages: z
+      .array(warehouseVerifyPackageSchema)
+      .min(1)
+      .describe('Verified package details from warehouse intake'),
+    manualFinalChargeUsd: z
+      .number()
+      .positive()
+      .optional()
+      .describe('Optional manually adjusted final charge in USD'),
+    manualAdjustmentReason: z
+      .string()
+      .optional()
+      .describe('Required when manualFinalChargeUsd is provided'),
+  })
+  .superRefine((value, ctx) => {
+    if (value.manualFinalChargeUsd !== undefined && !value.manualAdjustmentReason?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['manualAdjustmentReason'],
+        message: 'manualAdjustmentReason is required when manualFinalChargeUsd is provided',
+      })
+    }
+  })
 
 const paginatedOrdersSchema = z.object({
   data: z.array(orderResponseSchema),
@@ -270,6 +338,32 @@ Can also be set to \`cancelled\` or \`returned\` at any stage.
       },
     },
     handler: ordersController.updateOrderStatus,
+  })
+
+  app.post('/:id/warehouse-verify', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Orders'],
+      summary: 'Warehouse verification + freight calculation (staff+)',
+      description: `Warehouse staff verifies package details, computes freight automatically, and optionally applies a manual final adjustment with a required reason.
+
+This endpoint stores:
+- package details (weight/dimensions/cbm/restriction flags)
+- auto-calculated USD charge
+- final USD charge shown to customer
+- V2 status marker (\`WAREHOUSE_VERIFIED_PRICED\`)`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Order UUID') }),
+      body: warehouseVerifyBodySchema,
+      response: {
+        200: z.object({ success: z.literal(true), data: orderResponseSchema }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: ordersController.verifyOrderAtWarehouse,
   })
 
   app.delete('/:id', {

@@ -38,6 +38,11 @@ Current backend-supported capabilities grouped by frontend audience.
 | Client and customer management (staff+) | `GET /api/v1/admin/clients`, `GET /api/v1/admin/clients/:id`, `GET /api/v1/admin/clients/:id/orders` |
 | Create order on behalf of customer | `POST /api/v1/orders` (with `senderId`) |
 | Update shipment status (staff+) | `PATCH /api/v1/orders/:id/status` |
+| Warehouse verification + auto freight calculation (staff+, restricted override by admin+) | `POST /api/v1/orders/:id/warehouse-verify` |
+| Manage restricted goods catalog (admin+) | `GET /api/v1/settings/restricted-goods`, `PATCH /api/v1/settings/restricted-goods` |
+| Manage logistics settings (admin+, office address updates by superadmin) | `GET /api/v1/settings/logistics`, `PATCH /api/v1/settings/logistics` |
+| Manage FX mode and manual rate (admin+) | `GET /api/v1/settings/fx-rate`, `PATCH /api/v1/settings/fx-rate` |
+| Manage localized templates (admin+) | `GET /api/v1/settings/templates`, `PATCH /api/v1/settings/templates/:id` |
 | Delete order (admin+) | `DELETE /api/v1/orders/:id` |
 | List and filter all shipments | `GET /api/v1/shipments` |
 | Bulk shipment lifecycle (staff+, admin+ for deletes) | `POST /api/v1/bulk-orders`, `GET /api/v1/bulk-orders`, `GET /api/v1/bulk-orders/:id`, `PATCH /api/v1/bulk-orders/:id/status`, `POST /api/v1/bulk-orders/:id/items`, `DELETE /api/v1/bulk-orders/:id/items/:itemId`, `DELETE /api/v1/bulk-orders/:id` |
@@ -53,3 +58,34 @@ Current backend-supported capabilities grouped by frontend audience.
 
 Tracking is available via `GET /api/v1/orders/track/:trackingNumber`.
 Automatic shipment status progression is not currently implemented as a scheduler or worker process; status changes are driven by explicit status update APIs.
+
+## Approved V2 Scope (Pending Refactor)
+
+Business-approved V2 decisions are documented in detail in:
+
+- `docs/business-process-refactor-blueprint.md`
+
+Summary of approved changes that will be wired into the existing API surface:
+
+### Customer-facing updates (planned)
+
+| Capability | Endpoint(s) |
+|---|---|
+| Pre-order support with no price shown until Korea warehouse verification | `POST /api/v1/orders`, `GET /api/v1/orders/:id`, `GET /api/v1/orders/my-shipments` |
+| Exact freight pricing after verification (`air` by kg, `sea` by cbm) with final adjusted amount visible to customer | `POST /api/v1/orders/:id/warehouse-verify`, `GET /api/v1/orders/:id`, `GET /api/v1/orders/my-shipments` |
+| Mode-specific milestone tracking flow (`air` and `sea`) with customer-friendly status labels | `PATCH /api/v1/orders/:id/status`, `GET /api/v1/orders/track/:trackingNumber` |
+| Amount-due visibility and pay-now states before pickup | `GET /api/v1/orders/:id`, `GET /api/v1/orders/my-shipments`, `POST /api/v1/payments/initialize`, `POST /api/v1/payments/verify/:reference` |
+| Bilingual dynamic content (`en`, `ko`) with user default language preference (`en`) | `GET /api/v1/users/me`, `PATCH /api/v1/users/me` |
+
+### Internal-facing updates (planned)
+
+| Capability | Endpoint(s) |
+|---|---|
+| Staff warehouse intake verification with photo/package details and automatic pricing | `POST /api/v1/orders/:id/warehouse-verify` |
+| Sequential status enforcement by mode with actor+timestamp history | `PATCH /api/v1/orders/:id/status` |
+| Customer special pricing overrides (mode-specific, optional validity) with audit trail | `GET /api/v1/settings/pricing`, `PATCH /api/v1/settings/pricing` |
+| Restricted-goods catalog management and admin override workflow with mandatory reason | `GET /api/v1/settings/restricted-goods`, `PATCH /api/v1/settings/restricted-goods`, `POST /api/v1/orders/:id/warehouse-verify` |
+| Full-payment release control with card/transfer/cash support | `POST /api/v1/payments/initialize`, `POST /api/v1/payments/verify/:reference`, `POST /api/v1/payments/:orderId/record-offline` (proposed) |
+| Editable office addresses and lane lock (Korea -> Lagos) | `GET /api/v1/settings/logistics`, `PATCH /api/v1/settings/logistics` |
+| FX mode and rate controls (live/manual) | `GET /api/v1/settings/fx-rate`, `PATCH /api/v1/settings/fx-rate` |
+| Localized template management | `GET /api/v1/settings/templates`, `PATCH /api/v1/settings/templates/:id` |

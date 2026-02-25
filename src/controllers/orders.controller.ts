@@ -7,7 +7,7 @@ import { broadcastToUser } from '../websocket/handlers'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import type { OrderStatus } from '../types/enums'
-import { UserRole } from '../types/enums'
+import { TransportMode, UserRole } from '../types/enums'
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
@@ -271,6 +271,75 @@ export const ordersController = {
     })
 
     return reply.send(successResponse(updated))
+  },
+
+  async verifyOrderAtWarehouse(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: {
+        transportMode?: TransportMode
+        packages: Array<{
+          description?: string
+          itemType?: string
+          quantity?: number
+          lengthCm?: number
+          widthCm?: number
+          heightCm?: number
+          weightKg?: number
+          cbm?: number
+          isRestricted?: boolean
+          restrictedReason?: string
+          restrictedOverrideApproved?: boolean
+          restrictedOverrideReason?: string
+        }>
+        manualFinalChargeUsd?: number
+        manualAdjustmentReason?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const hasRestrictedOverride = request.body.packages.some(
+        (pkg) => pkg.restrictedOverrideApproved,
+      )
+      if (hasRestrictedOverride && request.user.role === UserRole.STAFF) {
+        return reply.code(403).send({
+          success: false,
+          message: 'Only admin or superadmin can approve restricted-item overrides.',
+        })
+      }
+
+      const updated = await ordersService.verifyOrderAtWarehouse(request.params.id, {
+        verifiedBy: request.user.id,
+        transportMode: request.body.transportMode,
+        packages: request.body.packages,
+        manualFinalChargeUsd: request.body.manualFinalChargeUsd,
+        manualAdjustmentReason: request.body.manualAdjustmentReason,
+      })
+
+      if (!updated) {
+        return reply.code(404).send({ success: false, message: 'Order not found' })
+      }
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: `Verified warehouse details and pricing for order ${updated.trackingNumber}`,
+        resourceType: 'order',
+        resourceId: updated.id,
+        request,
+        metadata: {
+          transportMode: request.body.transportMode ?? updated.transportMode,
+          packageCount: request.body.packages.length,
+          hasManualAdjustment: request.body.manualFinalChargeUsd !== undefined,
+        },
+      })
+
+      return reply.send(successResponse(updated))
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Warehouse verification failed'
+      return reply.code(400).send({ success: false, message })
+    }
   },
 
   async deleteOrder(

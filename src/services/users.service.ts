@@ -4,7 +4,7 @@ import { users } from '../../drizzle/schema'
 import { encrypt, decrypt } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import type { PaginationParams } from '../types'
-import { UserRole } from '../types/enums'
+import { PreferredLanguage, UserRole } from '../types/enums'
 
 export interface CreateUserInput {
   clerkId: string
@@ -14,6 +14,7 @@ export interface CreateUserInput {
   businessName?: string | null
   phone?: string
   role?: UserRole
+  preferredLanguage?: PreferredLanguage
 }
 
 export interface UpdateUserInput {
@@ -32,6 +33,7 @@ export interface UpdateUserInput {
   notifyEmailAlerts?: boolean
   notifySmsAlerts?: boolean
   notifyInAppAlerts?: boolean
+  preferredLanguage?: PreferredLanguage
 }
 
 export interface UpdateNotificationPreferencesInput {
@@ -77,6 +79,7 @@ export class UsersService {
         businessName: input.businessName ? encrypt(input.businessName) : null,
         phone: input.phone ? encrypt(input.phone) : null,
         role: input.role ?? UserRole.USER,
+        preferredLanguage: input.preferredLanguage ?? PreferredLanguage.EN,
       })
       .returning()
 
@@ -135,6 +138,7 @@ export class UsersService {
     if (input.notifyEmailAlerts !== undefined) patch.notifyEmailAlerts = input.notifyEmailAlerts
     if (input.notifySmsAlerts !== undefined) patch.notifySmsAlerts = input.notifySmsAlerts
     if (input.notifyInAppAlerts !== undefined) patch.notifyInAppAlerts = input.notifyInAppAlerts
+    if (input.preferredLanguage !== undefined) patch.preferredLanguage = input.preferredLanguage
 
     const [updated] = await db
       .update(users)

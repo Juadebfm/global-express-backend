@@ -7,6 +7,7 @@ import { generateTrackingNumber } from '../utils/tracking'
 import { broadcastToUser } from '../websocket/handlers'
 import { sendOrderStatusUpdateEmail } from '../notifications/email'
 import { sendOrderStatusWhatsApp } from '../notifications/whatsapp'
+import { mapLegacyStatusToV2 } from '../domain/shipment-v2/status-mapping'
 import type { PaginationParams } from '../types'
 import { OrderStatus } from '../types/enums'
 
@@ -31,12 +32,15 @@ export interface CreateBulkOrderInput {
 
 export class BulkOrdersService {
   async createBulkOrder(input: CreateBulkOrderInput) {
+    const initialStatusV2 = mapLegacyStatusToV2(OrderStatus.PENDING, null)
+
     const [bulk] = await db
       .insert(bulkShipments)
       .values({
         trackingNumber: generateTrackingNumber(),
         origin: input.origin,
         destination: input.destination,
+        statusV2: initialStatusV2,
         notes: input.notes ?? null,
         createdBy: input.createdBy,
       })
@@ -53,6 +57,8 @@ export class BulkOrdersService {
       weight: item.weight ?? null,
       declaredValue: item.declaredValue ?? null,
       description: item.description ?? null,
+      statusV2: initialStatusV2,
+      customerStatusV2: initialStatusV2,
     }))
 
     const items = await db.insert(bulkShipmentItems).values(itemValues).returning()
@@ -152,9 +158,23 @@ export class BulkOrdersService {
   }
 
   async updateBulkOrderStatus(id: string, status: OrderStatus) {
+    const [current] = await db
+      .select({
+        transportMode: bulkShipments.transportMode,
+      })
+      .from(bulkShipments)
+      .where(and(eq(bulkShipments.id, id), isNull(bulkShipments.deletedAt)))
+      .limit(1)
+
+    const mappedStatusV2 = mapLegacyStatusToV2(status, current?.transportMode ?? null)
+
     const [updated] = await db
       .update(bulkShipments)
-      .set({ status, updatedAt: new Date() })
+      .set({
+        status,
+        statusV2: mappedStatusV2 ?? undefined,
+        updatedAt: new Date(),
+      })
       .where(and(eq(bulkShipments.id, id), isNull(bulkShipments.deletedAt)))
       .returning()
 
@@ -163,7 +183,12 @@ export class BulkOrdersService {
     // Auto-sync all items
     await db
       .update(bulkShipmentItems)
-      .set({ status, updatedAt: new Date() })
+      .set({
+        status,
+        statusV2: mappedStatusV2 ?? undefined,
+        customerStatusV2: mappedStatusV2 ?? undefined,
+        updatedAt: new Date(),
+      })
       .where(eq(bulkShipmentItems.bulkShipmentId, id))
 
     // Notify each customer (fire-and-forget)

@@ -71,6 +71,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
             notifyEmailAlerts: z.boolean(),
             notifySmsAlerts: z.boolean(),
             notifyInAppAlerts: z.boolean(),
+            preferredLanguage: z.enum(['en', 'ko']),
             deletedAt: z.string().nullable(),
             createdAt: z.string(),
             updatedAt: z.string(),
