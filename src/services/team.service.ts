@@ -52,6 +52,27 @@ export class TeamService {
     )
   }
 
+  /**
+   * Activates a pending team member account (sets isActive = true).
+   * Returns the updated member, or null if not found / not an internal user.
+   */
+  async approveTeamMember(userId: string) {
+    const [updated] = await db
+      .update(users)
+      .set({ isActive: true, updatedAt: new Date() })
+      .where(
+        and(
+          eq(users.id, userId),
+          isNull(users.deletedAt),
+          ne(users.role, UserRole.USER),
+        ),
+      )
+      .returning()
+
+    if (!updated) return null
+    return this.formatMember(updated)
+  }
+
   private formatMember(user: typeof users.$inferSelect) {
     const firstName = user.firstName ? decrypt(user.firstName) : null
     const lastName  = user.lastName  ? decrypt(user.lastName)  : null

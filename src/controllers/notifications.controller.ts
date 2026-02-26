@@ -44,6 +44,25 @@ export const notificationsController = {
     return reply.send(successResponse({ message: 'Saved state toggled' }))
   },
 
+  async deleteOne(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) {
+    const ok = await notificationsService.deleteNotification(request.params.id, request.user.id)
+    if (!ok) {
+      return reply.code(404).send({ success: false, message: 'Notification not found or not accessible' })
+    }
+    return reply.send(successResponse({ message: 'Notification deleted' }))
+  },
+
+  async bulkDelete(
+    request: FastifyRequest<{ Body: { ids: string[] } }>,
+    reply: FastifyReply,
+  ) {
+    const deleted = await notificationsService.bulkDeleteNotifications(request.body.ids, request.user.id)
+    return reply.send(successResponse({ deleted }))
+  },
+
   async broadcast(
     request: FastifyRequest<{
       Body: {

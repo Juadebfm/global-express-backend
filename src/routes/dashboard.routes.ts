@@ -26,7 +26,9 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
 
 **Customers** see only their own orders. The financial field is \`totalSpent\` (sum of their successful payments).
 
-**Admin / Staff / Superadmin** see global counts across all orders. The financial field is \`revenueMtd\` (all-time revenue from successful payments).
+**Superadmin** sees global counts and the financial field \`revenueMtd\` (all-time revenue from successful payments).
+
+**Admin / Staff** see global order counts but do **not** receive revenue figures.
 
 **Change fields** (e.g. \`totalOrdersChange\`) compare the last 30 days against the prior 30 days.
 Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\` when there is no prior-period baseline.
@@ -56,8 +58,8 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
             deliveredTotalChange: changeSchema,
             cancelled: z.number(),
             returned: z.number(),
-            revenueMtd: z.string().optional().describe('Admin/staff only — global revenue'),
-            revenueMtdChange: changeSchema.optional().describe('Admin/staff only'),
+            revenueMtd: z.string().optional().describe('Superadmin only — global platform revenue'),
+            revenueMtdChange: changeSchema.optional().describe('Superadmin only'),
             totalSpent: z.string().optional().describe('Customer only — their own payment total'),
             totalSpentChange: changeSchema.optional().describe('Customer only'),
           }),
@@ -123,7 +125,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
 - \`delayed\` — ETA is set and has already passed
 - \`unknown\` — no ETA set on the orders
 
-**shipmentType** is the transport mode for that destination group: \`air\` | \`ocean\` | \`road\` (or null if not set).
+**shipmentType** is the transport mode for that destination group: \`air\` | \`ocean\` (or null if not set).
 
 **Role gating**: customers see their own orders; admin/staff see all.`,
       security: [{ bearerAuth: [] }],
@@ -133,7 +135,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
           data: z.array(
             z.object({
               destination: z.string().describe('Destination name'),
-              shipmentType: z.enum(['air', 'ocean', 'road']).nullable().describe('Transport mode'),
+              shipmentType: z.enum(['air', 'ocean']).nullable().describe('Transport mode'),
               activeCount: z.number().describe('Number of active shipments to this destination'),
               nextEta: z.string().nullable().describe('Earliest ETA among active shipments (ISO 8601)'),
               status: z.enum(['on_time', 'delayed', 'unknown']).describe('Derived delivery status'),
@@ -178,7 +180,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
   const activeDeliveriesSchema = z.array(
     z.object({
       destination: z.string(),
-      shipmentType: z.enum(['air', 'ocean', 'road']).nullable(),
+      shipmentType: z.enum(['air', 'ocean']).nullable(),
       activeCount: z.number(),
       nextEta: z.string().nullable(),
       status: z.enum(['on_time', 'delayed', 'unknown']),

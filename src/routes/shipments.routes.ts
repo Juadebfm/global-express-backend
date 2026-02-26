@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { shipmentsController } from '../controllers/shipments.controller'
 import { authenticate } from '../middleware/authenticate'
-import { ShipmentStatusV2, ShipmentType, Priority, OrderDirection } from '../types/enums'
+import { ShipmentStatusV2, ShipmentType, OrderDirection } from '../types/enums'
 
 const shipmentSchema = z.object({
   id: z.string().uuid(),
@@ -23,7 +23,6 @@ const shipmentSchema = z.object({
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
   shipmentType: z.nativeEnum(ShipmentType).nullable(),
-  priority: z.nativeEnum(Priority).nullable(),
   packageCount: z.number().int(),
   departureDate: z.string().nullable(),
   eta: z.string().nullable(),

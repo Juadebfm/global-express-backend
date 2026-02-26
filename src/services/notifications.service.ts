@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, isNull } from 'drizzle-orm'
+import { eq, and, or, desc, sql, isNull, inArray } from 'drizzle-orm'
 import { db } from '../config/db'
 import { notifications, notificationReads } from '../../drizzle/schema'
 import { broadcastToUser, broadcastToAll } from '../websocket/handlers'
@@ -101,12 +101,22 @@ export class NotificationsService {
   async listForUser(userId: string, params: PaginationParams) {
     const offset = getPaginationOffset(params.page, params.limit)
 
-    // Count total (personal + broadcasts)
+    // Count total (personal + broadcasts that the user hasn't deleted)
     const [countResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(notifications)
+      .leftJoin(
+        notificationReads,
+        and(
+          eq(notificationReads.notificationId, notifications.id),
+          eq(notificationReads.userId, userId),
+        ),
+      )
       .where(
-        sql`(user_id = ${userId} OR is_broadcast = true)`,
+        and(
+          sql`(${notifications.userId} = ${userId} OR ${notifications.isBroadcast} = true)`,
+          or(isNull(notificationReads.isDeleted), eq(notificationReads.isDeleted, false)),
+        ),
       )
 
     const total = countResult?.count ?? 0
@@ -140,7 +150,12 @@ export class NotificationsService {
           eq(notificationReads.userId, userId),
         ),
       )
-      .where(sql`(${notifications.userId} = ${userId} OR ${notifications.isBroadcast} = true)`)
+      .where(
+        and(
+          sql`(${notifications.userId} = ${userId} OR ${notifications.isBroadcast} = true)`,
+          or(isNull(notificationReads.isDeleted), eq(notificationReads.isDeleted, false)),
+        ),
+      )
       .orderBy(desc(notifications.createdAt))
       .limit(params.limit)
       .offset(offset)
@@ -261,10 +276,81 @@ export class NotificationsService {
         and(
           eq(notifications.isBroadcast, true),
           isNull(notificationReads.readAt),
+          or(isNull(notificationReads.isDeleted), eq(notificationReads.isDeleted, false)),
         ),
       )
 
     return (personal?.count ?? 0) + (broadcasts?.count ?? 0)
+  }
+
+  /**
+   * Deletes a single notification for a user.
+   * Personal notifications are hard-deleted (must be the owner).
+   * Broadcasts are soft-deleted per-user via notification_reads.isDeleted.
+   */
+  async deleteNotification(notificationId: string, userId: string): Promise<boolean> {
+    const [notification] = await db
+      .select({ id: notifications.id, userId: notifications.userId, isBroadcast: notifications.isBroadcast })
+      .from(notifications)
+      .where(eq(notifications.id, notificationId))
+      .limit(1)
+
+    if (!notification) return false
+
+    if (notification.isBroadcast) {
+      await db
+        .insert(notificationReads)
+        .values({ notificationId, userId, isDeleted: true })
+        .onConflictDoUpdate({
+          target: [notificationReads.notificationId, notificationReads.userId],
+          set: { isDeleted: true },
+        })
+    } else {
+      if (notification.userId !== userId) return false
+      await db.delete(notifications).where(eq(notifications.id, notificationId))
+    }
+
+    return true
+  }
+
+  /**
+   * Deletes multiple notifications for a user. Returns count of successfully deleted items.
+   */
+  async bulkDeleteNotifications(notificationIds: string[], userId: string): Promise<number> {
+    // Fetch all target notifications in one query
+    const rows = await db
+      .select({ id: notifications.id, userId: notifications.userId, isBroadcast: notifications.isBroadcast })
+      .from(notifications)
+      .where(inArray(notifications.id, notificationIds))
+
+    const personalIds = rows
+      .filter((n) => !n.isBroadcast && n.userId === userId)
+      .map((n) => n.id)
+    const broadcastIds = rows.filter((n) => n.isBroadcast).map((n) => n.id)
+
+    const ops: Promise<unknown>[] = []
+
+    if (personalIds.length > 0) {
+      ops.push(db.delete(notifications).where(inArray(notifications.id, personalIds)))
+    }
+
+    if (broadcastIds.length > 0) {
+      // Upsert isDeleted=true for each broadcast (one per user-notification pair)
+      ops.push(
+        ...broadcastIds.map((notificationId) =>
+          db
+            .insert(notificationReads)
+            .values({ notificationId, userId, isDeleted: true })
+            .onConflictDoUpdate({
+              target: [notificationReads.notificationId, notificationReads.userId],
+              set: { isDeleted: true },
+            }),
+        ),
+      )
+    }
+
+    await Promise.all(ops)
+    return personalIds.length + broadcastIds.length
   }
 
   private formatForUser(

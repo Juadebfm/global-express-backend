@@ -66,6 +66,7 @@ export const notificationReads = pgTable(
       .references(() => users.id),
     readAt: timestamp('read_at'),
     isSaved: boolean('is_saved').notNull().default(false),
+    isDeleted: boolean('is_deleted').notNull().default(false),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (table) => [

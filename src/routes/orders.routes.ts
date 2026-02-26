@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
-import { OrderStatus, OrderDirection, ShipmentType, Priority, TransportMode, ShipmentStatusV2 } from '../types/enums'
+import { OrderStatus, OrderDirection, ShipmentType, TransportMode, ShipmentStatusV2 } from '../types/enums'
 
 const orderResponseSchema = z.object({
   id: z.string().uuid().describe('Order UUID'),
@@ -21,10 +21,9 @@ const orderResponseSchema = z.object({
   weight: z.string().nullable().describe('Package weight (e.g. "2.5kg")'),
   declaredValue: z.string().nullable().describe('Declared monetary value (e.g. "15000")'),
   description: z.string().nullable().describe('Package description / contents'),
-  shipmentType: z.nativeEnum(ShipmentType).nullable().describe('Transport mode: air | ocean | road'),
+  shipmentType: z.nativeEnum(ShipmentType).nullable().describe('Transport mode: air | ocean'),
   transportMode: z.nativeEnum(TransportMode).nullable().describe('Normalized transport mode for V2 flow: air | sea'),
   isPreorder: z.boolean().describe('Whether the order was created as a pre-order'),
-  priority: z.nativeEnum(Priority).nullable().describe('Service priority: standard | express | economy'),
   departureDate: z.string().nullable().describe('Departure date (ISO 8601)'),
   eta: z.string().nullable().describe('Estimated delivery date (ISO 8601)'),
   statusV2: z.string().nullable().describe('V2 operational status'),
@@ -126,7 +125,6 @@ const myShipmentSchema = z.object({
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
   shipmentType: z.nativeEnum(ShipmentType).nullable(),
-  priority: z.nativeEnum(Priority).nullable(),
   departureDate: z.string().nullable(),
   eta: z.string().nullable(),
   createdAt: z.string(),
@@ -249,8 +247,7 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
         weight: z.string().optional().describe('Package weight with unit (e.g. "2.5kg")'),
         declaredValue: z.string().optional().describe('Declared monetary value in local currency (e.g. "15000")'),
         description: z.string().optional().describe('Package contents / description'),
-        shipmentType: z.nativeEnum(ShipmentType).optional().describe('Transport mode: air | ocean | road'),
-        priority: z.nativeEnum(Priority).optional().describe('Service priority: standard | express | economy'),
+        shipmentType: z.nativeEnum(ShipmentType).optional().describe('Transport mode: air | ocean'),
         departureDate: z.string().datetime().optional().describe('Departure date (ISO 8601)'),
         eta: z.string().datetime().optional().describe('Estimated delivery date (ISO 8601)'),
       }),

@@ -47,8 +47,7 @@ export const ordersController = {
         weight?: string
         declaredValue?: string
         description?: string
-        shipmentType?: 'air' | 'ocean' | 'road'
-        priority?: 'standard' | 'express' | 'economy'
+        shipmentType?: 'air' | 'ocean'
         departureDate?: string
         eta?: string
       }
@@ -87,7 +86,6 @@ export const ordersController = {
       declaredValue: request.body.declaredValue,
       description: request.body.description,
       shipmentType: request.body.shipmentType,
-      priority: request.body.priority,
       departureDate: request.body.departureDate ? new Date(request.body.departureDate) : undefined,
       eta: request.body.eta ? new Date(request.body.eta) : undefined,
       // Customers creating for themselves are pre-ordering (item not yet at warehouse)

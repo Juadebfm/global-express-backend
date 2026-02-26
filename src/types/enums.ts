@@ -30,14 +30,8 @@ export enum PaymentStatus {
 export enum ShipmentType {
   AIR = 'air',
   OCEAN = 'ocean',
-  ROAD = 'road',
 }
 
-export enum Priority {
-  STANDARD = 'standard',
-  EXPRESS = 'express',
-  ECONOMY = 'economy',
-}
 
 // V2 refactor enums (introduced in parallel with legacy enums for migration safety)
 export enum TransportMode {

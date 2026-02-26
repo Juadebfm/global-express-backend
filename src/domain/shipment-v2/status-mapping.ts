@@ -5,7 +5,7 @@ import {
 } from '../../types/enums'
 
 export function resolveTransportModeFromShipmentType(
-  shipmentType: 'air' | 'ocean' | 'road' | null | undefined,
+  shipmentType: 'air' | 'ocean' | null | undefined,
 ): TransportMode | null {
   if (shipmentType === 'air') return TransportMode.AIR
   if (shipmentType === 'ocean') return TransportMode.SEA

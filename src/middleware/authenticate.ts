@@ -2,7 +2,7 @@
 import { createClerkClient, verifyToken as verifyClerkToken } from '@clerk/backend'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
-import { users } from '../../drizzle/schema'
+import { users, revokedTokens } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
 import { encrypt, decrypt, hashEmail } from '../utils/encryption'
@@ -72,12 +72,23 @@ export async function authenticate(
         .limit(1)
 
       if (!user) {
-        reply.code(401).send({ success: false, message: 'Unauthorized â€” account not found' })
+        reply.code(401).send({ success: false, message: 'Unauthorized — account not found' })
         return
       }
 
       if (!user.isActive) {
-        reply.code(403).send({ success: false, message: 'Forbidden â€” account is inactive' })
+        reply.code(403).send({ success: false, message: 'Forbidden — account is inactive' })
+        return
+      }
+
+      const [revoked] = await db
+        .select({ id: revokedTokens.id })
+        .from(revokedTokens)
+        .where(eq(revokedTokens.jti, payload.jti))
+        .limit(1)
+
+      if (revoked) {
+        reply.code(401).send({ success: false, message: 'Unauthorized — token has been revoked' })
         return
       }
 

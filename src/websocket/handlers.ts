@@ -11,6 +11,9 @@ import { internalAuthService } from '../services/internal-auth.service'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const connectedClients = new Map<string, Set<any>>()
 
+/** Maps ticketId → Set of userIds currently watching that ticket conversation. */
+export const ticketRooms = new Map<string, Set<string>>()
+
 /**
  * WebSocket connection handler.
  *
@@ -117,7 +120,27 @@ export async function handleWebSocketConnection(
     if (sockets?.size === 0) {
       connectedClients.delete(userId)
     }
+    // Clean up any ticket rooms this user was watching
+    for (const [ticketId, userIds] of ticketRooms) {
+      userIds.delete(userId)
+      if (userIds.size === 0) ticketRooms.delete(ticketId)
+    }
     request.log.info({ userId }, 'WebSocket client disconnected')
+  })
+
+  socket.on('message', (raw: Buffer | string) => {
+    try {
+      const msg = JSON.parse(raw.toString())
+      if (msg.type === 'support:join' && typeof msg.ticketId === 'string') {
+        if (!ticketRooms.has(msg.ticketId)) ticketRooms.set(msg.ticketId, new Set())
+        ticketRooms.get(msg.ticketId)!.add(userId)
+      } else if (msg.type === 'support:leave' && typeof msg.ticketId === 'string') {
+        ticketRooms.get(msg.ticketId)?.delete(userId)
+        if (ticketRooms.get(msg.ticketId)?.size === 0) ticketRooms.delete(msg.ticketId)
+      }
+    } catch {
+      // ignore malformed messages
+    }
   })
 
   socket.on('error', (err: unknown) => {
@@ -137,6 +160,18 @@ export function broadcastToAll(data: unknown): void {
         socket.send(message)
       }
     }
+  }
+}
+
+/**
+ * Broadcasts to all users currently watching a specific support ticket room.
+ * No-ops silently if no one is watching the ticket.
+ */
+export function broadcastToTicket(ticketId: string, data: unknown): void {
+  const userIds = ticketRooms.get(ticketId)
+  if (!userIds || userIds.size === 0) return
+  for (const uid of userIds) {
+    broadcastToUser(uid, data)
   }
 }
 

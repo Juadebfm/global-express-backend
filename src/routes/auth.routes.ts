@@ -1,11 +1,14 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { lt } from 'drizzle-orm'
 import { usersController } from '../controllers/users.controller'
 import { usersService } from '../services/users.service'
 import { authenticate } from '../middleware/authenticate'
 import { internalAuthService } from '../services/internal-auth.service'
 import { passwordResetService } from '../services/password-reset.service'
+import { db } from '../config/db'
+import { revokedTokens } from '../../drizzle/schema'
 
 // Shape the frontend operator dashboard expects
 const operatorSchema = z.object({
@@ -166,18 +169,38 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
 
   /**
    * POST /api/v1/auth/logout
-   * Stateless JWT — just clear the token client-side.
+   * Revokes the current internal operator JWT by adding its JTI to the blocklist.
+   * The token is immediately invalid on subsequent requests.
+   * Clerk customer tokens are not handled here — use Clerk's signOut() instead.
    */
   app.post('/logout', {
+    preHandler: [authenticate],
     schema: {
       tags: ['Auth'],
       summary: 'Operator logout',
-      description: 'JWT is stateless — logout is handled client-side by clearing the stored token. This endpoint is a no-op acknowledgement.',
+      description: 'Revokes the current internal operator JWT. The token is immediately invalid for subsequent requests. Clear it client-side after calling this endpoint.',
+      security: [{ bearerAuth: [] }],
       response: {
         200: z.object({ message: z.string() }),
+        401: z.object({ message: z.string() }),
       },
     },
-    handler: async (_request, reply) => {
+    handler: async (request, reply) => {
+      const token = request.headers.authorization!.slice(7)
+      const parts = token.split('.')
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+
+      await db.insert(revokedTokens).values({
+        jti: payload.jti,
+        userId: request.user.id,
+        expiresAt: new Date(payload.exp * 1000),
+      })
+
+      // Lazy cleanup: remove expired entries so the table stays small
+      db.delete(revokedTokens)
+        .where(lt(revokedTokens.expiresAt, new Date()))
+        .catch(() => {})
+
       return reply.send({ message: 'Logged out successfully' })
     },
   })

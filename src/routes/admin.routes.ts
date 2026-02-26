@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { clientsController } from '../controllers/clients.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireStaffOrAbove } from '../middleware/requireRole'
-import { OrderStatus, ShipmentType, Priority, ShipmentStatusV2 } from '../types/enums'
+import { OrderStatus, ShipmentType, ShipmentStatusV2 } from '../types/enums'
 
 const clientSchema = z.object({
   id: z.string().uuid(),
@@ -48,7 +48,6 @@ const orderSchema = z.object({
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
   shipmentType: z.nativeEnum(ShipmentType).nullable(),
-  priority: z.nativeEnum(Priority).nullable(),
   departureDate: z.string().nullable(),
   eta: z.string().nullable(),
   createdBy: z.string().uuid(),

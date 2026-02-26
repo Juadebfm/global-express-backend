@@ -3,17 +3,17 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { reportsController } from '../controllers/reports.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove } from '../middleware/requireRole'
+import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
 import { ipWhitelist } from '../middleware/ipWhitelist'
 
 export async function reportsRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
   app.get('/summary', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireSuperAdmin, ipWhitelist],
     schema: {
       tags: ['Reports'],
-      summary: 'Dashboard summary — total orders, users, and revenue',
+      summary: 'Dashboard summary — total orders, users, and revenue (superadmin)',
       description: `Returns a high-level summary suitable for the admin dashboard.
 
 - **totalOrders** — count of all non-deleted orders
@@ -86,10 +86,10 @@ export async function reportsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.get('/revenue', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireSuperAdmin, ipWhitelist],
     schema: {
       tags: ['Reports'],
-      summary: 'Daily revenue breakdown over a date range',
+      summary: 'Daily revenue breakdown over a date range (superadmin)',
       description: `Returns daily revenue totals for a given date range. Defaults to the **last 30 days** if no dates are provided.
 
 Only counts revenue from payments with status \`successful\`.

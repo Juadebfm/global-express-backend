@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import { randomUUID } from 'crypto'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
@@ -18,6 +19,7 @@ export interface CreateInternalUserInput {
 
 export interface InternalTokenPayload {
   sub: string   // user DB id
+  jti: string   // unique token ID — used for revocation
   type: 'internal'
   role: string
   iat: number
@@ -43,6 +45,7 @@ export class InternalAuthService {
         firstName: encrypt(input.firstName),
         lastName: encrypt(input.lastName),
         role: input.role,
+        isActive: false,
       })
       .returning()
 
@@ -80,7 +83,10 @@ export class InternalAuthService {
     return jwt.sign(
       { sub: userId, type: 'internal', role },
       env.JWT_SECRET,
-      { expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] },
+      {
+        expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+        jwtid: randomUUID(),
+      },
     )
   }
 

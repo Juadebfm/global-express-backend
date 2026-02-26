@@ -261,7 +261,8 @@ All endpoints below are confirmed implemented and deployed.
 | Change own internal password | `PATCH /api/v1/internal/me/password` |
 | Create internal users | `POST /api/v1/internal/users` |
 | Reset internal user password (superadmin) | `PATCH /api/v1/internal/users/:id/password` |
-| Manage platform users | `GET /api/v1/users`, `GET /api/v1/users/:id`, `PATCH /api/v1/users/:id`, `PATCH /api/v1/users/:id/role`, `DELETE /api/v1/users/:id` |
+| Manage platform users (admin+) | `GET /api/v1/users`, `GET /api/v1/users/:id`, `PATCH /api/v1/users/:id`, `PATCH /api/v1/users/:id/role` |
+| Delete user account **(superadmin)** | `DELETE /api/v1/users/:id` |
 | Team directory (admin+) | `GET /api/v1/team` |
 | Client management (staff+) | `GET /api/v1/admin/clients`, `GET /api/v1/admin/clients/:id`, `GET /api/v1/admin/clients/:id/orders` |
 | Warehouse verification + pricing | `POST /api/v1/orders/:id/warehouse-verify` |
@@ -271,15 +272,21 @@ All endpoints below are confirmed implemented and deployed.
 | Bulk shipment lifecycle | `POST /api/v1/bulk-orders`, `GET /api/v1/bulk-orders`, `GET /api/v1/bulk-orders/:id`, `PATCH /api/v1/bulk-orders/:id/status`, `POST /api/v1/bulk-orders/:id/items`, `DELETE /api/v1/bulk-orders/:id/items/:itemId`, `DELETE /api/v1/bulk-orders/:id` |
 | Upload images (staff+) | `POST /api/v1/uploads/presign`, `POST /api/v1/uploads/confirm` |
 | Delete image (admin+) | `DELETE /api/v1/uploads/images/:imageId` |
-| Payment records (admin) | `GET /api/v1/payments`, `GET /api/v1/payments/:id` |
-| Reports (admin+, IP-gated) | `GET /api/v1/reports/summary`, `GET /api/v1/reports/orders/by-status`, `GET /api/v1/reports/revenue` |
-| Internal notifications inbox | `GET /api/v1/internal/notifications`, `GET /api/v1/internal/notifications/unread-count`, `PATCH /api/v1/internal/notifications/read-all`, `PATCH /api/v1/internal/notifications/:id/read` |
-| Broadcast notification (admin+) | `POST /api/v1/notifications/broadcast` |
-| Settings — logistics | `GET /api/v1/settings/logistics`, `PATCH /api/v1/settings/logistics` |
-| Settings — pricing | `GET /api/v1/settings/pricing`, `PATCH /api/v1/settings/pricing` |
-| Settings — restricted goods | `GET /api/v1/settings/restricted-goods`, `PATCH /api/v1/settings/restricted-goods` |
-| Settings — FX rate | `GET /api/v1/settings/fx-rate`, `PATCH /api/v1/settings/fx-rate` |
-| Settings — templates | `GET /api/v1/settings/templates`, `PATCH /api/v1/settings/templates/:id` |
+| Payment records **(superadmin)** | `GET /api/v1/payments`, `GET /api/v1/payments/:id` |
+| Record offline payment (staff+) | `POST /api/v1/payments/:orderId/record-offline` |
+| Reports — order counts (admin+, IP-gated) | `GET /api/v1/reports/orders/by-status` |
+| Reports — financial **(superadmin, IP-gated)** | `GET /api/v1/reports/summary`, `GET /api/v1/reports/revenue` |
+| Internal notifications inbox (admin+) | `GET /api/v1/internal/notifications`, `GET /api/v1/internal/notifications/unread-count`, `PATCH /api/v1/internal/notifications/read-all`, `PATCH /api/v1/internal/notifications/:id/read` |
+| Broadcast notification **(superadmin)** | `POST /api/v1/notifications/broadcast` |
+| Settings — logistics read (staff+) | `GET /api/v1/settings/logistics` |
+| Settings — logistics write (admin+, IP-gated; office addresses: superadmin) | `PATCH /api/v1/settings/logistics` |
+| Settings — pricing read (staff+) | `GET /api/v1/settings/pricing` |
+| Settings — pricing write (admin+, IP-gated) | `PATCH /api/v1/settings/pricing` |
+| Settings — restricted goods read (staff+) | `GET /api/v1/settings/restricted-goods` |
+| Settings — restricted goods write (admin+, IP-gated) | `PATCH /api/v1/settings/restricted-goods` |
+| Settings — FX rate read (staff+) | `GET /api/v1/settings/fx-rate` |
+| Settings — FX rate write **(superadmin, IP-gated)** | `PATCH /api/v1/settings/fx-rate` |
+| Settings — templates (admin+, IP-gated) | `GET /api/v1/settings/templates`, `PATCH /api/v1/settings/templates/:id` |
 
 Note: Status changes are driven by explicit API calls only — no automatic scheduler or worker.
 
@@ -388,6 +395,58 @@ Each item is either confirmed done `[x]` or pending `[ ]`. Work in phase order.
 - [x] Complete regression tests and role/permission tests. (`tests/unit/backfill-logic.test.ts` — full legacy→V2 decision table; `tests/unit/status-labels.test.ts` — all 22 V2 values covered; 43 tests passing)
 - [x] Switch all reads (list, filter, dashboard, reports) to use `statusV2` as primary — retire legacy `status` reads. (dashboard, reports, shipments, orders, bulk-orders all updated)
 - [x] Drop legacy `orders.status`, `bulk_shipments.status`, `bulk_shipment_items.status` columns and `order_status` pg enum — completed. Ran backfill → resolved 32 flagged orders → dropped all legacy columns, indexes, and enum from both Drizzle schema and Neon DB.
+
+---
+
+### Phase 7 — Role-Gated Data Access (Superadmin Hardening)
+
+Company financial data (revenue, payment history) is currently visible to all operator roles. This phase locks it down so only superadmin can see it, and ensures customers see their own spending — not platform revenue.
+
+#### 7.1 Dashboard — Revenue fields
+
+- [x] In `GET /api/v1/dashboard/stats` (and the combined `GET /api/v1/dashboard/`): strip `revenueMtd` and `revenueMtdChange` from responses where `role` is `staff` or `admin`. These fields only appear when the requesting user is `superadmin`. Financial queries are skipped entirely for non-superadmin operators.
+- [x] For `user` role: `totalSpent` and `totalSpentChange` reflect only their own payments. `revenueMtd` is never included in customer responses.
+- [x] `ordersChangePercent` and all other count-based change fields remain for all operator roles.
+
+#### 7.2 Reports — Restrict financial reports to superadmin
+
+- [x] `GET /api/v1/reports/revenue` — changed to `requireSuperAdmin`.
+- [x] `GET /api/v1/reports/summary` — changed to `requireSuperAdmin`.
+- [x] `GET /api/v1/reports/orders/by-status` — kept at `requireAdminOrAbove`. Operational count only.
+
+#### 7.3 Payments — Restrict payment ledger to superadmin
+
+- [x] `GET /api/v1/payments/` — changed to `requireSuperAdmin`.
+- [x] `GET /api/v1/payments/:id` — changed to `requireSuperAdmin`.
+- [x] `POST /api/v1/payments/:orderId/record-offline` remains at `staff+`.
+
+#### 7.4 FX Rate — Restrict writes to superadmin
+
+- [x] `PATCH /api/v1/settings/fx-rate` — changed to `requireSuperAdmin` + `ipWhitelist`.
+- [x] `GET /api/v1/settings/fx-rate` — loosened to `requireStaffOrAbove` (no IP whitelist on read).
+
+#### 7.5 Settings READ — loosen to Staff+
+
+Settings writes remain at Admin+ (or Superadmin for fx-rate). IP whitelist removed from GET endpoints so staff can access from the warehouse/field.
+
+- [x] `GET /api/v1/settings/pricing` — changed to `requireStaffOrAbove` (no IP whitelist).
+- [x] `GET /api/v1/settings/restricted-goods` — changed to `requireStaffOrAbove` (no IP whitelist).
+- [x] `GET /api/v1/settings/logistics` — changed to `requireStaffOrAbove` (no IP whitelist).
+
+#### 7.6 Broadcast notifications — escalate to superadmin
+
+- [x] `POST /api/v1/notifications/broadcast` — changed to `requireSuperAdmin`.
+
+#### 7.7 Documentation fix — DELETE /users/:id
+
+- [x] Code already had `requireSuperAdmin` on `DELETE /api/v1/users/:id`. Endpoint inventory in §13.2 and `docs/frontend-api-manual.md` updated to reflect this.
+
+#### 7.8 Endpoint inventory and documentation
+
+- [x] Endpoint inventory table in §13.2 updated to reflect all Phase 7 role changes.
+- [x] `docs/frontend-api-manual.md` Auth lines updated for all affected endpoints.
+
+---
 
 **Legacy → V2 status backfill map:**
 
@@ -622,3 +681,113 @@ Local dev: `npx @clerk/agent tunnel --port 3000`
 Account deletion (`DELETE /api/v1/users/me`): soft delete. Subsequent requests for the same identity return `403` — not auto-reprovisioned.
 
 Data export (`GET /api/v1/users/me/export`): full decrypted profile in same shape as `GET /users/me`.
+
+---
+
+## Phase 8 — Missing Frontend Endpoints
+
+These are gaps identified by the frontend team after Phase 7. Three features need backend work.
+
+---
+
+### 8.1 — Notification Delete (single + bulk)
+
+**Context:** The Notifications page has "Delete" and "Delete All" / bulk-select delete buttons. Currently there is no delete endpoint.
+
+**How notifications are stored:**
+
+- Personal notifications (`isBroadcast=false`, `userId` set): one row per user in `notifications` table. `isRead`/`isSaved` live directly on the row.
+- Broadcasts (`isBroadcast=true`, `userId=null`): one shared row in `notifications`; per-user read/saved state is tracked in `notification_reads`. Deleting the row would remove it for every user — instead we soft-delete per user.
+
+**Schema change — `drizzle/schema/notifications.ts`:**
+
+Add `isDeleted` to `notificationReads`:
+
+```typescript
+isDeleted: boolean('is_deleted').notNull().default(false),
+```
+
+**New endpoints to add in `src/routes/notifications.routes.ts`:**
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| DELETE | `/notifications/:id` | Any authenticated | Delete a single notification (own only) |
+| DELETE | `/notifications` | Any authenticated | Bulk delete — body: `{ ids: string[] }` |
+
+**Business logic (`src/controllers/notifications.controller.ts` / `src/services/notifications.service.ts`):**
+
+For each target notification ID:
+
+- If it is a **personal notification** (`isBroadcast=false`) and `userId = request.user.id`: hard delete from `notifications`.
+- If it is a **broadcast** (`isBroadcast=true`): upsert a row in `notification_reads` with `isDeleted=true` for this user. The broadcast still exists for everyone else.
+- If neither condition matches (e.g. trying to delete someone else's notification): return 403 or silently skip (for bulk).
+
+**Update `GET /notifications` list query:**
+
+The list endpoint must also filter out broadcasts where the current user has `isDeleted=true` in `notification_reads`.
+
+**Checklist:**
+
+- [x] Add `isDeleted boolean default false` to `notificationReads` in `drizzle/schema/notifications.ts`
+- [x] Run `npx drizzle-kit push --force` to apply schema
+- [x] Add `deleteNotification(userId, notificationId)` method to `notifications.service.ts`
+- [x] Add `bulkDeleteNotifications(userId, ids[])` method to `notifications.service.ts`
+- [x] Update `list()` query to exclude `isDeleted=true` broadcasts for the current user
+- [x] Add `DELETE /notifications/:id` route (authenticated)
+- [x] Add `DELETE /notifications` route with `{ ids }` body (authenticated)
+- [x] Update `docs/frontend-api-manual.md` with delete endpoints
+
+---
+
+### 8.2 — Operator Account Approval Flow
+
+**Context:** The Team page has an "Approve" button for newly created operator accounts. Currently `POST /api/v1/internal/users` creates accounts that are immediately active (`isActive=true` by default from schema). The business wants new operator accounts to start inactive and require superadmin approval before the account holder can log in.
+
+**Current flow:** Admin/superadmin creates account → account is active → operator can log in immediately.
+
+**New flow:** Admin/superadmin creates account → account is **inactive** → superadmin sees it in Team list with `isActive=false` → superadmin clicks Approve → account becomes active → operator can now log in.
+
+**Changes required:**
+
+1. **`src/services/internal-auth.service.ts` — `createInternalUser()`**: Explicitly set `isActive: false` when creating the user row.
+
+2. **New endpoint `PATCH /team/:id/approve`** in `src/routes/team.routes.ts`:
+   - Role: Superadmin only
+   - Sets `isActive: true` on the user
+   - Fires an admin notification (optional: notify the new user by email)
+   - Returns the updated team member
+
+3. **Frontend integration:** The Team list already supports `?isActive=false` filter — frontend can use this to show a "Pending Approval" tab or badge.
+
+**Note:** The existing `PATCH /users/:id { isActive: false }` = suspend a team member (already documented). The new `/team/:id/approve` is semantically distinct — it activates a never-before-active account.
+
+**Checklist:**
+
+- [x] Update `createInternalUser()` to set `isActive: false` by default
+- [x] Add `approve(userId: string)` method to `team.service.ts`
+- [x] Add `PATCH /team/:id/approve` route (superadmin only)
+- [x] Update `docs/frontend-api-manual.md` — document the approval flow and the `?isActive=false` filter on `GET /team`
+
+---
+
+### 8.3 — Permission Toggle Buttons → Role Changes
+
+**Context:** The Team page shows per-member permission toggles: "Can transfer funds and view", "Can view only", "Make as Admin". The backend has no per-user permission table — permissions are entirely role-derived (see `ROLE_PERMISSIONS` map in `team.service.ts`).
+
+**Decision:** These toggles represent role changes. No new DB table needed.
+
+**Mapping:**
+
+| Frontend Toggle | Backend Action |
+| --- | --- |
+| "Make as Admin" | `PATCH /api/v1/users/:id/role { role: 'admin' }` |
+| "Can transfer funds and view" | `PATCH /api/v1/users/:id/role { role: 'staff' }` |
+| "Can view only" | `PATCH /api/v1/users/:id/role { role: 'staff' }` (no view-only role exists — see note) |
+
+**Note on "Can view only":** There is no `viewer` or `readonly` role in the system. For now this maps to `staff`. If a true read-only role is needed in the future, add `viewer` to the `userRoleEnum` and update `ROLE_PERMISSIONS`. Flag this to the frontend team so they know the two "staff-level" toggles currently produce the same role.
+
+**Checklist:**
+
+- [x] No backend changes needed for 8.3
+- [x] Update `docs/frontend-api-manual.md` with the toggle → role mapping table
+- [ ] Confirm with frontend team that "Can view only" and "Can transfer funds and view" both map to `staff` for now

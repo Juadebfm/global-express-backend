@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
+
 import { teamService } from '../services/team.service'
 import { successResponse } from '../utils/response'
 
@@ -24,5 +25,16 @@ export const teamController = {
     })
 
     return reply.send(successResponse(result))
+  },
+
+  async approve(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) {
+    const member = await teamService.approveTeamMember(request.params.id)
+    if (!member) {
+      return reply.code(404).send({ success: false, message: 'Team member not found' })
+    }
+    return reply.send(successResponse(member))
   },
 }

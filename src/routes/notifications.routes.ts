@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { notificationsController } from '../controllers/notifications.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove } from '../middleware/requireRole'
+import { requireSuperAdmin } from '../middleware/requireRole'
 
 const notificationSchema = z.object({
   id: z.string().uuid(),
@@ -109,12 +109,54 @@ Includes:
     handler: notificationsController.toggleSaved,
   })
 
-  // POST /notifications/broadcast — admin/superadmin only
-  app.post('/broadcast', {
-    preHandler: [authenticate, requireAdminOrAbove],
+  // DELETE /notifications/:id — delete a single notification
+  app.delete('/:id', {
+    preHandler: [authenticate],
     schema: {
       tags: ['Notifications'],
-      summary: 'Send a system-wide broadcast notification (admin+)',
+      summary: 'Delete a notification',
+      description: `Removes a notification from the user's inbox.
+
+- **Personal notifications** are permanently deleted.
+- **Broadcast notifications** are hidden only for this user — other users are not affected.`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: notificationsController.deleteOne,
+  })
+
+  // DELETE /notifications — bulk delete
+  app.delete('/', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Notifications'],
+      summary: 'Bulk delete notifications',
+      description: `Deletes multiple notifications by ID. Personal notifications are permanently deleted; broadcasts are hidden for this user only.
+
+Returns the count of successfully processed items. IDs that do not belong to the user are silently skipped.`,
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        ids: z.array(z.string().uuid()).min(1).max(100).describe('Array of notification UUIDs to delete (max 100)'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ deleted: z.number() }) }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: notificationsController.bulkDelete,
+  })
+
+  // POST /notifications/broadcast — superadmin only
+  app.post('/broadcast', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Notifications'],
+      summary: 'Send a system-wide broadcast notification (superadmin)',
       description: `Creates a system-wide notification visible to all users and pushes it in real-time via WebSocket.
 
 **Types allowed for broadcasts:** \`system_announcement\`, \`admin_alert\``,

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { teamController } from '../controllers/team.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove } from '../middleware/requireRole'
+import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
 
 const teamMemberSchema = z.object({
   id: z.string().uuid(),
@@ -58,5 +58,27 @@ Requires **admin** or **superadmin** role.
       },
     },
     handler: teamController.list,
+  })
+
+  app.patch('/:id/approve', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Team'],
+      summary: 'Approve a pending team member account (superadmin)',
+      description: `Activates an operator account that was created inactive. Once approved, the account holder can log in.
+
+New team member accounts created via \`POST /api/v1/internal/users\` start as inactive (\`isActive: false\`) and require superadmin approval before the user can log in.
+
+Use \`GET /api/v1/team?isActive=false\` to list all pending accounts.`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      response: {
+        200: z.object({ success: z.literal(true), data: teamMemberSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: teamController.approve,
   })
 }

@@ -38,11 +38,10 @@ export const shipmentStatusV2Enum = pgEnum('shipment_status_v2', [
 
 export const orderDirectionEnum = pgEnum('order_direction', ['outbound', 'inbound'])
 
-export const shipmentTypeEnum = pgEnum('shipment_type', ['air', 'ocean', 'road'])
+export const shipmentTypeEnum = pgEnum('shipment_type', ['air', 'ocean'])
 
 export const transportModeEnum = pgEnum('transport_mode', ['air', 'sea'])
 
-export const priorityEnum = pgEnum('priority', ['standard', 'express', 'economy'])
 
 export const paymentCollectionStatusEnum = pgEnum('payment_collection_status', [
   'UNPAID',
@@ -77,7 +76,6 @@ export const orders = pgTable(
     declaredValue: numeric('declared_value', { precision: 12, scale: 2 }),
     description: text('description'),
     shipmentType: shipmentTypeEnum('shipment_type'),
-    priority: priorityEnum('priority'),
     departureDate: timestamp('departure_date'),
     eta: timestamp('eta'),
     transportMode: transportModeEnum('transport_mode'),

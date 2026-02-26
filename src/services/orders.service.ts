@@ -102,8 +102,7 @@ export interface CreateOrderInput {
   weight?: string
   declaredValue?: string
   description?: string
-  shipmentType?: 'air' | 'ocean' | 'road'
-  priority?: 'standard' | 'express' | 'economy'
+  shipmentType?: 'air' | 'ocean'
   departureDate?: Date | null
   eta?: Date | null
   isPreorder?: boolean
@@ -177,7 +176,6 @@ export class OrdersService {
         shipmentType: input.shipmentType ?? null,
         transportMode: inferredTransportMode,
         isPreorder: input.isPreorder ?? false,
-        priority: input.priority ?? null,
         departureDate: input.departureDate ?? null,
         eta: input.eta ?? null,
         statusV2: initialStatusV2,
@@ -196,6 +194,19 @@ export class OrdersService {
         .catch((err) => {
           console.error('Failed to write initial order status event', err)
         })
+    }
+
+    // Notify the customer when staff create a shipment on their behalf
+    if (!input.isPreorder) {
+      notifyUser({
+        userId: input.senderId,
+        orderId: order.id,
+        type: 'order_status_update',
+        title: 'New shipment created',
+        subtitle: trackingNumber,
+        body: 'A new shipment has been created for you. We will update you as it progresses.',
+        createdBy: input.createdBy,
+      }).catch(() => {})
     }
 
     return this.decryptOrder(order)

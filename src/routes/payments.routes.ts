@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { paymentsController } from '../controllers/payments.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
+import { requireSuperAdmin, requireStaffOrAbove } from '../middleware/requireRole'
 import { PaymentStatus, PaymentType } from '../types/enums'
 
 const paymentResponseSchema = z.object({
@@ -127,10 +127,10 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
   })
 
   app.get('/', {
-    preHandler: [authenticate, requireAdminOrAbove],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Payments — Admin'],
-      summary: 'List all payments',
+      summary: 'List all payments (superadmin)',
       description: `Returns a paginated list of all payment records. Filter by customer or status.
 
 **Filter examples:**
@@ -165,10 +165,10 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
   })
 
   app.get('/:id', {
-    preHandler: [authenticate, requireAdminOrAbove],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Payments — Admin'],
-      summary: 'Get a payment by ID',
+      summary: 'Get a payment by ID (superadmin)',
       description: 'Returns a single payment record by its internal UUID.',
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid().describe('Payment UUID') }),

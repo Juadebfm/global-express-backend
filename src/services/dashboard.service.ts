@@ -62,7 +62,10 @@ export class DashboardService {
    * Returns null when the prior period had 0 activity (no baseline to compare).
    */
   async getStats(userId: string, role: string) {
-    const isCustomer = role === UserRole.USER
+    const isCustomer  = role === UserRole.USER
+    const isSuperAdmin = role === UserRole.SUPERADMIN
+    // Only fetch financial data for roles that will use it
+    const needsFinancial = isCustomer || isSuperAdmin
 
     const now = new Date()
     const now30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
@@ -83,16 +86,18 @@ export class DashboardService {
       .where(and(isNull(orders.deletedAt), userFilter))
       .groupBy(orders.statusV2)
 
-    // ── All-time financial total ───────────────────────────────────────────────
-    const financialQuery = isCustomer
-      ? db
-          .select({ total: sql<string>`coalesce(sum(amount), 0)::text` })
-          .from(payments)
-          .where(and(eq(payments.userId, userId), sql`status = 'successful'`))
-      : db
-          .select({ total: sql<string>`coalesce(sum(amount), 0)::text` })
-          .from(payments)
-          .where(sql`status = 'successful'`)
+    // ── All-time financial total (customer: own spend; superadmin: platform revenue) ─
+    const financialQuery = needsFinancial
+      ? (isCustomer
+          ? db
+              .select({ total: sql<string>`coalesce(sum(amount), 0)::text` })
+              .from(payments)
+              .where(and(eq(payments.userId, userId), sql`status = 'successful'`))
+          : db
+              .select({ total: sql<string>`coalesce(sum(amount), 0)::text` })
+              .from(payments)
+              .where(sql`status = 'successful'`))
+      : null
 
     // ── Delivered today (PICKED_UP_COMPLETED) ─────────────────────────────────
     const todayStart = new Date()
@@ -128,24 +133,34 @@ export class DashboardService {
       .where(and(isNull(orders.deletedAt), userFilter))
 
     // ── Period-over-period financial change ────────────────────────────────────
-    const finChangeQuery = isCustomer
-      ? db
-          .select({
-            current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30s}::timestamptz), 0)::text`,
-            prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz), 0)::text`,
-          })
-          .from(payments)
-          .where(and(eq(payments.userId, userId), sql`status = 'successful'`))
-      : db
-          .select({
-            current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30s}::timestamptz), 0)::text`,
-            prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz), 0)::text`,
-          })
-          .from(payments)
-          .where(sql`status = 'successful'`)
+    const finChangeQuery = needsFinancial
+      ? (isCustomer
+          ? db
+              .select({
+                current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30s}::timestamptz), 0)::text`,
+                prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz), 0)::text`,
+              })
+              .from(payments)
+              .where(and(eq(payments.userId, userId), sql`status = 'successful'`))
+          : db
+              .select({
+                current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30s}::timestamptz), 0)::text`,
+                prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz), 0)::text`,
+              })
+              .from(payments)
+              .where(sql`status = 'successful'`))
+      : null
 
-    const [statusRows, [financial], [deliveredToday], [changeRow], [finChange]] =
-      await Promise.all([countQuery, financialQuery, deliveredTodayQuery, changeQuery, finChangeQuery])
+    const [statusRows, financialRow, [deliveredToday], [changeRow], finChangeRow] =
+      await Promise.all([
+        countQuery,
+        financialQuery ? financialQuery : Promise.resolve([]),
+        deliveredTodayQuery,
+        changeQuery,
+        finChangeQuery ? finChangeQuery : Promise.resolve([]),
+      ])
+    const [financial] = financialRow as [{ total: string }?]
+    const [finChange] = finChangeRow as [{ current: string; prev: string }?]
 
     // Map V2 status rows to named counts (null statusV2 = pre-backfill orders, counted separately)
     const countByStatus: Record<string, number> = {}
@@ -177,16 +192,18 @@ export class DashboardService {
       cancelled: countByStatus[ShipmentStatusV2.CANCELLED] ?? 0,
       // unmappedOrders: orders whose statusV2 is still null (not yet backfilled)
       unmappedOrders: unmappedCount,
-      // admin/staff see revenueMtd; customer sees totalSpent (their own payments)
+      // superadmin sees revenueMtd; customer sees totalSpent; staff/admin see neither
       ...(isCustomer
         ? {
             totalSpent:       financial?.total ?? '0',
             totalSpentChange: calcChange(finCurrent, finPrev),
           }
-        : {
-            revenueMtd:       financial?.total ?? '0',
-            revenueMtdChange: calcChange(finCurrent, finPrev),
-          }),
+        : isSuperAdmin
+          ? {
+              revenueMtd:       financial?.total ?? '0',
+              revenueMtdChange: calcChange(finCurrent, finPrev),
+            }
+          : {}),
     }
   }
 

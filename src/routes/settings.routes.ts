@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { settingsController } from '../controllers/settings.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove } from '../middleware/requireRole'
+import { requireAdminOrAbove, requireSuperAdmin, requireStaffOrAbove } from '../middleware/requireRole'
 import { ipWhitelist } from '../middleware/ipWhitelist'
 import { PreferredLanguage, TransportMode } from '../types/enums'
 
@@ -325,10 +325,10 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
   app.get('/logistics', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Settings - Logistics'],
-      summary: 'Get logistics settings (admin+)',
+      summary: 'Get logistics settings (staff+)',
       security: [{ bearerAuth: [] }],
       response: {
         200: z.object({
@@ -364,10 +364,10 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.get('/fx-rate', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Settings - FX'],
-      summary: 'Get FX rate settings (admin+)',
+      summary: 'Get FX rate settings (staff+)',
       security: [{ bearerAuth: [] }],
       response: {
         200: z.object({
@@ -382,10 +382,10 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.patch('/fx-rate', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireSuperAdmin, ipWhitelist],
     schema: {
       tags: ['Settings - FX'],
-      summary: 'Update FX rate settings (admin+)',
+      summary: 'Update FX rate settings (superadmin)',
       security: [{ bearerAuth: [] }],
       body: fxRatePatchSchema,
       response: {
@@ -452,10 +452,10 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.get('/pricing', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Settings - Pricing'],
-      summary: 'List pricing rules and customer overrides (admin+)',
+      summary: 'List pricing rules and customer overrides (staff+)',
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         mode: z.nativeEnum(TransportMode).optional(),
@@ -533,10 +533,10 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.get('/restricted-goods', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Settings - Restricted Goods'],
-      summary: 'List restricted goods catalog (admin+)',
+      summary: 'List restricted goods catalog (staff+)',
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         includeInactive: z
