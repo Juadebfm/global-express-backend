@@ -1,83 +1,80 @@
-# Shipment Refactor Blueprint (Approved V2)
+# Global Express — Operational Manual (V2)
 
-Last updated: February 25, 2026
+Last updated: February 26, 2026
 
-Purpose:
+This is the single source of truth for the Global Express backend. It covers business rules,
+architecture standards, the current state of the codebase, and the implementation checklist for
+everything not yet built.
 
-- Translate approved business rules into an implementation-ready backend refactor plan.
-- Keep existing order endpoints, while upgrading flow, pricing, statuses, payments, and localization.
-- Migrate existing records into the new status/process model.
+---
 
-## 1. Locked Business Decisions
+## Part I — Business Rules
 
-## 1.1 Lane and Offices
+These are locked and approved. Do not deviate without explicit business sign-off.
 
-- Active lane is fixed to `South Korea -> Lagos` for this release.
-- Korea office address (source office):
-  - `GLOBAL EXPRESS`
-  - `76-25 Daehwa-ro, Ilsanseo-gu, Goyang-si, Gyeonggi-do (Bldg. B)`
-  - `+82-10-4710-5920`
-- Lagos office address (pickup office):
-  - `58B Awoniyi Elemo Street, Ajao Estate, Lagos`
-- Office addresses must be stored in backend settings and editable by `superadmin`.
+### 1. Lane and Offices
 
-## 1.2 Transport and Pricing
+- Active lane is fixed to `South Korea → Lagos` for this release.
+- Korea office (source):
+  - GLOBAL EXPRESS, 76-25 Daehwa-ro, Ilsanseo-gu, Goyang-si, Gyeonggi-do (Bldg. B), +82-10-4710-5920
+- Lagos office (pickup):
+  - 58B Awoniyi Elemo Street, Ajao Estate, Lagos
+- Office addresses are stored in `app_settings` and editable only by `superadmin`.
 
-- Currency for freight pricing is `USD`.
-- Air pricing uses exact `actual weight` (kg), no rounding, no minimum.
-- Sea pricing uses exact `cbm`, no rounding, no minimum.
+### 2. Transport and Pricing
 
-Air tiers (USD per kg):
+- Freight currency: `USD`.
+- Air: exact actual weight (kg), no rounding, no minimum.
+- Sea: exact CBM, no rounding, no minimum.
 
-1. `1-100kg = 13.50`
-2. `101-300kg = 11.50`
-3. `301-600kg = 10.80`
-4. `601-1000kg = 10.50`
-5. `1001-1500kg = 10.00`
-6. `1501+kg = 9.80`
+Air tiers (USD/kg):
 
-Sea pricing:
+| Weight Range | Rate |
+| --- | --- |
+| 1–100 kg | $13.50/kg |
+| 101–300 kg | $11.50/kg |
+| 301–600 kg | $10.80/kg |
+| 601–1,000 kg | $10.50/kg |
+| 1,001–1,500 kg | $10.00/kg |
+| 1,501+ kg | $9.80/kg |
 
-- Flat `550 USD / cbm`
-- Transit lead time target is approximately `3 months after boarding`
+Sea: flat **$550 USD/CBM**. Transit target: ~3 months after boarding.
 
-## 1.3 Special Customer Pricing
+### 3. Special Customer Pricing
 
-- Special prices override default pricing for that customer.
-- Overrides can be set per mode (`air` and/or `sea`).
-- Validity window is optional (`startAt`, `endAt`).
-- Editable by `admin` and `superadmin`.
-- Every create/update/delete must generate audit logs.
+- Per-customer overrides replace default pricing for that customer.
+- Overrides are mode-specific (`air` and/or `sea`) with optional validity window (`startAt`, `endAt`).
+- Editable by `admin` and `superadmin` only.
+- Every create/update/delete must generate an audit log entry.
 
-## 1.4 Pre-order and Warehouse Verification
+### 4. Pre-order and Warehouse Verification
 
-- Customer can pre-order before goods arrive at Korea warehouse.
-- Price is not shown at pre-order stage.
+- Customers may pre-order before goods arrive in Korea.
+- Price is **not shown** at pre-order stage.
 - Price is calculated only when warehouse staff verifies goods in Korea.
-- Staff/agent flow at warehouse:
-  - receive goods
-  - upload photo(s)
-  - capture package details (description, dimensions, type, weight/cbm)
-  - select customer (or create customer and send Clerk invite)
-  - auto-calculate freight
-  - optionally apply manual adjustment with required reason
-- Customer sees only final price (not internal calculation breakdown).
+- Warehouse staff flow:
+  1. Receive goods.
+  2. Upload photo(s).
+  3. Capture package details (description, dimensions, type, weight/CBM).
+  4. Select customer (or create stub + send Clerk invite).
+  5. Auto-calculate freight via pricing engine.
+  6. Optionally apply manual adjustment with mandatory reason.
+- Customer sees only the final adjusted price — no breakdown of internal calculation.
 
-## 1.5 Status Workflow
+### 5. Status Workflow
 
-- Status transitions are sequential.
-- Air and sea use different status paths.
+- Transitions are sequential and mode-specific.
 - Every status change records timestamp and actor.
-- Internal status can be richer than customer-facing status.
+- Internal `statusV2` is richer than customer-facing `customerStatusV2`.
 
-Common intake statuses:
+**Common intake statuses (both modes):**
 
 1. `PREORDER_SUBMITTED`
 2. `AWAITING_WAREHOUSE_RECEIPT`
 3. `WAREHOUSE_RECEIVED`
 4. `WAREHOUSE_VERIFIED_PRICED`
 
-Air statuses:
+**Air-specific statuses:**
 
 1. `DISPATCHED_TO_ORIGIN_AIRPORT`
 2. `AT_ORIGIN_AIRPORT`
@@ -89,7 +86,7 @@ Air statuses:
 8. `READY_FOR_PICKUP`
 9. `PICKED_UP_COMPLETED`
 
-Sea statuses:
+**Sea-specific statuses:**
 
 1. `DISPATCHED_TO_ORIGIN_PORT`
 2. `AT_ORIGIN_PORT`
@@ -101,227 +98,527 @@ Sea statuses:
 8. `READY_FOR_PICKUP`
 9. `PICKED_UP_COMPLETED`
 
-Exception statuses:
+**Exception statuses (bypass sequential check):**
 
-1. `ON_HOLD`
-2. `CANCELLED`
-3. `RESTRICTED_ITEM_REJECTED`
-4. `RESTRICTED_ITEM_OVERRIDE_APPROVED`
+- `ON_HOLD`
+- `CANCELLED`
+- `RESTRICTED_ITEM_REJECTED`
+- `RESTRICTED_ITEM_OVERRIDE_APPROVED`
 
-## 1.6 Payments
+### 6. Payments
 
+- Only full payment is accepted.
 - Customer may pay before departure or at pickup.
-- Only full payment is allowed.
-- Pickup release is blocked until full payment is confirmed.
-- Supported payment methods:
-  - card (gateway)
-  - transfer (staff-recorded)
-  - cash (staff-recorded)
-- For FX conversion (USD -> NGN), support:
-  - live rate
-  - manual rate override (manual overrides live while active)
-- Customer dashboard must show `amount due` and `pay now` when unpaid.
+- `READY_FOR_PICKUP → PICKED_UP_COMPLETED` transition is blocked until `paymentCollectionStatus = PAID_IN_FULL`.
+- Supported methods:
+  - `online` — Paystack card gateway
+  - `transfer` — staff-recorded bank transfer
+  - `cash` — staff-recorded cash payment
+- FX (USD → NGN): live rate or manual override. Manual overrides live while active.
+- Customer dashboard shows `amount due` + `pay now` when unpaid.
 
-## 1.7 Notifications
+### 7. Notifications
 
-- Trigger channels: email + in-app (respect user channel preferences).
-- Notify on milestones only:
+- Channels: email + in-app (respect user `preferredLanguage` and channel preferences).
+- Trigger only on milestones:
   - `WAREHOUSE_VERIFIED_PRICED`
   - `BOARDED_ON_FLIGHT` or `LOADED_ON_VESSEL`
   - `FLIGHT_LANDED_LAGOS` or `VESSEL_ARRIVED_LAGOS_PORT`
   - `READY_FOR_PICKUP`
   - `PAID_IN_FULL`
-- Notification templates must be editable by admin roles.
+- Templates are editable by admin roles via `PATCH /api/v1/settings/templates/:id`.
 
-## 1.8 Restricted Goods
+### 8. Restricted Goods
 
-- Initial restricted list includes:
-  - batteries
-  - phones
-  - laptops
-- List must be backend-configurable.
-- Restricted items can proceed only via admin override with mandatory reason + audit log.
+- Default restricted items: batteries, phones, laptops.
+- List is backend-configurable via `restricted_goods` table.
+- Restricted items can proceed only via admin+ override with mandatory reason + audit log.
 
-## 1.9 Language
+### 9. Language
 
-- Supported languages: `en` and `ko`.
-- Default language: `en`.
-- Language preference is persisted per user profile.
-- Backend localizes dynamic content (notifications, emails, status labels, payment/pickup texts).
-- Bilingual support applies to both customer and internal users.
+- Supported: `en` (default), `ko`.
+- Language preference stored per user in `users.preferredLanguage`.
+- Backend localizes all dynamic content (notifications, emails, status labels) using `notification_templates` table keyed by `templateKey + locale`.
+- Applies to both customers and internal users.
 
-## 2. API Strategy (Keep Existing Endpoints)
+---
 
-Existing endpoints remain primary:
+## Part II — Architecture & Standards
 
-- `POST /api/v1/orders`
-- `PATCH /api/v1/orders/:id/status`
-- `GET /api/v1/orders`, `GET /api/v1/orders/:id`, `GET /api/v1/orders/my-shipments`
-- `POST /api/v1/payments/initialize`, `POST /api/v1/payments/verify/:reference`
+These rules apply to every change in the codebase without exception.
 
-Required endpoint behavior upgrades:
+### 10. Security Rules
 
-1. `POST /orders`
-   - Accept pre-order creation with no visible price until warehouse verification.
-   - Restrict lane to Korea -> Lagos.
-2. `PATCH /orders/:id/status`
-   - Enforce sequential transitions.
-   - Validate status by transport mode (`air` vs `sea`).
-   - Record status history (actor + timestamp).
-3. `GET /orders*`
-   - Return internal status plus mapped customer status label.
-   - Return final payable amount and payment state.
+1. Never log secrets, tokens, or PII.
+2. Encrypt sensitive PII fields at rest.
+3. Never store passwords, card data, CVV, or tokens in plaintext.
+4. Keep payment card details out of backend storage (PCI boundary is Paystack).
+5. Keep webhook signature verification intact for all signed webhook flows.
+6. Rate-limit sensitive endpoints (auth, password reset, high-risk writes).
+7. Preserve soft-delete behavior on all user deletion flows.
+8. Audit-log all admin-impacting actions; never store PII in audit metadata.
+9. Never leak stack traces to clients in production error responses.
 
-Recommended new endpoints (additive):
+### 11. Architecture Rules
 
-1. `POST /api/v1/orders/:id/warehouse-verify`
-   - Capture package verification details, compute price, apply optional manual adjustment reason.
-2. `POST /api/v1/admin/clients`
-   - Create customer profile stub by staff/admin, then issue Clerk invite.
-3. `POST /api/v1/admin/clients/:id/send-invite`
-   - Re-send Clerk claim/invite link.
-4. `POST /api/v1/payments/:orderId/record-offline`
-   - Record transfer/cash payment with proof metadata (staff+).
-5. `GET /api/v1/settings/logistics`
-6. `PATCH /api/v1/settings/logistics`
-   - Offices, lane lock, transport ETA copy (superadmin for office updates).
-7. `GET /api/v1/settings/pricing`
-8. `PATCH /api/v1/settings/pricing`
-   - Default air tiers, sea flat rate, per-customer overrides (admin+).
-9. `GET /api/v1/settings/restricted-goods`
-10. `PATCH /api/v1/settings/restricted-goods`
-11. `GET /api/v1/settings/fx-rate`
-12. `PATCH /api/v1/settings/fx-rate`
-   - live/manual mode and manual value.
-13. `GET /api/v1/settings/templates`
-14. `PATCH /api/v1/settings/templates/:id`
-   - localized notification/email template management.
+- Fastify layering: `routes → controllers → services → db/schema`. No exceptions.
+- Use `zod` for every request and response contract on new or modified routes.
+- Success shape: `{ success: true, data: ... }`.
+- Error shape: `{ success: false, message: "...", errors?: [...] }`.
+- Auth belongs in `authenticate` middleware — never inside services.
+- Role checks belong in `requireRole` variants — never inside services.
+- Apply `ipWhitelist` to all admin/superadmin-only endpoints.
+- Pagination shape: `{ data: [...], pagination: { page, limit, total } }`.
+- Centralize business logic in services; no route-level business logic duplication.
 
-## 3. Data Model Changes
+---
 
-Current gaps in schema:
+## Part III — Current System State
 
-- `orders.status` enum is legacy (`pending`, `in_transit`, etc.).
-- no status history table
-- no pricing rules tables
-- no restricted goods catalog
-- no configurable offices/settings table
-- no user preferred language field
-- `bulk_shipment_items.weight` is text; package detail model is limited
+The sections below document what is **confirmed live in the codebase** as of the last audit (February 26, 2026).
 
-Proposed additions:
+### 12. Database Schema
 
-1. `orders` table
-   - add `transportMode` (`air` | `sea`)
-   - add `isPreorder` boolean
-   - add `priceCalculatedAt`, `priceCalculatedBy`
-   - add `calculatedChargeUsd`, `finalChargeUsd`, `pricingSource`, `priceAdjustmentReason`
-   - add `customerStatus` (or derive via mapping function)
-   - add `paymentCollectionStatus` (`UNPAID`, `PAYMENT_IN_PROGRESS`, `PAID_IN_FULL`)
-2. `order_status_events`
-   - `orderId`, `status`, `actorId`, `createdAt`
-3. `order_packages`
-   - support exact weight/cbm and dimensions per package
-   - `orderId`, `description`, `itemType`, `lengthCm`, `widthCm`, `heightCm`, `weightKg`, `cbm`, `isRestricted`, `restrictedOverride*`
-4. `pricing_rules`
-   - default air tiers + sea flat rate
-5. `customer_pricing_overrides`
-   - per-customer mode-specific overrides, optional validity windows, actor/audit metadata
-6. `restricted_goods`
-   - configurable prohibited catalog
-7. `app_settings` (or scoped settings tables)
-   - lane, offices, FX mode/value, ETA labels
-8. `notification_templates`
-   - template key + locale + subject/body
-9. `users`
-   - add `preferredLanguage` (`en` default, `ko`)
+#### 12.1 `orders` table — V2 columns (all confirmed)
 
-## 4. Migration Plan (Existing Records Must Be Migrated)
+| Column | Type | Notes |
+| --- | --- | --- |
+| `transportMode` | `transport_mode` enum | `air \| sea` |
+| `isPreorder` | `boolean` | default `false` |
+| `statusV2` | `shipment_status_v2` enum | internal operational status |
+| `customerStatusV2` | `shipment_status_v2` enum | customer-facing mapped status |
+| `priceCalculatedAt` | `timestamp` | set at warehouse verification |
+| `priceCalculatedBy` | `uuid` FK → users | actor who ran the calculation |
+| `calculatedChargeUsd` | `numeric(12,2)` | raw computed freight amount |
+| `finalChargeUsd` | `numeric(12,2)` | after manual adjustment |
+| `pricingSource` | `pricing_source` enum | `DEFAULT_RATE \| CUSTOMER_OVERRIDE \| MANUAL_ADJUSTMENT \| MIGRATED_UNVERIFIED` |
+| `priceAdjustmentReason` | `text` | required when source is `MANUAL_ADJUSTMENT` |
+| `paymentCollectionStatus` | `payment_collection_status` enum | `UNPAID \| PAYMENT_IN_PROGRESS \| PAID_IN_FULL`, default `UNPAID` |
+| `flaggedForAdminReview` | `boolean` | default `false` — set by backfill script when `transportMode` is missing and status cannot be deterministically mapped |
 
-Migration requirement: existing records move into new model.
+Legacy `status` column (original enum: `pending \| picked_up \| in_transit \| out_for_delivery \| delivered \| cancelled \| returned`) still exists for backward compat during migration.
 
-## 4.1 Enum/status migration approach
+#### 12.2 Supporting tables (all confirmed)
 
-1. Add new status enum and new status column (temporary dual-write period).
-2. Backfill new status from legacy value using deterministic mapping.
-3. Switch reads to new status column.
-4. Remove legacy status references after verification.
+| Table | Purpose |
+| --- | --- |
+| `order_status_events` | History of every V2 status change with `orderId`, `status`, `actorId`, `createdAt` |
+| `order_packages` | Per-package details: `description`, `itemType`, `lengthCm`, `widthCm`, `heightCm`, `weightKg`, `cbm`, `isRestricted`, `restrictedOverride*` |
+| `pricing_rules` | Default air tiers and sea flat rate; supports `effectiveFrom/To` date windows |
+| `customer_pricing_overrides` | Per-customer mode-specific overrides with optional `startsAt/endsAt` validity |
+| `restricted_goods` | Configurable catalog: `code`, `nameEn`, `nameKo`, `allowWithOverride`, `isActive` |
+| `app_settings` | Key-value JSONB store for logistics settings, FX rate config |
+| `notification_templates` | `templateKey + locale (en\|ko) + channel (email\|in_app)` → `subject + body` |
+| `bulk_shipments` | Includes `statusV2`, `transportMode`, full V2 pricing fields |
+| `bulk_shipment_items` | Includes `statusV2`, `customerStatusV2`, `transportMode`, `paymentCollectionStatus` |
 
-Default status backfill map:
+`users.preferredLanguage` — confirmed: `preferred_language` enum (`en | ko`), default `en`.
 
-- `pending` -> `WAREHOUSE_VERIFIED_PRICED`
-- `picked_up` -> `DISPATCHED_TO_ORIGIN_AIRPORT` (air) or `DISPATCHED_TO_ORIGIN_PORT` (sea)
-- `in_transit` -> `FLIGHT_DEPARTED` (air) or `VESSEL_DEPARTED` (sea)
-- `out_for_delivery` -> `IN_TRANSIT_TO_LAGOS_OFFICE`
-- `delivered` -> `PICKED_UP_COMPLETED`
-- `cancelled` -> `CANCELLED`
-- `returned` -> `CANCELLED`
+#### 12.3 V2 status enum — full value set (confirmed)
 
-Records with missing/unknown transport mode go to an admin review queue before final backfill.
+```text
+PREORDER_SUBMITTED | AWAITING_WAREHOUSE_RECEIPT | WAREHOUSE_RECEIVED |
+WAREHOUSE_VERIFIED_PRICED | DISPATCHED_TO_ORIGIN_AIRPORT | AT_ORIGIN_AIRPORT |
+BOARDED_ON_FLIGHT | FLIGHT_DEPARTED | FLIGHT_LANDED_LAGOS |
+DISPATCHED_TO_ORIGIN_PORT | AT_ORIGIN_PORT | LOADED_ON_VESSEL |
+VESSEL_DEPARTED | VESSEL_ARRIVED_LAGOS_PORT | CUSTOMS_CLEARED_LAGOS |
+IN_TRANSIT_TO_LAGOS_OFFICE | READY_FOR_PICKUP | PICKED_UP_COMPLETED |
+ON_HOLD | CANCELLED | RESTRICTED_ITEM_REJECTED | RESTRICTED_ITEM_OVERRIDE_APPROVED
+```
 
-## 4.2 Pricing backfill
+### 13. Live Endpoint Inventory
 
-- If existing orders have no trusted computed freight amount, mark as `pricingSource = MIGRATED_UNVERIFIED`.
-- Require admin restatement for operationally active shipments.
+All endpoints below are confirmed implemented and deployed.
 
-## 4.3 Bulk shipment parity
+#### 13.1 Customer Endpoints
 
-- Apply the same status model and payment/price visibility rules to `bulk_shipment_items`.
-- Ensure customer dashboard unified list continues to work unchanged.
+| Capability | Endpoint(s) |
+| --- | --- |
+| Sync Clerk account to backend user | `POST /api/v1/auth/sync` |
+| Get own profile | `GET /api/v1/users/me` |
+| Check profile completeness | `GET /api/v1/users/me/completeness` |
+| Update own profile, contact, address | `PATCH /api/v1/users/me` |
+| Notification preferences | `GET /api/v1/users/me/notification-preferences`, `PATCH /api/v1/users/me/notification-preferences` |
+| Export own data | `GET /api/v1/users/me/export` |
+| Delete own account (soft delete) | `DELETE /api/v1/users/me` |
+| Public shipment tracking | `GET /api/v1/orders/track/:trackingNumber` |
+| Create shipment order | `POST /api/v1/orders` |
+| Own unified shipment list | `GET /api/v1/orders/my-shipments` |
+| Own order list and detail | `GET /api/v1/orders`, `GET /api/v1/orders/:id` |
+| View order images | `GET /api/v1/orders/:id/images`, `GET /api/v1/uploads/orders/:orderId/images` |
+| Payment (online, Paystack) | `POST /api/v1/payments/initialize`, `POST /api/v1/payments/verify/:reference` |
+| Notification inbox | `GET /api/v1/notifications`, `GET /api/v1/notifications/unread-count`, `PATCH /api/v1/notifications/:id/read`, `PATCH /api/v1/notifications/:id/save` |
+| Dashboard | `GET /api/v1/dashboard`, `GET /api/v1/dashboard/stats`, `GET /api/v1/dashboard/trends`, `GET /api/v1/dashboard/active-deliveries` |
+| Real-time push | `GET /ws?token=<jwt>` (WebSocket — auth via query param) |
 
-## 5. Validation Rules
+#### 13.2 Internal Endpoints (Staff / Admin / Superadmin)
 
-1. Lane must be Korea -> Lagos only (for V2 release).
-2. No customer-visible price before `WAREHOUSE_VERIFIED_PRICED`.
-3. Status transitions must be sequential by mode.
-4. `READY_FOR_PICKUP` cannot move to `PICKED_UP_COMPLETED` until `PAID_IN_FULL`.
-5. Manual price changes require non-empty reason and actor log.
-6. Restricted item override requires admin+ role, reason, and audit entry.
-7. Manual FX override supersedes live FX until disabled/expired.
+| Capability | Endpoint(s) |
+| --- | --- |
+| Operator login, restore, logout | `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout` |
+| Operator password reset | `POST /api/v1/auth/forgot-password/send-otp`, `.../verify-otp`, `.../reset` |
+| Internal login | `POST /api/v1/internal/auth/login` |
+| Change own internal password | `PATCH /api/v1/internal/me/password` |
+| Create internal users | `POST /api/v1/internal/users` |
+| Reset internal user password (superadmin) | `PATCH /api/v1/internal/users/:id/password` |
+| Manage platform users | `GET /api/v1/users`, `GET /api/v1/users/:id`, `PATCH /api/v1/users/:id`, `PATCH /api/v1/users/:id/role`, `DELETE /api/v1/users/:id` |
+| Team directory (admin+) | `GET /api/v1/team` |
+| Client management (staff+) | `GET /api/v1/admin/clients`, `GET /api/v1/admin/clients/:id`, `GET /api/v1/admin/clients/:id/orders` |
+| Warehouse verification + pricing | `POST /api/v1/orders/:id/warehouse-verify` |
+| Update shipment status (staff+) | `PATCH /api/v1/orders/:id/status` |
+| Delete order (admin+) | `DELETE /api/v1/orders/:id` |
+| All shipments (staff+) | `GET /api/v1/shipments` |
+| Bulk shipment lifecycle | `POST /api/v1/bulk-orders`, `GET /api/v1/bulk-orders`, `GET /api/v1/bulk-orders/:id`, `PATCH /api/v1/bulk-orders/:id/status`, `POST /api/v1/bulk-orders/:id/items`, `DELETE /api/v1/bulk-orders/:id/items/:itemId`, `DELETE /api/v1/bulk-orders/:id` |
+| Upload images (staff+) | `POST /api/v1/uploads/presign`, `POST /api/v1/uploads/confirm` |
+| Delete image (admin+) | `DELETE /api/v1/uploads/images/:imageId` |
+| Payment records (admin) | `GET /api/v1/payments`, `GET /api/v1/payments/:id` |
+| Reports (admin+, IP-gated) | `GET /api/v1/reports/summary`, `GET /api/v1/reports/orders/by-status`, `GET /api/v1/reports/revenue` |
+| Internal notifications inbox | `GET /api/v1/internal/notifications`, `GET /api/v1/internal/notifications/unread-count`, `PATCH /api/v1/internal/notifications/read-all`, `PATCH /api/v1/internal/notifications/:id/read` |
+| Broadcast notification (admin+) | `POST /api/v1/notifications/broadcast` |
+| Settings — logistics | `GET /api/v1/settings/logistics`, `PATCH /api/v1/settings/logistics` |
+| Settings — pricing | `GET /api/v1/settings/pricing`, `PATCH /api/v1/settings/pricing` |
+| Settings — restricted goods | `GET /api/v1/settings/restricted-goods`, `PATCH /api/v1/settings/restricted-goods` |
+| Settings — FX rate | `GET /api/v1/settings/fx-rate`, `PATCH /api/v1/settings/fx-rate` |
+| Settings — templates | `GET /api/v1/settings/templates`, `PATCH /api/v1/settings/templates/:id` |
 
-## 6. Delivery Phases
+Note: Status changes are driven by explicit API calls only — no automatic scheduler or worker.
 
-## Phase 1 - Schema and enums
+#### 13.3 Live Services and Domain Logic
 
-- Add new enums/tables/columns and migration scaffolding.
-- Keep API responses backward compatible where possible.
+| Service / Module | Location | Status |
+| --- | --- | --- |
+| Pricing engine (air tiers + sea flat rate + customer overrides) | `src/services/pricing-v2.service.ts` | Live |
+| Status transition graph (AIR_FLOW and SEA_FLOW sequences defined) | `src/domain/shipment-v2/status-transitions.ts` | Defined but **not enforced** — never called from any controller |
+| FX rate management (live/manual mode, stored in `app_settings`) | `src/services/settings-fx-rate.service.ts` | Live — live mode fetches from `open.er-api.com/v6/latest/USD`, 5-min in-memory cache |
+| Notification templates (editable via API, stored in DB) | `src/services/settings-templates.service.ts` | Live — email and in-app send pipeline looks up template by `templateKey + locale + channel`, falls back to hardcoded strings |
+| Auth middleware (Clerk JWT + internal JWT, auto-provision) | `src/middleware/authenticate.ts` | Live |
+| Role middleware (`requireSuperAdmin`, `requireAdminOrAbove`, `requireStaffOrAbove`) | `src/middleware/requireRole.ts` | Live |
+| IP whitelist middleware | `src/middleware/ipWhitelist.ts` | Live |
+| WebSocket (Clerk + internal JWT via `?token=`) | `src/websocket/handlers.ts` | Live |
 
-## Phase 2 - Pricing engine + warehouse verify
+---
 
-- Implement exact weight/cbm pricing logic.
-- Add customer override evaluation and manual adjustment flow.
+## Part IV — Implementation Checklist
 
-## Phase 3 - Status workflow engine
+Each item is either confirmed done `[x]` or pending `[ ]`. Work in phase order.
 
-- Implement transition graph validators for air/sea.
-- Add status event writer and customer status mapper.
-- Trigger milestone-only notifications.
+---
 
-## Phase 4 - Payment release controls
+### Phase 1 — Schema and Enums
 
-- Add offline payment recording endpoints.
-- Enforce full payment for pickup completion.
-- Expose dashboard amount due state.
+- [x] V2 `shipmentStatusV2` enum — all 22 statuses defined in schema.
+- [x] `orders.transportMode` column.
+- [x] `orders.isPreorder` column.
+- [x] `orders.statusV2` + `orders.customerStatusV2` columns.
+- [x] `orders.priceCalculatedAt`, `priceCalculatedBy`, `calculatedChargeUsd`, `finalChargeUsd`, `pricingSource`, `priceAdjustmentReason` columns.
+- [x] `orders.paymentCollectionStatus` column (`UNPAID | PAYMENT_IN_PROGRESS | PAID_IN_FULL`).
+- [x] `order_status_events` table.
+- [x] `order_packages` table (full field set including restricted override fields).
+- [x] `pricing_rules` table.
+- [x] `customer_pricing_overrides` table.
+- [x] `restricted_goods` table.
+- [x] `app_settings` table (JSONB key-value store).
+- [x] `notification_templates` table (`templateKey + locale + channel → subject + body`).
+- [x] `users.preferredLanguage` column (`en | ko`, default `en`).
+- [x] Add `paymentType` column to `payments` table — `online | transfer | cash` (required for offline payment recording in Phase 4).
+- [x] Remove legacy `orders.status`, `bulk_shipments.status`, `bulk_shipment_items.status` columns and the `order_status` pg enum — dropped in Phase 6. Columns and indexes removed from both schema and DB.
 
-## Phase 5 - Settings + localization
+---
 
-- Add editable logistics/pricing/restricted-goods/fx/template settings.
-- Add language preference and localized dynamic content.
+### Phase 2 — Pricing Engine and Warehouse Verification
 
-## Phase 6 - Data migration + hardening
+- [x] `POST /api/v1/orders/:id/warehouse-verify` — captures package details, computes freight, stores packages.
+- [x] Pricing engine (`pricing-v2.service.ts`) — air tiers, sea flat rate, customer override lookup, manual adjustment.
+- [x] `GET/PATCH /api/v1/settings/pricing` — default rules and per-customer overrides editable.
+- [x] `GET/PATCH /api/v1/settings/restricted-goods` — catalog editable by admin+.
+- [x] `GET/PATCH /api/v1/settings/logistics` — offices and lane config.
+- [x] `GET/PATCH /api/v1/settings/fx-rate` — live/manual mode toggle and manual rate value.
+- [x] `GET/PATCH /api/v1/settings/templates/:id` — localized template management.
+- [x] `POST /api/v1/admin/clients` — create customer profile stub and issue Clerk invite. (staff+)
+- [x] `POST /api/v1/admin/clients/:id/send-invite` — re-send Clerk claim/invite link. (staff+)
 
-- Run legacy-to-v2 backfill.
-- Validate reports/dashboard compatibility.
-- Complete regression tests and role/permission tests.
+---
 
-## 7. Definition of Done
+### Phase 3 — Status Workflow Engine
 
-- All approved statuses implemented and enforced sequentially.
-- Pricing uses approved USD tiers and sea flat cbm rate.
-- Customer-specific overrides and audit trail active.
-- Price hidden until Korea warehouse verification.
-- Pickup blocked until full payment (card/transfer/cash supported).
-- Milestone notifications and template management active.
-- Restricted-goods configuration and override workflow active.
-- `en`/`ko` dynamic backend localization active for internal + customer flows.
-- Existing records migrated and verified.
+- [x] `canTransitionSequentially(mode, currentStatus, nextStatus)` defined in `src/domain/shipment-v2/status-transitions.ts` with full AIR_FLOW and SEA_FLOW sequences.
+- [x] `order_status_events` table ready to record history.
+- [x] Wire `canTransitionSequentially()` into `PATCH /api/v1/orders/:id/status` — reject invalid transitions with 400.
+- [x] Enforce mode-specific validation: derive mode from order's `transportMode` field before checking transition.
+- [x] Write a status history event to `order_status_events` on every successful status transition.
+- [x] Switch `GET /api/v1/orders` list and filter queries to use `statusV2` as the primary status field.
+- [x] Map `customerStatusV2` from `statusV2` on every order read — expose both in API responses.
+- [x] Verify `POST /api/v1/orders` sets `isPreorder = true` for customer-created orders.
+- [x] Enforce lane restriction to Korea → Lagos — `origin`/`destination` removed from request body, hardcoded as `"South Korea"` / `"Lagos, Nigeria"` in service.
+- [x] Verify no customer-visible price is returned before `WAREHOUSE_VERIFIED_PRICED` status (`finalChargeUsd` is null until warehouse verify).
+- [x] Trigger milestone notifications on correct V2 status transitions (see Section 7 for milestone list).
+
+---
+
+### Phase 4 — Payment Release Controls
+
+- [x] `orders.paymentCollectionStatus` column exists with `UNPAID | PAYMENT_IN_PROGRESS | PAID_IN_FULL`.
+- [x] `bulk_shipment_items.paymentCollectionStatus` column exists.
+- [x] Add `paymentType` column to `payments` table (`online | transfer | cash`) — schema migration required.
+- [x] `POST /api/v1/payments/:orderId/record-offline` — record transfer or cash payment with proof metadata; set `paymentCollectionStatus = PAID_IN_FULL` on the order. (staff+)
+- [x] On successful Paystack `verify/:reference`, update `orders.paymentCollectionStatus` to `PAID_IN_FULL`.
+- [x] Block `READY_FOR_PICKUP → PICKED_UP_COMPLETED` transition when `paymentCollectionStatus ≠ PAID_IN_FULL` (enforce inside Phase 3 status transition logic).
+- [x] Return `amountDue` (derived from `finalChargeUsd`) and `paymentCollectionStatus` in order responses visible to customers.
+
+---
+
+### Phase 5 — Settings and Localization
+
+- [x] `users.preferredLanguage` stored and patchable via `PATCH /api/v1/users/me`.
+- [x] `notification_templates` table populated and API-editable.
+- [x] FX rate mode/value stored and API-editable.
+- [x] Replace hardcoded English strings in `src/notifications/email.ts` with template lookups from `notification_templates` table using the recipient's `preferredLanguage`.
+- [x] Apply same localization to in-app notification content.
+- [x] Implement live FX rate fetching from an external API — called when `fxRate.mode = 'live'` to convert `finalChargeUsd` to NGN for payment display and recording.
+
+---
+
+### Phase 6 — Data Migration and Hardening
+
+- [x] Write backfill script: legacy `orders.status` → `orders.statusV2` using the deterministic mapping below. (`scripts/backfill-status-v2.ts`, run via `npm run backfill:status-v2`)
+- [x] Handle records with missing/unknown `transportMode` — place in admin review queue before final backfill. (`flaggedForAdminReview = true` set on orders with mode-dependent status and no `transportMode`)
+- [x] Mark existing orders with no trusted freight amount as `pricingSource = MIGRATED_UNVERIFIED`; flag for admin restatement. (backfill script sets `MIGRATED_UNVERIFIED` when `finalChargeUsd` is null)
+- [x] `flagged_for_admin_review` boolean column added to `orders` and `bulk_shipment_items` tables and applied to DB.
+- [x] Verify `bulk_shipment_items` unified dashboard list still works after V2 status migration. (dashboard and `getMyShipments` now read `statusV2` from both `orders` and `bulk_shipment_items`)
+- [x] Complete regression tests and role/permission tests. (`tests/unit/backfill-logic.test.ts` — full legacy→V2 decision table; `tests/unit/status-labels.test.ts` — all 22 V2 values covered; 43 tests passing)
+- [x] Switch all reads (list, filter, dashboard, reports) to use `statusV2` as primary — retire legacy `status` reads. (dashboard, reports, shipments, orders, bulk-orders all updated)
+- [x] Drop legacy `orders.status`, `bulk_shipments.status`, `bulk_shipment_items.status` columns and `order_status` pg enum — completed. Ran backfill → resolved 32 flagged orders → dropped all legacy columns, indexes, and enum from both Drizzle schema and Neon DB.
+
+**Legacy → V2 status backfill map:**
+
+| Legacy | V2 (air) | V2 (sea) |
+| --- | --- | --- |
+| `pending` | `WAREHOUSE_VERIFIED_PRICED` | `WAREHOUSE_VERIFIED_PRICED` |
+| `picked_up` | `DISPATCHED_TO_ORIGIN_AIRPORT` | `DISPATCHED_TO_ORIGIN_PORT` |
+| `in_transit` | `FLIGHT_DEPARTED` | `VESSEL_DEPARTED` |
+| `out_for_delivery` | `IN_TRANSIT_TO_LAGOS_OFFICE` | `IN_TRANSIT_TO_LAGOS_OFFICE` |
+| `delivered` | `PICKED_UP_COMPLETED` | `PICKED_UP_COMPLETED` |
+| `cancelled` | `CANCELLED` | `CANCELLED` |
+| `returned` | `CANCELLED` | `CANCELLED` |
+
+---
+
+## Part V — Technical Reference
+
+### 14. New Endpoint Contracts (to be built)
+
+#### 14.1 `POST /api/v1/admin/clients`
+
+Role: staff+, IP-gated.
+
+Request body:
+
+```json
+{
+  "email": "customer@example.com",
+  "firstName": "Jane",
+  "lastName": "Doe",
+  "businessName": null,
+  "phone": "+2348012345678",
+  "whatsappNumber": "+2348012345678",
+  "addressStreet": "12 Allen Ave",
+  "addressCity": "Lagos",
+  "addressState": "Lagos",
+  "addressCountry": "Nigeria",
+  "addressPostalCode": "100001"
+}
+```
+
+Behavior: creates user record in DB, issues a Clerk invitation email to the provided address.
+Response: created user profile + invite status.
+
+#### 14.2 `POST /api/v1/admin/clients/:id/send-invite`
+
+Role: staff+, IP-gated.
+No body. Re-sends the Clerk claim/invite link to the client's email.
+
+#### 14.3 `POST /api/v1/payments/:orderId/record-offline`
+
+Role: staff+.
+
+Request body:
+
+```json
+{
+  "paymentType": "transfer",
+  "amountNgn": 750000,
+  "proofReference": "TXN-REF-123456",
+  "note": "Bank transfer confirmed by Amaka"
+}
+```
+
+Behavior:
+
+- Creates a `payments` record with `paymentType = transfer | cash`.
+- Sets `orders.paymentCollectionStatus = PAID_IN_FULL`.
+- Triggers `PAID_IN_FULL` milestone notification if configured.
+
+Response: `{ success: true, data: { paymentId, orderId, paymentCollectionStatus } }`
+
+### 15. Frontend Integration Reference
+
+#### 15.1 Connection Details
+
+- Base URL: `https://your-app-name-snowy-waterfall-9062.fly.dev`
+- API prefix: `/api/v1`
+- Swagger docs: `<base-url>/docs`
+- WebSocket: `wss://<host>/ws?token=<clerk-jwt>` (auth via query param, not Authorization header)
+
+#### 15.2 Auth Architecture
+
+| User Type | Auth Method | Token Format |
+| --- | --- | --- |
+| Customers | Clerk (custom signup form) | Clerk JWT |
+| Staff / Admin / Superadmin | Internal (email + password) | Internal JWT |
+
+All protected endpoints require: `Authorization: Bearer <token>`
+
+#### 15.3 Customer Registration Flow (3-Phase)
+
+Do **not** use Clerk's prebuilt `<SignUp />` component. Use `useSignUp()` hook for a custom form.
+
+Phase 1 — Clerk signup:
+
+1. `signUp.create({ emailAddress, password, firstName, lastName })` — Clerk creates account
+2. `signUp.prepareEmailAddressVerification({ strategy: 'email_code' })` — Clerk sends OTP
+3. `signUp.attemptEmailAddressVerification({ code })` → `setActive({ session })`
+
+Phase 2 — Backend sync (immediately after `setActive`):
+
+- `POST /api/v1/auth/sync` — no body, Bearer JWT — provisions user record in DB
+- Response: full user profile object (null for unpopulated fields)
+
+Phase 3 — Profile completion:
+
+- `GET /api/v1/users/me/completeness` — returns `{ isComplete, missingFields[] }`
+- If incomplete, redirect to profile completion screen
+- `PATCH /api/v1/users/me` — save phone, address, optional WhatsApp
+
+**Profile completeness requirements** (all must be satisfied before order creation):
+
+| Field | Rule |
+| --- | --- |
+| Name | Either (`firstName` + `lastName`) **or** `businessName` — at least one set |
+| `phone` | Required |
+| `whatsappNumber` | Optional |
+| `addressStreet` | Required |
+| `addressCity` | Required |
+| `addressState` | Required |
+| `addressCountry` | Required |
+| `addressPostalCode` | Required |
+
+`missingFields` possible values: `name`, `phone`, `addressStreet`, `addressCity`, `addressState`, `addressCountry`, `addressPostalCode`
+
+UX rules:
+
+- WhatsApp checkbox: "Same as phone" — copies phone value into `whatsappNumber`.
+- Business toggle: `businessName` required if on; `firstName` + `lastName` required if off.
+- Show persistent banner on dashboard + block "New Order" if `isComplete = false`.
+- `POST /orders` returning `422` → redirect to profile completion screen.
+- If user closes browser after Phase 2, prompt on next login to finish profile.
+
+#### 15.4 Frontend Environment Variables
+
+```env
+VITE_CLERK_PUBLISHABLE_KEY=pk_live_...
+VITE_API_BASE_URL=https://your-app-name-snowy-waterfall-9062.fly.dev/api/v1
+VITE_WS_URL=wss://your-app-name-snowy-waterfall-9062.fly.dev/ws
+```
+
+#### 15.5 Authenticated API Calls
+
+```tsx
+import { useAuth } from '@clerk/clerk-react'
+
+function useApi() {
+  const { getToken } = useAuth()
+  const authFetch = async (path: string, options: RequestInit = {}) => {
+    const token = await getToken()
+    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...options.headers,
+      },
+    })
+    return res.json()
+  }
+  return { authFetch }
+}
+```
+
+Response shape:
+
+```json
+{ "success": true, "data": { } }
+{ "success": false, "message": "Reason" }
+```
+
+#### 15.6 Real-time WebSocket
+
+```ts
+const ws = new WebSocket(`${VITE_WS_URL}?token=${token}`)
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data)
+  // msg.type === 'order_status_updated'
+  // msg.data === { orderId, trackingNumber, status, updatedAt }
+}
+ws.onclose = () => setTimeout(connect, 3000) // auto-reconnect
+```
+
+#### 15.7 Payments (Paystack)
+
+Initialize:
+
+```http
+POST /api/v1/payments/initialize
+Content-Type: application/json
+
+{ "orderId": "uuid", "amount": 500000, "currency": "NGN" }
+```
+
+`amount` is in **kobo** — ₦5,000 = `500000`. Returns `{ authorizationUrl, reference }` — redirect user to `authorizationUrl`.
+
+Verify after redirect:
+
+```http
+GET /api/v1/payments/verify/:reference
+```
+
+#### 15.8 Notification Preferences
+
+```http
+GET  /api/v1/users/me/notification-preferences
+PATCH /api/v1/users/me/notification-preferences
+```
+
+PATCH fields (all optional): `notifyEmailAlerts`, `notifySmsAlerts`, `notifyInAppAlerts`, `consentMarketing`
+
+#### 15.9 Account Security Ownership
+
+- Customer password/2FA/session: managed by Clerk — do not call backend endpoints.
+- `PATCH /api/v1/internal/me/password` is restricted to internal roles only.
+
+#### 15.10 Clerk Webhook Setup
+
+Backend endpoint: `POST /webhooks/clerk`
+Subscribe to: `user.updated`, `user.deleted`
+Add to `.env`: `CLERK_WEBHOOK_SECRET=whsec_...`
+Local dev: `npx @clerk/agent tunnel --port 3000`
+
+#### 15.11 `GET /api/v1/users/me` Response Fields
+
+`id`, `clerkId`, `email`, `firstName`, `lastName`, `businessName`, `phone`, `whatsappNumber`,
+`addressStreet`, `addressCity`, `addressState`, `addressCountry`, `addressPostalCode`,
+`role`, `isActive`, `consentMarketing`, `notifyEmailAlerts`, `notifySmsAlerts`, `notifyInAppAlerts`,
+`preferredLanguage`, `deletedAt`, `createdAt`, `updatedAt`
+
+Account deletion (`DELETE /api/v1/users/me`): soft delete. Subsequent requests for the same identity return `403` — not auto-reprovisioned.
+
+Data export (`GET /api/v1/users/me/export`): full decrypted profile in same shape as `GET /users/me`.

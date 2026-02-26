@@ -1,10 +1,14 @@
 import { eq, and, isNull, sql, desc } from 'drizzle-orm'
+import { createClerkClient } from '@clerk/backend'
 import { db } from '../config/db'
 import { users, orders, payments } from '../../drizzle/schema'
-import { decrypt } from '../utils/encryption'
+import { encrypt, decrypt, hashEmail } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
+import { env } from '../config/env'
 import type { PaginationParams } from '../types'
 import { UserRole } from '../types/enums'
+
+const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY })
 
 export class ClientsService {
   /**
@@ -95,6 +99,44 @@ export class ClientsService {
       .limit(1)
 
     return row ? this.formatClient(row, true) : null
+  }
+
+  /**
+   * Creates a staff-initiated client stub in the DB (clerkId=null, isActive=false).
+   * The emailHash allows the authenticate middleware to link the record when the
+   * customer later signs up via the Clerk invite.
+   */
+  async createClientStub(input: {
+    email: string
+    firstName?: string
+    lastName?: string
+    businessName?: string
+    phone?: string
+  }) {
+    const [stub] = await db
+      .insert(users)
+      .values({
+        clerkId: null,
+        email: encrypt(input.email),
+        emailHash: hashEmail(input.email),
+        firstName: input.firstName ? encrypt(input.firstName) : null,
+        lastName: input.lastName ? encrypt(input.lastName) : null,
+        businessName: input.businessName ? encrypt(input.businessName) : null,
+        phone: input.phone ? encrypt(input.phone) : null,
+        role: UserRole.USER,
+        isActive: false,
+      })
+      .returning()
+
+    return stub
+  }
+
+  /**
+   * Sends (or re-sends) a Clerk invitation to the given email address.
+   * Clerk will email the customer a sign-up link that pre-fills their email.
+   */
+  async sendClerkInvite(email: string) {
+    return clerk.invitations.createInvitation({ emailAddress: email })
   }
 
   private formatClient(

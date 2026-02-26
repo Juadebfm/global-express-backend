@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { shipmentsService } from '../services/shipments.service'
 import { successResponse } from '../utils/response'
-import { UserRole, type OrderStatus } from '../types/enums'
+import { UserRole, ShipmentStatusV2 } from '../types/enums'
 
 export const shipmentsController = {
   async list(
@@ -9,7 +9,7 @@ export const shipmentsController = {
       Querystring: {
         page?: string
         limit?: string
-        status?: string
+        statusV2?: string
         senderId?: string
       }
     }>,
@@ -23,7 +23,7 @@ export const shipmentsController = {
       limit: Number(request.query.limit) || 20,
       userId: request.user.id,
       isCustomer,
-      status: request.query.status as OrderStatus | undefined,
+      statusV2: request.query.statusV2 as ShipmentStatusV2 | undefined,
       senderId: !isCustomer ? request.query.senderId : undefined,
     })
 

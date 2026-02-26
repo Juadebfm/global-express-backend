@@ -2,12 +2,12 @@ import { createHmac } from 'crypto'
 import { eq, and, desc, sql } from 'drizzle-orm'
 import axios from 'axios'
 import { db } from '../config/db'
-import { payments } from '../../drizzle/schema'
+import { payments, orders } from '../../drizzle/schema'
 import { adminNotificationsService } from './admin-notifications.service'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { env } from '../config/env'
 import type { PaginationParams } from '../types'
-import { PaymentStatus } from '../types/enums'
+import { PaymentStatus, PaymentType } from '../types/enums'
 
 const PAYSTACK_API = 'https://api.paystack.co'
 
@@ -119,7 +119,52 @@ export class PaymentsService {
       .where(eq(payments.paystackReference, reference))
       .returning()
 
+    if (updated && newStatus === PaymentStatus.SUCCESSFUL) {
+      await db
+        .update(orders)
+        .set({ paymentCollectionStatus: 'PAID_IN_FULL', updatedAt: new Date() })
+        .where(eq(orders.id, updated.orderId))
+    }
+
     return updated ?? null
+  }
+
+  async recordOfflinePayment(input: {
+    orderId: string
+    userId: string
+    recordedBy: string
+    amount: number // major currency units (NGN)
+    paymentType: PaymentType.TRANSFER | PaymentType.CASH
+    proofReference?: string
+    note?: string
+  }) {
+    const [payment] = await db.transaction(async (tx) => {
+      const [newPayment] = await tx
+        .insert(payments)
+        .values({
+          orderId: input.orderId,
+          userId: input.userId,
+          amount: String(input.amount),
+          currency: 'NGN',
+          // paystackReference intentionally null for offline payments
+          status: PaymentStatus.SUCCESSFUL,
+          paymentType: input.paymentType,
+          recordedBy: input.recordedBy,
+          proofReference: input.proofReference ?? null,
+          note: input.note ?? null,
+          paidAt: new Date(),
+        })
+        .returning()
+
+      await tx
+        .update(orders)
+        .set({ paymentCollectionStatus: 'PAID_IN_FULL', updatedAt: new Date() })
+        .where(eq(orders.id, input.orderId))
+
+      return [newPayment]
+    })
+
+    return payment
   }
 
   /**
@@ -153,6 +198,13 @@ export class PaymentsService {
         })
         .where(eq(payments.paystackReference, event.data.reference))
         .returning()
+
+      if (payment) {
+        await db
+          .update(orders)
+          .set({ paymentCollectionStatus: 'PAID_IN_FULL', updatedAt: new Date() })
+          .where(eq(orders.id, payment.orderId))
+      }
 
       // Fire-and-forget: notify superadmin of successful payment
       adminNotificationsService.notify({

@@ -9,7 +9,7 @@ import { sendOrderStatusUpdateEmail } from '../notifications/email'
 import { sendOrderStatusWhatsApp } from '../notifications/whatsapp'
 import { mapLegacyStatusToV2 } from '../domain/shipment-v2/status-mapping'
 import type { PaginationParams } from '../types'
-import { OrderStatus } from '../types/enums'
+import { OrderStatus, ShipmentStatusV2 } from '../types/enums'
 
 export interface CreateBulkItemInput {
   customerId: string
@@ -101,7 +101,7 @@ export class BulkOrdersService {
       .select({
         id: bulkShipmentItems.id,
         trackingNumber: bulkShipmentItems.trackingNumber,
-        status: bulkShipmentItems.status,
+        statusV2: bulkShipmentItems.statusV2,
         createdAt: bulkShipmentItems.createdAt,
         updatedAt: bulkShipmentItems.updatedAt,
         origin: bulkShipments.origin,
@@ -157,22 +157,11 @@ export class BulkOrdersService {
     return buildPaginatedResult(result, total, params)
   }
 
-  async updateBulkOrderStatus(id: string, status: OrderStatus) {
-    const [current] = await db
-      .select({
-        transportMode: bulkShipments.transportMode,
-      })
-      .from(bulkShipments)
-      .where(and(eq(bulkShipments.id, id), isNull(bulkShipments.deletedAt)))
-      .limit(1)
-
-    const mappedStatusV2 = mapLegacyStatusToV2(status, current?.transportMode ?? null)
-
+  async updateBulkOrderStatus(id: string, statusV2: ShipmentStatusV2) {
     const [updated] = await db
       .update(bulkShipments)
       .set({
-        status,
-        statusV2: mappedStatusV2 ?? undefined,
+        statusV2,
         updatedAt: new Date(),
       })
       .where(and(eq(bulkShipments.id, id), isNull(bulkShipments.deletedAt)))
@@ -184,9 +173,8 @@ export class BulkOrdersService {
     await db
       .update(bulkShipmentItems)
       .set({
-        status,
-        statusV2: mappedStatusV2 ?? undefined,
-        customerStatusV2: mappedStatusV2 ?? undefined,
+        statusV2,
+        customerStatusV2: statusV2,
         updatedAt: new Date(),
       })
       .where(eq(bulkShipmentItems.bulkShipmentId, id))
@@ -207,11 +195,13 @@ export class BulkOrdersService {
       .innerJoin(users, eq(bulkShipmentItems.customerId, users.id))
       .where(eq(bulkShipmentItems.bulkShipmentId, id))
 
+    const templateKey = `order.${statusV2.toLowerCase()}`
+
     for (const item of itemsWithCustomers) {
       if (item.notifyInAppAlerts) {
         broadcastToUser(item.customerId, {
           type: 'order:status_updated',
-          data: { trackingNumber: item.trackingNumber, status },
+          data: { trackingNumber: item.trackingNumber, statusV2 },
         })
       }
 
@@ -223,7 +213,8 @@ export class BulkOrdersService {
           to: customerEmail,
           recipientName,
           trackingNumber: item.trackingNumber,
-          status,
+          status: statusV2,
+          templateKey,
         }).catch((err) => console.error('Failed to send bulk status email', err))
       }
 
@@ -232,7 +223,7 @@ export class BulkOrdersService {
           phone: decrypt(item.customerPhone),
           recipientName,
           trackingNumber: item.trackingNumber,
-          status,
+          status: statusV2,
         }).catch((err) => console.error('Failed to send bulk status WhatsApp', err))
       }
     }

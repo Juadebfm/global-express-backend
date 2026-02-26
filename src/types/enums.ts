@@ -76,6 +76,12 @@ export enum PaymentCollectionStatus {
   PAID_IN_FULL = 'PAID_IN_FULL',
 }
 
+export enum PaymentType {
+  ONLINE = 'online',
+  TRANSFER = 'transfer',
+  CASH = 'cash',
+}
+
 export enum PricingSource {
   DEFAULT_RATE = 'DEFAULT_RATE',
   CUSTOMER_OVERRIDE = 'CUSTOMER_OVERRIDE',

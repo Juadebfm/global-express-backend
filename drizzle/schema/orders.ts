@@ -11,17 +11,6 @@ import {
 } from 'drizzle-orm/pg-core'
 import { users } from './users'
 
-export const orderStatusEnum = pgEnum('order_status', [
-  'pending',
-  'picked_up',
-  'in_transit',
-  'out_for_delivery',
-  'delivered',
-  'cancelled',
-  'returned',
-])
-
-// V2 mode-specific status workflow (kept in parallel with legacy order_status during migration)
 export const shipmentStatusV2Enum = pgEnum('shipment_status_v2', [
   'PREORDER_SUBMITTED',
   'AWAITING_WAREHOUSE_RECEIPT',
@@ -83,7 +72,6 @@ export const orders = pgTable(
     recipientEmail: text('recipient_email'),
     origin: text('origin').notNull(),
     destination: text('destination').notNull(),
-    status: orderStatusEnum('status').notNull().default('pending'),
     orderDirection: orderDirectionEnum('order_direction').notNull().default('outbound'),
     weight: numeric('weight', { precision: 10, scale: 2 }),
     declaredValue: numeric('declared_value', { precision: 12, scale: 2 }),
@@ -92,7 +80,6 @@ export const orders = pgTable(
     priority: priorityEnum('priority'),
     departureDate: timestamp('departure_date'),
     eta: timestamp('eta'),
-    // V2 fields (kept nullable/defaulted for backward-compatible rollout)
     transportMode: transportModeEnum('transport_mode'),
     isPreorder: boolean('is_preorder').notNull().default(false),
     statusV2: shipmentStatusV2Enum('status_v2'),
@@ -106,6 +93,7 @@ export const orders = pgTable(
     paymentCollectionStatus: paymentCollectionStatusEnum('payment_collection_status')
       .notNull()
       .default('UNPAID'),
+    flaggedForAdminReview: boolean('flagged_for_admin_review').notNull().default(false),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),
@@ -117,7 +105,6 @@ export const orders = pgTable(
   },
   (table) => [
     index('orders_sender_id_idx').on(table.senderId),
-    index('orders_status_idx').on(table.status),
     index('orders_status_v2_idx').on(table.statusV2),
     index('orders_transport_mode_idx').on(table.transportMode),
     index('orders_tracking_number_idx').on(table.trackingNumber),

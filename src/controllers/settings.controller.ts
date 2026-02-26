@@ -82,7 +82,13 @@ export const settingsController = {
 
   async getFxRate(_request: FastifyRequest, reply: FastifyReply) {
     const data = await settingsFxRateService.getFxRateSettings()
-    return reply.send(successResponse(data))
+    let effectiveRate: number | null = null
+    try {
+      effectiveRate = await settingsFxRateService.getEffectiveRate()
+    } catch {
+      // Live rate unavailable or manual not configured — return null
+    }
+    return reply.send(successResponse({ ...data, effectiveRate }))
   },
 
   async updateFxRate(

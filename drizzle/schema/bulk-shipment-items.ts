@@ -1,8 +1,7 @@
-import { pgTable, uuid, text, timestamp, index, numeric } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, timestamp, index, numeric, boolean } from 'drizzle-orm/pg-core'
 import { users } from './users'
 import { bulkShipments } from './bulk-shipments'
 import {
-  orderStatusEnum,
   paymentCollectionStatusEnum,
   pricingSourceEnum,
   shipmentStatusV2Enum,
@@ -24,7 +23,6 @@ export const bulkShipmentItems = pgTable(
     weight: text('weight'),
     declaredValue: text('declared_value'),
     description: text('description'),
-    status: orderStatusEnum('status').notNull().default('pending'),
     statusV2: shipmentStatusV2Enum('status_v2'),
     customerStatusV2: shipmentStatusV2Enum('customer_status_v2'),
     transportMode: transportModeEnum('transport_mode'),
@@ -37,6 +35,7 @@ export const bulkShipmentItems = pgTable(
     paymentCollectionStatus: paymentCollectionStatusEnum('payment_collection_status')
       .notNull()
       .default('UNPAID'),
+    flaggedForAdminReview: boolean('flagged_for_admin_review').notNull().default(false),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },

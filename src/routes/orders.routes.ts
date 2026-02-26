@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
-import { OrderStatus, OrderDirection, ShipmentType, Priority, TransportMode } from '../types/enums'
+import { OrderStatus, OrderDirection, ShipmentType, Priority, TransportMode, ShipmentStatusV2 } from '../types/enums'
 
 const orderResponseSchema = z.object({
   id: z.string().uuid().describe('Order UUID'),
@@ -38,6 +38,7 @@ const orderResponseSchema = z.object({
   paymentCollectionStatus: z
     .enum(['UNPAID', 'PAYMENT_IN_PROGRESS', 'PAID_IN_FULL'])
     .describe('Payment collection state for pickup validation'),
+  amountDue: z.string().nullable().describe('Amount owed in USD — equals finalChargeUsd until paid, then null'),
   createdBy: z.string().uuid().describe('UUID of the staff/user who created the order'),
   deletedAt: z.string().nullable(),
   createdAt: z.string(),
@@ -212,6 +213,8 @@ Works for both solo orders and bulk shipment items.
 - **Staff / Admin** can create on behalf of a customer by providing \`senderId\`.
 - Customers must have a complete profile (name or business name, phone, and full address) before placing an order — returns \`422\` otherwise.
 
+The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destination are set automatically.
+
 **Example request body:**
 \`\`\`json
 {
@@ -219,8 +222,6 @@ Works for both solo orders and bulk shipment items.
   "recipientAddress": "5 Victoria Island, Lagos",
   "recipientPhone": "+2348098765432",
   "recipientEmail": "adeola@example.com",
-  "origin": "London",
-  "destination": "Lagos",
   "orderDirection": "outbound",
   "weight": "3.2kg",
   "declaredValue": "45000",
@@ -234,9 +235,7 @@ Works for both solo orders and bulk shipment items.
   "senderId": "550e8400-e29b-41d4-a716-446655440000",
   "recipientName": "Adeola Johnson",
   "recipientAddress": "5 Victoria Island, Lagos",
-  "recipientPhone": "+2348098765432",
-  "origin": "London",
-  "destination": "Lagos"
+  "recipientPhone": "+2348098765432"
 }
 \`\`\``,
       security: [{ bearerAuth: [] }],
@@ -246,8 +245,6 @@ Works for both solo orders and bulk shipment items.
         recipientAddress: z.string().min(1).describe('Full delivery address for the recipient'),
         recipientPhone: z.string().min(1).describe('Recipient contact phone number'),
         recipientEmail: z.string().email().optional().describe('Recipient email (optional, for delivery notifications)'),
-        origin: z.string().min(1).describe('Shipment origin city / country (e.g. "London")'),
-        destination: z.string().min(1).describe('Shipment destination city / country (e.g. "Lagos")'),
         orderDirection: z.nativeEnum(OrderDirection).optional().default(OrderDirection.OUTBOUND).describe('outbound = we ship TO customer; inbound = customer ships TO us'),
         weight: z.string().optional().describe('Package weight with unit (e.g. "2.5kg")'),
         declaredValue: z.string().optional().describe('Declared monetary value in local currency (e.g. "15000")'),
@@ -274,16 +271,16 @@ Works for both solo orders and bulk shipment items.
       description: `Returns a paginated list of orders.
 
 - **Customers** only see their own orders.
-- **Staff and above** see all orders and can filter by \`senderId\` or \`status\`.
+- **Staff and above** see all orders and can filter by \`senderId\` or \`statusV2\`.
 
 **Filter examples:**
-- In-transit orders: \`?status=in_transit\`
+- In-transit orders: \`?statusV2=FLIGHT_DEPARTED\`
 - Orders for a specific customer: \`?senderId=<uuid>\``,
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         page: z.coerce.number().int().positive().optional().default(1).describe('Page number'),
         limit: z.coerce.number().int().min(1).max(100).optional().default(20).describe('Results per page (max 100)'),
-        status: z.nativeEnum(OrderStatus).optional().describe('Filter by status: pending | picked_up | in_transit | out_for_delivery | delivered | cancelled | returned'),
+        statusV2: z.nativeEnum(ShipmentStatusV2).optional().describe('Filter by V2 status (e.g. FLIGHT_DEPARTED, READY_FOR_PICKUP)'),
         senderId: z.string().uuid().optional().describe('Filter by customer UUID (staff+ only)'),
       }),
       response: {
@@ -317,21 +314,28 @@ Works for both solo orders and bulk shipment items.
     schema: {
       tags: ['Orders'],
       summary: 'Update order status (staff+)',
-      description: `Updates the shipment status. A notification is sent to the customer when the status changes.
+      description: `Updates the shipment status using the V2 operational status workflow. Customer milestone notifications fire automatically on key statuses.
 
-**Status flow:** \`pending\` → \`picked_up\` → \`in_transit\` → \`out_for_delivery\` → \`delivered\`
+**Sequential flow (air):**
+\`PREORDER_SUBMITTED\` → \`AWAITING_WAREHOUSE_RECEIPT\` → \`WAREHOUSE_RECEIVED\` → \`WAREHOUSE_VERIFIED_PRICED\` → \`DISPATCHED_TO_ORIGIN_AIRPORT\` → \`AT_ORIGIN_AIRPORT\` → \`BOARDED_ON_FLIGHT\` → \`FLIGHT_DEPARTED\` → \`FLIGHT_LANDED_LAGOS\` → \`CUSTOMS_CLEARED_LAGOS\` → \`IN_TRANSIT_TO_LAGOS_OFFICE\` → \`READY_FOR_PICKUP\` → \`PICKED_UP_COMPLETED\`
 
-Can also be set to \`cancelled\` or \`returned\` at any stage.
+**Sequential flow (sea):**
+\`PREORDER_SUBMITTED\` → \`AWAITING_WAREHOUSE_RECEIPT\` → \`WAREHOUSE_RECEIVED\` → \`WAREHOUSE_VERIFIED_PRICED\` → \`DISPATCHED_TO_ORIGIN_PORT\` → \`AT_ORIGIN_PORT\` → \`LOADED_ON_VESSEL\` → \`VESSEL_DEPARTED\` → \`VESSEL_ARRIVED_LAGOS_PORT\` → \`CUSTOMS_CLEARED_LAGOS\` → \`IN_TRANSIT_TO_LAGOS_OFFICE\` → \`READY_FOR_PICKUP\` → \`PICKED_UP_COMPLETED\`
+
+**Exception statuses** (can be set at any stage): \`ON_HOLD\`, \`CANCELLED\`, \`RESTRICTED_ITEM_REJECTED\`, \`RESTRICTED_ITEM_OVERRIDE_APPROVED\`
+
+**Payment gate:** Order must be \`PAID_IN_FULL\` before transitioning to \`READY_FOR_PICKUP\`.
 
 **Example:**
 \`\`\`json
-{ "status": "in_transit" }
+{ "statusV2": "FLIGHT_DEPARTED" }
 \`\`\``,
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid().describe('Order UUID') }),
-      body: z.object({ status: z.nativeEnum(OrderStatus).describe('New status value') }),
+      body: z.object({ statusV2: z.nativeEnum(ShipmentStatusV2).describe('New V2 operational status') }),
       response: {
         200: z.object({ success: z.literal(true), data: orderResponseSchema }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
         401: z.object({ success: z.literal(false), message: z.string() }),
         403: z.object({ success: z.literal(false), message: z.string() }),
         404: z.object({ success: z.literal(false), message: z.string() }),

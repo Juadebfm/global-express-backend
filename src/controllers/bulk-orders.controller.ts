@@ -1,9 +1,8 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { bulkOrdersService } from '../services/bulk-orders.service'
-import { broadcastToUser } from '../websocket/handlers'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
-import type { OrderStatus } from '../types/enums'
+import type { ShipmentStatusV2 } from '../types/enums'
 import type { CreateBulkItemInput } from '../services/bulk-orders.service'
 
 export const bulkOrdersController = {
@@ -67,13 +66,13 @@ export const bulkOrdersController = {
   async updateBulkOrderStatus(
     request: FastifyRequest<{
       Params: { id: string }
-      Body: { status: OrderStatus }
+      Body: { statusV2: ShipmentStatusV2 }
     }>,
     reply: FastifyReply,
   ) {
     const updated = await bulkOrdersService.updateBulkOrderStatus(
       request.params.id,
-      request.body.status,
+      request.body.statusV2,
     )
 
     if (!updated) {
@@ -82,25 +81,12 @@ export const bulkOrdersController = {
 
     await createAuditLog({
       userId: request.user.id,
-      action: `Updated bulk order ${request.params.id} status to ${request.body.status}`,
+      action: `Updated bulk order ${request.params.id} status to ${request.body.statusV2}`,
       resourceType: 'bulk_order',
       resourceId: request.params.id,
       request,
-      metadata: { status: request.body.status },
+      metadata: { statusV2: request.body.statusV2 },
     })
-
-    // Push real-time update to each customer who has an item in this bulk order
-    for (const item of updated.items) {
-      broadcastToUser(item.customerId, {
-        type: 'order_status_updated',
-        data: {
-          orderId: item.id,
-          trackingNumber: item.trackingNumber,
-          status: item.status,
-          updatedAt: item.updatedAt,
-        },
-      })
-    }
 
     return reply.send(successResponse(updated))
   },

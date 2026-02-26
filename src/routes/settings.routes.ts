@@ -258,6 +258,7 @@ const fxRateResponseSchema = z.object({
   mode: z.enum(['live', 'manual']),
   manualRate: z.number().positive().nullable(),
   updatedAt: z.string().nullable(),
+  effectiveRate: z.number().positive().nullable().describe('Current effective USD→NGN rate (live fetch or manual, null if unavailable)'),
 })
 
 const fxRatePatchSchema = z

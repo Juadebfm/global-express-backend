@@ -1,5 +1,7 @@
 import { Resend } from 'resend'
 import { env } from '../config/env'
+import { settingsTemplatesService } from '../services/settings-templates.service'
+import type { PreferredLanguage } from '../types/enums'
 
 const resend = new Resend(env.RESEND_API_KEY)
 
@@ -53,21 +55,43 @@ export async function sendOrderStatusUpdateEmail(params: {
   to: string
   recipientName: string
   trackingNumber: string
+  /** V2 status string — used as fallback label when no DB template is found */
   status: string
+  /** Template key in notification_templates (e.g. "order.warehouse_verified_priced") */
+  templateKey?: string
+  /** Recipient's preferred language — defaults to 'en' */
+  locale?: PreferredLanguage
 }): Promise<void> {
-  const { to, recipientName, trackingNumber, status } = params
-  const statusLabel = status.replace(/_/g, ' ').toUpperCase()
+  const { to, recipientName, trackingNumber } = params
+  const locale = params.locale ?? ('en' as PreferredLanguage)
+  const vars: Record<string, string> = { trackingNumber, recipientName }
+  const render = (s: string) =>
+    s.replace(/\{\{(\w+)\}\}/g, (_match: string, key: string) => vars[key] ?? `{{${key}}}`)
 
-  await sendEmail({
-    to,
-    subject: `Shipment Update — Tracking #${trackingNumber}`,
-    html: `
+  let subject: string
+  let html: string
+  let text: string
+
+  const tmpl = params.templateKey
+    ? await settingsTemplatesService.getTemplate(params.templateKey, locale, 'email')
+    : null
+
+  if (tmpl) {
+    subject = tmpl.subject ? render(tmpl.subject) : `Shipment Update — Tracking #${trackingNumber}`
+    html = render(tmpl.body)
+    text = html.replace(/<[^>]+>/g, '').trim()
+  } else {
+    const statusLabel = params.status.replace(/_/g, ' ').toUpperCase()
+    subject = `Shipment Update — Tracking #${trackingNumber}`
+    html = `
       <h2>Shipment Status Update</h2>
       <p>Hi ${recipientName},</p>
       <p>Your shipment <strong>#${trackingNumber}</strong> has been updated to: <strong>${statusLabel}</strong></p>
-    `,
-    text: `Shipment #${trackingNumber} is now: ${statusLabel}`,
-  })
+    `
+    text = `Shipment #${trackingNumber} is now: ${statusLabel}`
+  }
+
+  await sendEmail({ to, subject, html, text })
 }
 
 export async function sendAccountAlertEmail(params: {

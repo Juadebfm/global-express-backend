@@ -3,7 +3,7 @@ import {
   TransportMode,
 } from '../../types/enums'
 
-const COMMON_FLOW: readonly ShipmentStatusV2[] = [
+export const COMMON_FLOW: readonly ShipmentStatusV2[] = [
   ShipmentStatusV2.PREORDER_SUBMITTED,
   ShipmentStatusV2.AWAITING_WAREHOUSE_RECEIPT,
   ShipmentStatusV2.WAREHOUSE_RECEIVED,

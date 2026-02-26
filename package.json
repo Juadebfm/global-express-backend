@@ -18,7 +18,8 @@
     "seed:superadmin": "tsx scripts/seed-superadmin.ts",
     "seed:data": "tsx scripts/seed-data.ts",
     "seed:gabriel": "tsx scripts/seed-dashboard-user.ts",
-    "seed:gabriel2": "tsx scripts/seed-gabriel2.ts"
+    "seed:gabriel2": "tsx scripts/seed-gabriel2.ts",
+    "backfill:status-v2": "tsx scripts/backfill-status-v2.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.758.0",

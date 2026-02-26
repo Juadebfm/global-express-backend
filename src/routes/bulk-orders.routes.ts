@@ -5,7 +5,7 @@ import { bulkOrdersController } from '../controllers/bulk-orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
 import { ipWhitelist } from '../middleware/ipWhitelist'
-import { OrderStatus } from '../types/enums'
+import { ShipmentStatusV2 } from '../types/enums'
 
 const bulkItemResponseSchema = z.object({
   id: z.string().uuid(),
@@ -19,7 +19,7 @@ const bulkItemResponseSchema = z.object({
   weight: z.string().nullable(),
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
-  status: z.nativeEnum(OrderStatus),
+  statusV2: z.nativeEnum(ShipmentStatusV2).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -40,7 +40,7 @@ const bulkOrderResponseSchema = z.object({
   trackingNumber: z.string().describe('Internal bulk tracking number (staff-only, not shared with customers)'),
   origin: z.string(),
   destination: z.string(),
-  status: z.nativeEnum(OrderStatus),
+  statusV2: z.nativeEnum(ShipmentStatusV2).nullable(),
   notes: z.string().nullable().describe('Internal staff notes'),
   createdBy: z.string().uuid(),
   deletedAt: z.string().nullable(),
@@ -54,7 +54,7 @@ const bulkOrderListItemSchema = z.object({
   trackingNumber: z.string(),
   origin: z.string(),
   destination: z.string(),
-  status: z.nativeEnum(OrderStatus),
+  statusV2: z.nativeEnum(ShipmentStatusV2).nullable(),
   notes: z.string().nullable(),
   createdBy: z.string().uuid(),
   deletedAt: z.string().nullable(),
@@ -179,10 +179,10 @@ The bulk tracking number is visible to staff only. Customers track their package
 { "status": "in_transit" }
 \`\`\`
 
-**Status values:** \`pending\` | \`picked_up\` | \`in_transit\` | \`out_for_delivery\` | \`delivered\` | \`cancelled\` | \`returned\``,
+**Status values:** see \`ShipmentStatusV2\` enum for all valid values.`,
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid().describe('Bulk order UUID') }),
-      body: z.object({ status: z.nativeEnum(OrderStatus).describe('New status for the bulk order and all its items') }),
+      body: z.object({ statusV2: z.nativeEnum(ShipmentStatusV2).describe('New V2 status for the bulk order and all its items') }),
       response: {
         200: z.object({ success: z.literal(true), data: bulkOrderResponseSchema }),
         401: z.object({ success: z.literal(false), message: z.string() }),

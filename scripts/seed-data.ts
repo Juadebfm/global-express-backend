@@ -19,7 +19,7 @@ import { db } from '../src/config/db'
 import { users, orders, payments } from '../drizzle/schema'
 import { encrypt } from '../src/utils/encryption'
 import { generateTrackingNumber } from '../src/utils/tracking'
-import { UserRole, OrderStatus, OrderDirection, PaymentStatus } from '../src/types/enums'
+import { UserRole, OrderDirection, PaymentStatus, ShipmentStatusV2, TransportMode } from '../src/types/enums'
 import { eq, isNull, and } from 'drizzle-orm'
 
 const SEED_MARKER = 'seed_data_v1'
@@ -119,7 +119,7 @@ const PACKAGES = [
 // amount is only set for delivered orders (triggers payment seeding)
 
 type OrderTemplate = {
-  status: OrderStatus
+  statusV2: ShipmentStatusV2
   origin: string
   destination: string
   direction: OrderDirection
@@ -128,49 +128,49 @@ type OrderTemplate = {
 }
 
 const ORDER_TEMPLATES: OrderTemplate[] = [
-  // pending (4)
-  { status: OrderStatus.PENDING, origin: 'London', destination: 'Lagos', direction: OrderDirection.OUTBOUND, customerIdx: 0 },
-  { status: OrderStatus.PENDING, origin: 'London', destination: 'Abuja', direction: OrderDirection.OUTBOUND, customerIdx: 1 },
-  { status: OrderStatus.PENDING, origin: 'Lagos', destination: 'London', direction: OrderDirection.INBOUND, customerIdx: 2 },
-  { status: OrderStatus.PENDING, origin: 'London', destination: 'Port Harcourt', direction: OrderDirection.OUTBOUND, customerIdx: 3 },
+  // warehouse verified / priced (4)
+  { statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 0 },
+  { statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 1 },
+  { statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.INBOUND,  customerIdx: 2 },
+  { statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 3 },
 
-  // picked_up (4)
-  { status: OrderStatus.PICKED_UP, origin: 'London', destination: 'Lagos', direction: OrderDirection.OUTBOUND, customerIdx: 4 },
-  { status: OrderStatus.PICKED_UP, origin: 'London', destination: 'Ibadan', direction: OrderDirection.OUTBOUND, customerIdx: 0 },
-  { status: OrderStatus.PICKED_UP, origin: 'Abuja', destination: 'London', direction: OrderDirection.INBOUND, customerIdx: 1 },
-  { status: OrderStatus.PICKED_UP, origin: 'London', destination: 'Kano', direction: OrderDirection.OUTBOUND, customerIdx: 2 },
+  // dispatched to airport (4)
+  { statusV2: ShipmentStatusV2.DISPATCHED_TO_ORIGIN_AIRPORT, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 4 },
+  { statusV2: ShipmentStatusV2.DISPATCHED_TO_ORIGIN_AIRPORT, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 0 },
+  { statusV2: ShipmentStatusV2.DISPATCHED_TO_ORIGIN_AIRPORT, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.INBOUND,  customerIdx: 1 },
+  { statusV2: ShipmentStatusV2.DISPATCHED_TO_ORIGIN_AIRPORT, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 2 },
 
-  // in_transit (6)
-  { status: OrderStatus.IN_TRANSIT, origin: 'London', destination: 'Lagos', direction: OrderDirection.OUTBOUND, customerIdx: 3 },
-  { status: OrderStatus.IN_TRANSIT, origin: 'London', destination: 'Abuja', direction: OrderDirection.OUTBOUND, customerIdx: 4 },
-  { status: OrderStatus.IN_TRANSIT, origin: 'London', destination: 'Port Harcourt', direction: OrderDirection.OUTBOUND, customerIdx: 0 },
-  { status: OrderStatus.IN_TRANSIT, origin: 'Lagos', destination: 'London', direction: OrderDirection.INBOUND, customerIdx: 1 },
-  { status: OrderStatus.IN_TRANSIT, origin: 'London', destination: 'Kano', direction: OrderDirection.OUTBOUND, customerIdx: 2 },
-  { status: OrderStatus.IN_TRANSIT, origin: 'London', destination: 'Ibadan', direction: OrderDirection.OUTBOUND, customerIdx: 3 },
+  // flight departed (6)
+  { statusV2: ShipmentStatusV2.FLIGHT_DEPARTED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 3 },
+  { statusV2: ShipmentStatusV2.FLIGHT_DEPARTED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 4 },
+  { statusV2: ShipmentStatusV2.FLIGHT_DEPARTED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 0 },
+  { statusV2: ShipmentStatusV2.FLIGHT_DEPARTED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.INBOUND,  customerIdx: 1 },
+  { statusV2: ShipmentStatusV2.FLIGHT_DEPARTED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 2 },
+  { statusV2: ShipmentStatusV2.FLIGHT_DEPARTED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 3 },
 
-  // out_for_delivery (4)
-  { status: OrderStatus.OUT_FOR_DELIVERY, origin: 'London', destination: 'Lagos', direction: OrderDirection.OUTBOUND, customerIdx: 4 },
-  { status: OrderStatus.OUT_FOR_DELIVERY, origin: 'London', destination: 'Abuja', direction: OrderDirection.OUTBOUND, customerIdx: 0 },
-  { status: OrderStatus.OUT_FOR_DELIVERY, origin: 'London', destination: 'Port Harcourt', direction: OrderDirection.OUTBOUND, customerIdx: 1 },
-  { status: OrderStatus.OUT_FOR_DELIVERY, origin: 'London', destination: 'Ibadan', direction: OrderDirection.OUTBOUND, customerIdx: 2 },
+  // in transit to Lagos office (4)
+  { statusV2: ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 4 },
+  { statusV2: ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 0 },
+  { statusV2: ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 1 },
+  { statusV2: ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 2 },
 
   // delivered (8) — all get payments
-  { status: OrderStatus.DELIVERED, origin: 'London', destination: 'Lagos', direction: OrderDirection.OUTBOUND, customerIdx: 3, amount: '45000' },
-  { status: OrderStatus.DELIVERED, origin: 'London', destination: 'Abuja', direction: OrderDirection.OUTBOUND, customerIdx: 4, amount: '38000' },
-  { status: OrderStatus.DELIVERED, origin: 'London', destination: 'Port Harcourt', direction: OrderDirection.OUTBOUND, customerIdx: 0, amount: '52000' },
-  { status: OrderStatus.DELIVERED, origin: 'London', destination: 'Kano', direction: OrderDirection.OUTBOUND, customerIdx: 1, amount: '29000' },
-  { status: OrderStatus.DELIVERED, origin: 'London', destination: 'Ibadan', direction: OrderDirection.OUTBOUND, customerIdx: 2, amount: '61000' },
-  { status: OrderStatus.DELIVERED, origin: 'Abuja', destination: 'London', direction: OrderDirection.INBOUND, customerIdx: 3, amount: '33000' },
-  { status: OrderStatus.DELIVERED, origin: 'Lagos', destination: 'London', direction: OrderDirection.INBOUND, customerIdx: 4, amount: '47000' },
-  { status: OrderStatus.DELIVERED, origin: 'London', destination: 'Lagos', direction: OrderDirection.OUTBOUND, customerIdx: 0, amount: '55000' },
+  { statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 3, amount: '45000' },
+  { statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 4, amount: '38000' },
+  { statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 0, amount: '52000' },
+  { statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 1, amount: '29000' },
+  { statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 2, amount: '61000' },
+  { statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.INBOUND,  customerIdx: 3, amount: '33000' },
+  { statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.INBOUND,  customerIdx: 4, amount: '47000' },
+  { statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 0, amount: '55000' },
 
   // cancelled (2)
-  { status: OrderStatus.CANCELLED, origin: 'London', destination: 'Abuja', direction: OrderDirection.OUTBOUND, customerIdx: 1 },
-  { status: OrderStatus.CANCELLED, origin: 'London', destination: 'Lagos', direction: OrderDirection.OUTBOUND, customerIdx: 2 },
+  { statusV2: ShipmentStatusV2.CANCELLED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 1 },
+  { statusV2: ShipmentStatusV2.CANCELLED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 2 },
 
-  // returned (2)
-  { status: OrderStatus.RETURNED, origin: 'London', destination: 'Port Harcourt', direction: OrderDirection.OUTBOUND, customerIdx: 3 },
-  { status: OrderStatus.RETURNED, origin: 'London', destination: 'Kano', direction: OrderDirection.OUTBOUND, customerIdx: 4 },
+  // cancelled — previously returned (2)
+  { statusV2: ShipmentStatusV2.CANCELLED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 3 },
+  { statusV2: ShipmentStatusV2.CANCELLED, origin: 'Seoul, South Korea', destination: 'Lagos, Nigeria', direction: OrderDirection.OUTBOUND, customerIdx: 4 },
 ]
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -253,7 +253,9 @@ async function main() {
         recipientEmail: recipient.email ? encrypt(recipient.email) : null,
         origin: tmpl.origin,
         destination: tmpl.destination,
-        status: tmpl.status,
+        statusV2: tmpl.statusV2,
+        customerStatusV2: tmpl.statusV2,
+        transportMode: TransportMode.AIR,
         orderDirection: tmpl.direction,
         weight: pkg.weight,
         declaredValue: pkg.declaredValue,
@@ -291,8 +293,8 @@ async function main() {
   console.log('    Summary:')
   console.log(`      • ${CUSTOMERS.length} test customers`)
   console.log(`      • ${ORDER_TEMPLATES.length} orders`)
-  console.log(`        - pending: 4, picked_up: 4, in_transit: 6`)
-  console.log(`        - out_for_delivery: 4, delivered: 8, cancelled: 2, returned: 2`)
+  console.log(`        - WAREHOUSE_VERIFIED_PRICED: 4, DISPATCHED_TO_ORIGIN_AIRPORT: 4, FLIGHT_DEPARTED: 6`)
+  console.log(`        - IN_TRANSIT_TO_LAGOS_OFFICE: 4, PICKED_UP_COMPLETED: 8, CANCELLED: 4`)
   console.log(`      • ${ordersWithPayment.length} successful payments`)
   console.log('\n    Login credentials for test customers are in scripts/seed-data.ts')
   console.log('    (Clerk accounts are faked — use clerkId directly if needed for testing)\n')

@@ -4,28 +4,19 @@ import { orders, users } from '../../drizzle/schema'
 import { decrypt } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import type { PaginationParams } from '../types'
-import type { OrderStatus } from '../types/enums'
-
-const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  picked_up: 'Picked Up',
-  in_transit: 'In Transit',
-  out_for_delivery: 'Out for Delivery',
-  delivered: 'Delivered',
-  cancelled: 'Cancelled',
-  returned: 'Returned to Sender',
-}
+import type { ShipmentStatusV2 } from '../types/enums'
+import { STATUS_LABELS } from '../domain/shipment-v2/status-labels'
 
 export class ShipmentsService {
   /**
    * Paginated shipments list with decrypted PII, statusLabel, senderName, and packageCount.
    * - Customers: their own orders only.
-   * - Staff/Admin/Superadmin: all orders (optionally filtered by senderId or status).
+   * - Staff/Admin/Superadmin: all orders (optionally filtered by senderId or statusV2).
    */
   async list(params: PaginationParams & {
     userId: string
     isCustomer: boolean
-    status?: OrderStatus
+    statusV2?: ShipmentStatusV2
     senderId?: string
     search?: string
   }) {
@@ -37,7 +28,7 @@ export class ShipmentsService {
         ? eq(orders.senderId, params.senderId)
         : undefined
 
-    const statusFilter = params.status ? eq(orders.status, params.status) : undefined
+    const statusFilter = params.statusV2 ? eq(orders.statusV2, params.statusV2) : undefined
 
     const baseWhere = and(isNull(orders.deletedAt), senderFilter, statusFilter)
 
@@ -54,7 +45,7 @@ export class ShipmentsService {
           recipientEmail: orders.recipientEmail,
           origin: orders.origin,
           destination: orders.destination,
-          status: orders.status,
+          statusV2: orders.statusV2,
           orderDirection: orders.orderDirection,
           weight: orders.weight,
           declaredValue: orders.declaredValue,
@@ -107,8 +98,8 @@ export class ShipmentsService {
         recipientEmail: row.recipientEmail ? decrypt(row.recipientEmail) : null,
         origin: row.origin,
         destination: row.destination,
-        status: row.status,
-        statusLabel: STATUS_LABELS[row.status] ?? row.status,
+        statusV2: row.statusV2,
+        statusLabel: STATUS_LABELS[row.statusV2 ?? ''] ?? row.statusV2 ?? 'Unknown',
         orderDirection: row.orderDirection,
         weight: row.weight,
         declaredValue: row.declaredValue,

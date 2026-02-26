@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'crypto'
 
 const ALGORITHM = 'aes-256-gcm'
 
@@ -26,6 +26,16 @@ export function encrypt(plaintext: string): string {
 
   const authTag = cipher.getAuthTag()
   return `${iv.toString('hex')}:${authTag.toString('hex')}:${ciphertext}`
+}
+
+/**
+ * Deterministic HMAC-SHA256 of an email address (lowercased).
+ * Used as a lookup key since `encrypt()` uses a random IV and cannot be queried directly.
+ * Matches the format stored in `users.email_hash`.
+ */
+export function hashEmail(email: string): string {
+  const key = getKey()
+  return createHmac('sha256', key).update(email.toLowerCase()).digest('hex')
 }
 
 /**

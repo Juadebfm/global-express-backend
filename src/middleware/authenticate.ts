@@ -5,7 +5,7 @@ import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
-import { encrypt, decrypt } from '../utils/encryption'
+import { encrypt, decrypt, hashEmail } from '../utils/encryption'
 import { internalAuthService } from '../services/internal-auth.service'
 import { adminNotificationsService } from '../services/admin-notifications.service'
 
@@ -146,7 +146,7 @@ export async function authenticate(
       reply.code(403).send({ success: false, message: 'Forbidden — account has been deleted' })
       return
     }
-    // User authenticated with Clerk but not yet in our DB â€” auto-provision on first login
+    // Fetch Clerk user details (needed for stub-link check and auto-provision)
     const clerkUser = await clerk.users.getUser(clerkId)
     const primaryEmail = clerkUser.emailAddresses.find(
       (e) => e.id === clerkUser.primaryEmailAddressId,
@@ -155,10 +155,43 @@ export async function authenticate(
     if (!primaryEmail) {
       reply
         .code(422)
-        .send({ success: false, message: 'Unprocessable â€” no verified email found in Clerk' })
+        .send({ success: false, message: 'Unprocessable — no verified email found in Clerk' })
       return
     }
 
+    // Check for a staff-created stub with this email (emailHash is deterministic HMAC)
+    const emailH = hashEmail(primaryEmail.emailAddress)
+    const [stubUser] = await db
+      .select()
+      .from(users)
+      .where(and(isNull(users.clerkId), isNull(users.deletedAt), eq(users.emailHash, emailH)))
+      .limit(1)
+
+    if (stubUser) {
+      // Link this Clerk account to the existing stub — activates the account
+      const [linkedUser] = await db
+        .update(users)
+        .set({
+          clerkId,
+          isActive: true,
+          // Backfill name from Clerk only if stub didn't already have them
+          firstName: stubUser.firstName ?? (clerkUser.firstName ? encrypt(clerkUser.firstName) : null),
+          lastName: stubUser.lastName ?? (clerkUser.lastName ? encrypt(clerkUser.lastName) : null),
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, stubUser.id))
+        .returning()
+
+      request.user = {
+        id: linkedUser.id,
+        clerkId: linkedUser.clerkId,
+        role: linkedUser.role,
+        email: primaryEmail.emailAddress,
+      }
+      return
+    }
+
+    // No stub found — auto-provision a fresh account on first Clerk login
     const [newUser] = await db
       .insert(users)
       .values({

@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { paymentsService } from '../services/payments.service'
 import { successResponse } from '../utils/response'
 import type { PaymentStatus } from '../types/enums'
+import { PaymentType } from '../types/enums'
 
 export const paymentsController = {
   async initializePayment(
@@ -91,5 +92,31 @@ export const paymentsController = {
     })
 
     return reply.send(successResponse(result))
+  },
+
+  async recordOfflinePayment(
+    request: FastifyRequest<{
+      Params: { orderId: string }
+      Body: {
+        userId: string
+        amount: number
+        paymentType: PaymentType.TRANSFER | PaymentType.CASH
+        proofReference?: string
+        note?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const payment = await paymentsService.recordOfflinePayment({
+      orderId: request.params.orderId,
+      userId: request.body.userId,
+      recordedBy: request.user.id,
+      amount: request.body.amount,
+      paymentType: request.body.paymentType,
+      proofReference: request.body.proofReference,
+      note: request.body.note,
+    })
+
+    return reply.code(201).send(successResponse(payment))
   },
 }

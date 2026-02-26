@@ -3,8 +3,8 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { paymentsController } from '../controllers/payments.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove } from '../middleware/requireRole'
-import { PaymentStatus } from '../types/enums'
+import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
+import { PaymentStatus, PaymentType } from '../types/enums'
 
 const paymentResponseSchema = z.object({
   id: z.string().uuid().describe('Payment UUID'),
@@ -12,9 +12,13 @@ const paymentResponseSchema = z.object({
   userId: z.string().uuid().describe('UUID of the customer who made the payment'),
   amount: z.string().describe('Amount in major currency units (e.g. "5000" = ₦5,000)'),
   currency: z.string().describe('ISO currency code (e.g. NGN)'),
-  paystackReference: z.string().describe('Paystack transaction reference'),
+  paystackReference: z.string().nullable().describe('Paystack transaction reference — null for offline payments'),
   paystackTransactionId: z.string().nullable().describe('Paystack internal transaction ID (set after successful payment)'),
   status: z.nativeEnum(PaymentStatus).describe('Payment status: pending | successful | failed | abandoned'),
+  paymentType: z.nativeEnum(PaymentType).describe('Payment method: online | transfer | cash'),
+  recordedBy: z.string().uuid().nullable().describe('Staff member who recorded an offline payment'),
+  proofReference: z.string().nullable().describe('Bank receipt or proof reference for offline payment'),
+  note: z.string().nullable().describe('Optional staff note for offline payment'),
   paidAt: z.string().nullable().describe('Timestamp when payment was confirmed'),
   metadata: z.unknown().nullable(),
   createdAt: z.string(),
@@ -176,5 +180,51 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
       },
     },
     handler: paymentsController.getPaymentById,
+  })
+
+  app.post('/:orderId/record-offline', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Payments — Admin'],
+      summary: 'Record an offline payment (staff+)',
+      description: `Records a cash or bank-transfer payment collected outside of Paystack. Immediately marks the order's \`paymentCollectionStatus\` as \`PAID_IN_FULL\`.
+
+**Example — bank transfer:**
+\`\`\`json
+{
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "amount": 45000,
+  "paymentType": "transfer",
+  "proofReference": "TRF-2024-00123",
+  "note": "Customer transferred ₦45,000 on Feb 26"
+}
+\`\`\`
+
+**Example — cash:**
+\`\`\`json
+{
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "amount": 20000,
+  "paymentType": "cash",
+  "note": "Collected at Lagos office"
+}
+\`\`\``,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ orderId: z.string().uuid().describe('UUID of the order being paid for') }),
+      body: z.object({
+        userId: z.string().uuid().describe('UUID of the customer making the payment'),
+        amount: z.number().positive().describe('Amount in major currency units (NGN) — e.g. 45000 = ₦45,000'),
+        paymentType: z.enum(['transfer', 'cash']).describe('Offline payment method: transfer | cash'),
+        proofReference: z.string().optional().describe('Bank receipt / transfer reference code'),
+        note: z.string().optional().describe('Optional staff note about the payment'),
+      }),
+      response: {
+        201: z.object({ success: z.literal(true), data: paymentResponseSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: paymentsController.recordOfflinePayment,
   })
 }

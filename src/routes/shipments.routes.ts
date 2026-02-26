@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { shipmentsController } from '../controllers/shipments.controller'
 import { authenticate } from '../middleware/authenticate'
-import { OrderStatus, ShipmentType, Priority, OrderDirection } from '../types/enums'
+import { ShipmentStatusV2, ShipmentType, Priority, OrderDirection } from '../types/enums'
 
 const shipmentSchema = z.object({
   id: z.string().uuid(),
@@ -16,8 +16,8 @@ const shipmentSchema = z.object({
   recipientEmail: z.string().nullable(),
   origin: z.string(),
   destination: z.string(),
-  status: z.nativeEnum(OrderStatus),
-  statusLabel: z.string().describe('Human-readable status (e.g. "In Transit")'),
+  statusV2: z.nativeEnum(ShipmentStatusV2).nullable(),
+  statusLabel: z.string().describe('Human-readable status (e.g. "Flight Departed")'),
   orderDirection: z.nativeEnum(OrderDirection),
   weight: z.string().nullable(),
   declaredValue: z.string().nullable(),
@@ -49,7 +49,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       querystring: z.object({
         page: z.coerce.number().int().positive().optional().default(1).describe('Page number'),
         limit: z.coerce.number().int().min(1).max(100).optional().default(20).describe('Results per page (max 100)'),
-        status: z.nativeEnum(OrderStatus).optional().describe('Filter by order status'),
+        statusV2: z.nativeEnum(ShipmentStatusV2).optional().describe('Filter by V2 shipment status'),
         senderId: z.string().uuid().optional().describe('Filter by customer UUID (staff+ only)'),
       }),
       response: {

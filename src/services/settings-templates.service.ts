@@ -120,6 +120,39 @@ export class SettingsTemplatesService {
 
     return mapTemplateRow(updated)
   }
+
+  /**
+   * Look up a single active template by key + locale + channel.
+   * Returns null if no match — caller should fall back to hardcoded content.
+   */
+  async getTemplate(
+    templateKey: string,
+    locale: PreferredLanguage,
+    channel: NotificationTemplateChannel,
+  ): Promise<{ subject: string | null; body: string } | null> {
+    const [row] = await db
+      .select({ subject: notificationTemplates.subject, body: notificationTemplates.body })
+      .from(notificationTemplates)
+      .where(
+        and(
+          eq(notificationTemplates.templateKey, templateKey),
+          eq(notificationTemplates.locale, locale),
+          eq(notificationTemplates.channel, channel),
+          eq(notificationTemplates.isActive, true),
+        ),
+      )
+      .limit(1)
+
+    return row ?? null
+  }
+
+  /**
+   * Substitutes `{{key}}` placeholders in a template string with provided values.
+   * Unknown keys are left as-is.
+   */
+  static renderTemplate(template: string, vars: Record<string, string>): string {
+    return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? `{{${key}}}`)
+  }
 }
 
 export const settingsTemplatesService = new SettingsTemplatesService()

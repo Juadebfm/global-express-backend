@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { eq } from 'drizzle-orm'
 import { db } from '../config/db'
 import { appSettings } from '../../drizzle/schema'
@@ -136,6 +137,51 @@ export class SettingsFxRateService {
       ...nextSettings,
       updatedAt: now.toISOString(),
     }
+  }
+
+  /**
+   * Returns the effective USD → NGN rate for the current mode:
+   * - manual: returns the configured manualRate
+   * - live:   fetches from open.er-api.com (cached in-memory for 5 minutes)
+   *
+   * Throws if manual mode is selected but no rate is configured.
+   */
+  async getEffectiveRate(): Promise<number> {
+    const settings = await this.getFxRateSettings()
+
+    if (settings.mode === 'manual') {
+      if (!settings.manualRate || settings.manualRate <= 0) {
+        throw new Error('Manual FX rate is not configured. Set a rate in Settings → FX Rate.')
+      }
+      return settings.manualRate
+    }
+
+    return this.fetchLiveRate()
+  }
+
+  // ─── In-memory cache ──────────────────────────────────────────────────────
+  private liveRateCache: { rate: number; fetchedAt: number } | null = null
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+  private async fetchLiveRate(): Promise<number> {
+    const now = Date.now()
+
+    if (this.liveRateCache && now - this.liveRateCache.fetchedAt < this.CACHE_TTL_MS) {
+      return this.liveRateCache.rate
+    }
+
+    const response = await axios.get<{ rates: Record<string, number> }>(
+      'https://open.er-api.com/v6/latest/USD',
+      { timeout: 8000 },
+    )
+
+    const ngnRate = response.data?.rates?.NGN
+    if (!ngnRate || typeof ngnRate !== 'number' || ngnRate <= 0) {
+      throw new Error('Live FX rate unavailable — external API returned an invalid rate.')
+    }
+
+    this.liveRateCache = { rate: ngnRate, fetchedAt: now }
+    return ngnRate
   }
 }
 

@@ -3,22 +3,10 @@ import { ordersService } from '../services/orders.service'
 import { bulkOrdersService } from '../services/bulk-orders.service'
 import { usersService } from '../services/users.service'
 import { adminNotificationsService } from '../services/admin-notifications.service'
-import { broadcastToUser } from '../websocket/handlers'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
-import type { OrderStatus } from '../types/enums'
-import { TransportMode, UserRole } from '../types/enums'
-
-const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  picked_up: 'Picked Up',
-  in_transit: 'In Transit',
-  out_for_delivery: 'Out for Delivery',
-  delivered: 'Delivered',
-  failed_delivery: 'Delivery Failed',
-  returned: 'Returned to Sender',
-  cancelled: 'Cancelled',
-}
+import { ShipmentStatusV2, TransportMode, UserRole } from '../types/enums'
+import { STATUS_LABELS } from '../domain/shipment-v2/status-labels'
 
 function formatLastUpdate(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date
@@ -55,8 +43,6 @@ export const ordersController = {
         recipientAddress: string
         recipientPhone: string
         recipientEmail?: string
-        origin: string
-        destination: string
         orderDirection?: 'outbound' | 'inbound'
         weight?: string
         declaredValue?: string
@@ -96,8 +82,6 @@ export const ordersController = {
       recipientAddress: request.body.recipientAddress,
       recipientPhone: request.body.recipientPhone,
       recipientEmail: request.body.recipientEmail,
-      origin: request.body.origin,
-      destination: request.body.destination,
       orderDirection: request.body.orderDirection,
       weight: request.body.weight,
       declaredValue: request.body.declaredValue,
@@ -106,6 +90,8 @@ export const ordersController = {
       priority: request.body.priority,
       departureDate: request.body.departureDate ? new Date(request.body.departureDate) : undefined,
       eta: request.body.eta ? new Date(request.body.eta) : undefined,
+      // Customers creating for themselves are pre-ordering (item not yet at warehouse)
+      isPreorder: userRole === UserRole.USER,
       createdBy: request.user.id,
     })
 
@@ -130,7 +116,7 @@ export const ordersController = {
 
   async listOrders(
     request: FastifyRequest<{
-      Querystring: { page?: string; limit?: string; status?: string; senderId?: string }
+      Querystring: { page?: string; limit?: string; statusV2?: string; senderId?: string }
     }>,
     reply: FastifyReply,
   ) {
@@ -145,7 +131,7 @@ export const ordersController = {
     const result = await ordersService.listOrders({
       page: Number(request.query.page) || 1,
       limit: Number(request.query.limit) || 20,
-      status: request.query.status as OrderStatus | undefined,
+      statusV2: request.query.statusV2 as ShipmentStatusV2 | undefined,
       senderId,
     })
 
@@ -199,7 +185,7 @@ export const ordersController = {
           trackingNumber: order.trackingNumber,
           origin: order.origin,
           destination: order.destination,
-          status: order.status,
+          status: order.statusV2 ?? '',
           updatedAt: order.updatedAt,
         })),
       )
@@ -213,7 +199,7 @@ export const ordersController = {
           trackingNumber: bulkItem.trackingNumber,
           origin: bulkItem.origin,
           destination: bulkItem.destination,
-          status: bulkItem.status,
+          status: bulkItem.statusV2 ?? '',
           updatedAt: bulkItem.updatedAt.toISOString(),
         })),
       )
@@ -225,7 +211,7 @@ export const ordersController = {
   async updateOrderStatus(
     request: FastifyRequest<{
       Params: { id: string }
-      Body: { status: OrderStatus }
+      Body: { statusV2: ShipmentStatusV2 }
     }>,
     reply: FastifyReply,
   ) {
@@ -236,15 +222,22 @@ export const ordersController = {
 
     const sender = await usersService.getUserById(order.senderId)
 
-    const updated = await ordersService.updateOrderStatus(request.params.id, {
-      status: request.body.status,
-      updatedBy: request.user.id,
-      senderEmail: sender?.email,
-      senderPhone: sender?.phone ?? undefined,
-      notifyEmailAlerts: sender?.notifyEmailAlerts,
-      notifySmsAlerts: sender?.notifySmsAlerts,
-      notifyInAppAlerts: sender?.notifyInAppAlerts,
-    })
+    let updated: Awaited<ReturnType<typeof ordersService.updateOrderStatus>>
+    try {
+      updated = await ordersService.updateOrderStatus(request.params.id, {
+        statusV2: request.body.statusV2,
+        updatedBy: request.user.id,
+        senderEmail: sender?.email,
+        senderPhone: sender?.phone ?? undefined,
+        notifyEmailAlerts: sender?.notifyEmailAlerts,
+        notifySmsAlerts: sender?.notifySmsAlerts,
+        notifyInAppAlerts: sender?.notifyInAppAlerts,
+        preferredLanguage: sender?.preferredLanguage ?? 'en',
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Status update failed'
+      return reply.code(400).send({ success: false, message })
+    }
 
     if (!updated) {
       return reply.code(404).send({ success: false, message: 'Order not found' })
@@ -252,22 +245,11 @@ export const ordersController = {
 
     await createAuditLog({
       userId: request.user.id,
-      action: `Updated order ${updated.trackingNumber} status to ${request.body.status}`,
+      action: `Updated order ${updated.trackingNumber} status to ${request.body.statusV2}`,
       resourceType: 'order',
       resourceId: updated.id,
       request,
-      metadata: { status: request.body.status },
-    })
-
-    // Push real-time update to the customer if they have an active WebSocket connection
-    broadcastToUser(updated.senderId, {
-      type: 'order_status_updated',
-      data: {
-        orderId: updated.id,
-        trackingNumber: updated.trackingNumber,
-        status: updated.status,
-        updatedAt: updated.updatedAt,
-      },
+      metadata: { statusV2: request.body.statusV2 },
     })
 
     return reply.send(successResponse(updated))

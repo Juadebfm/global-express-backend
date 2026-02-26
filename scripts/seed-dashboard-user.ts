@@ -19,7 +19,7 @@ import { users, orders, payments } from '../drizzle/schema'
 import { encrypt } from '../src/utils/encryption'
 import { hashEmail } from '../src/utils/hash'
 import { generateTrackingNumber } from '../src/utils/tracking'
-import { UserRole, OrderStatus, OrderDirection, ShipmentType, Priority, PaymentStatus } from '../src/types/enums'
+import { UserRole, OrderDirection, ShipmentType, Priority, PaymentStatus, ShipmentStatusV2, TransportMode } from '../src/types/enums'
 import { eq, isNull, and, like } from 'drizzle-orm'
 
 const TARGET_EMAIL = 'juadebgabriel2025@gmail.com'
@@ -50,18 +50,31 @@ const ROUTES: Array<{
   destination: string
   direction: OrderDirection
   shipmentType: ShipmentType
+  transportMode: TransportMode
 }> = [
-  { origin: 'Shanghai, China',    destination: 'Lagos, Nigeria',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.OCEAN },
-  { origin: 'Mumbai, India',      destination: 'Accra, Ghana',     direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR },
-  { origin: 'Singapore',          destination: 'Nairobi, Kenya',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR },
-  { origin: 'Tokyo, Japan',       destination: 'Cairo, Egypt',     direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.OCEAN },
-  { origin: 'Dubai, UAE',         destination: 'Lagos, Nigeria',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR },
-  { origin: 'Shenzhen, China',    destination: 'Abuja, Nigeria',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.OCEAN },
-  { origin: 'Seoul, South Korea', destination: 'Accra, Ghana',     direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR },
-  { origin: 'Lagos, Nigeria',     destination: 'Shanghai, China',  direction: OrderDirection.INBOUND,  shipmentType: ShipmentType.OCEAN },
-  { origin: 'Nairobi, Kenya',     destination: 'Mumbai, India',    direction: OrderDirection.INBOUND,  shipmentType: ShipmentType.AIR },
-  { origin: 'Dubai, UAE',         destination: 'Nairobi, Kenya',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.ROAD },
+  { origin: 'Shanghai, China',    destination: 'Lagos, Nigeria',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.OCEAN, transportMode: TransportMode.SEA },
+  { origin: 'Mumbai, India',      destination: 'Accra, Ghana',     direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR,   transportMode: TransportMode.AIR },
+  { origin: 'Singapore',          destination: 'Nairobi, Kenya',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR,   transportMode: TransportMode.AIR },
+  { origin: 'Tokyo, Japan',       destination: 'Cairo, Egypt',     direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.OCEAN, transportMode: TransportMode.SEA },
+  { origin: 'Dubai, UAE',         destination: 'Lagos, Nigeria',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR,   transportMode: TransportMode.AIR },
+  { origin: 'Shenzhen, China',    destination: 'Abuja, Nigeria',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.OCEAN, transportMode: TransportMode.SEA },
+  { origin: 'Seoul, South Korea', destination: 'Accra, Ghana',     direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR,   transportMode: TransportMode.AIR },
+  { origin: 'Lagos, Nigeria',     destination: 'Shanghai, China',  direction: OrderDirection.INBOUND,  shipmentType: ShipmentType.OCEAN, transportMode: TransportMode.SEA },
+  { origin: 'Nairobi, Kenya',     destination: 'Mumbai, India',    direction: OrderDirection.INBOUND,  shipmentType: ShipmentType.AIR,   transportMode: TransportMode.AIR },
+  { origin: 'Dubai, UAE',         destination: 'Nairobi, Kenya',   direction: OrderDirection.OUTBOUND, shipmentType: ShipmentType.AIR,   transportMode: TransportMode.AIR },
 ]
+
+// V2 status helpers — mode-specific staging points
+function pickupStatus(mode: TransportMode): ShipmentStatusV2 {
+  return mode === TransportMode.AIR
+    ? ShipmentStatusV2.DISPATCHED_TO_ORIGIN_AIRPORT
+    : ShipmentStatusV2.DISPATCHED_TO_ORIGIN_PORT
+}
+function inTransitStatus(mode: TransportMode): ShipmentStatusV2 {
+  return mode === TransportMode.AIR
+    ? ShipmentStatusV2.FLIGHT_DEPARTED
+    : ShipmentStatusV2.VESSEL_DEPARTED
+}
 
 // ─── Order templates ──────────────────────────────────────────────────────────
 // 25 orders: pending×4, picked_up×3, in_transit×8, out_for_delivery×3,
@@ -69,7 +82,7 @@ const ROUTES: Array<{
 
 type OrderTemplate = {
   routeIdx: number
-  status: OrderStatus
+  statusV2: ShipmentStatusV2 | 'pickup' | 'in_transit'  // 'pickup'/'in_transit' resolved per route mode
   priority: Priority
   weight: string
   declaredValue: string
@@ -80,45 +93,45 @@ type OrderTemplate = {
 }
 
 const TEMPLATES: OrderTemplate[] = [
-  // ── pending (4) ──
-  { routeIdx: 0, status: OrderStatus.PENDING,          priority: Priority.STANDARD, weight: '12.50', declaredValue: '45000', createdDaysAgo: 2 },
-  { routeIdx: 1, status: OrderStatus.PENDING,          priority: Priority.EXPRESS,  weight: '3.20',  declaredValue: '28000', createdDaysAgo: 1 },
-  { routeIdx: 2, status: OrderStatus.PENDING,          priority: Priority.ECONOMY,  weight: '7.80',  declaredValue: '15000', createdDaysAgo: 3 },
-  { routeIdx: 5, status: OrderStatus.PENDING,          priority: Priority.STANDARD, weight: '5.50',  declaredValue: '32000', createdDaysAgo: 1 },
+  // ── pending / warehouse verified (4) ──
+  { routeIdx: 0, statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED, priority: Priority.STANDARD, weight: '12.50', declaredValue: '45000', createdDaysAgo: 2 },
+  { routeIdx: 1, statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED, priority: Priority.EXPRESS,  weight: '3.20',  declaredValue: '28000', createdDaysAgo: 1 },
+  { routeIdx: 2, statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED, priority: Priority.ECONOMY,  weight: '7.80',  declaredValue: '15000', createdDaysAgo: 3 },
+  { routeIdx: 5, statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED, priority: Priority.STANDARD, weight: '5.50',  declaredValue: '32000', createdDaysAgo: 1 },
 
-  // ── picked_up (3) ──
-  { routeIdx: 3, status: OrderStatus.PICKED_UP,        priority: Priority.EXPRESS,  weight: '18.00', declaredValue: '85000', createdDaysAgo: 5,  departureDaysAgo: 2 },
-  { routeIdx: 4, status: OrderStatus.PICKED_UP,        priority: Priority.STANDARD, weight: '4.50',  declaredValue: '21000', createdDaysAgo: 4,  departureDaysAgo: 1 },
-  { routeIdx: 6, status: OrderStatus.PICKED_UP,        priority: Priority.ECONOMY,  weight: '9.00',  declaredValue: '38000', createdDaysAgo: 6,  departureDaysAgo: 3 },
+  // ── dispatched / picked up (3) ──
+  { routeIdx: 3, statusV2: 'pickup', priority: Priority.EXPRESS,  weight: '18.00', declaredValue: '85000', createdDaysAgo: 5,  departureDaysAgo: 2 },
+  { routeIdx: 4, statusV2: 'pickup', priority: Priority.STANDARD, weight: '4.50',  declaredValue: '21000', createdDaysAgo: 4,  departureDaysAgo: 1 },
+  { routeIdx: 6, statusV2: 'pickup', priority: Priority.ECONOMY,  weight: '9.00',  declaredValue: '38000', createdDaysAgo: 6,  departureDaysAgo: 3 },
 
-  // ── in_transit (8) ──
-  { routeIdx: 0, status: OrderStatus.IN_TRANSIT,       priority: Priority.STANDARD, weight: '22.50', declaredValue: '95000', createdDaysAgo: 12, departureDaysAgo: 9,  etaDaysFromNow: 8  },
-  { routeIdx: 1, status: OrderStatus.IN_TRANSIT,       priority: Priority.EXPRESS,  weight: '6.30',  declaredValue: '42000', createdDaysAgo: 10, departureDaysAgo: 7,  etaDaysFromNow: 3  },
-  { routeIdx: 2, status: OrderStatus.IN_TRANSIT,       priority: Priority.ECONOMY,  weight: '15.00', declaredValue: '55000', createdDaysAgo: 15, departureDaysAgo: 12, etaDaysFromNow: 10 },
-  { routeIdx: 3, status: OrderStatus.IN_TRANSIT,       priority: Priority.STANDARD, weight: '8.70',  declaredValue: '31000', createdDaysAgo: 8,  departureDaysAgo: 5,  etaDaysFromNow: 5  },
-  { routeIdx: 4, status: OrderStatus.IN_TRANSIT,       priority: Priority.EXPRESS,  weight: '30.00', declaredValue: '120000',createdDaysAgo: 20, departureDaysAgo: 17, etaDaysFromNow: 6  },
-  { routeIdx: 5, status: OrderStatus.IN_TRANSIT,       priority: Priority.STANDARD, weight: '11.20', declaredValue: '48000', createdDaysAgo: 9,  departureDaysAgo: 6,  etaDaysFromNow: 4  },
+  // ── in transit (8) ──
+  { routeIdx: 0, statusV2: 'in_transit', priority: Priority.STANDARD, weight: '22.50', declaredValue: '95000',  createdDaysAgo: 12, departureDaysAgo: 9,  etaDaysFromNow: 8  },
+  { routeIdx: 1, statusV2: 'in_transit', priority: Priority.EXPRESS,  weight: '6.30',  declaredValue: '42000',  createdDaysAgo: 10, departureDaysAgo: 7,  etaDaysFromNow: 3  },
+  { routeIdx: 2, statusV2: 'in_transit', priority: Priority.ECONOMY,  weight: '15.00', declaredValue: '55000',  createdDaysAgo: 15, departureDaysAgo: 12, etaDaysFromNow: 10 },
+  { routeIdx: 3, statusV2: 'in_transit', priority: Priority.STANDARD, weight: '8.70',  declaredValue: '31000',  createdDaysAgo: 8,  departureDaysAgo: 5,  etaDaysFromNow: 5  },
+  { routeIdx: 4, statusV2: 'in_transit', priority: Priority.EXPRESS,  weight: '30.00', declaredValue: '120000', createdDaysAgo: 20, departureDaysAgo: 17, etaDaysFromNow: 6  },
+  { routeIdx: 5, statusV2: 'in_transit', priority: Priority.STANDARD, weight: '11.20', declaredValue: '48000',  createdDaysAgo: 9,  departureDaysAgo: 6,  etaDaysFromNow: 4  },
   // delayed — ETA already passed
-  { routeIdx: 6, status: OrderStatus.IN_TRANSIT,       priority: Priority.ECONOMY,  weight: '5.80',  declaredValue: '19000', createdDaysAgo: 18, departureDaysAgo: 15, etaDaysFromNow: -2 },
-  { routeIdx: 7, status: OrderStatus.IN_TRANSIT,       priority: Priority.EXPRESS,  weight: '14.00', declaredValue: '72000', createdDaysAgo: 22, departureDaysAgo: 19, etaDaysFromNow: -1 },
+  { routeIdx: 6, statusV2: 'in_transit', priority: Priority.ECONOMY,  weight: '5.80',  declaredValue: '19000',  createdDaysAgo: 18, departureDaysAgo: 15, etaDaysFromNow: -2 },
+  { routeIdx: 7, statusV2: 'in_transit', priority: Priority.EXPRESS,  weight: '14.00', declaredValue: '72000',  createdDaysAgo: 22, departureDaysAgo: 19, etaDaysFromNow: -1 },
 
-  // ── out_for_delivery (3) ──
-  { routeIdx: 0, status: OrderStatus.OUT_FOR_DELIVERY, priority: Priority.EXPRESS,  weight: '3.50',  declaredValue: '25000', createdDaysAgo: 14, departureDaysAgo: 11, etaDaysFromNow: 1  },
-  { routeIdx: 1, status: OrderStatus.OUT_FOR_DELIVERY, priority: Priority.STANDARD, weight: '7.20',  declaredValue: '33000', createdDaysAgo: 16, departureDaysAgo: 13, etaDaysFromNow: 0  },
-  { routeIdx: 9, status: OrderStatus.OUT_FOR_DELIVERY, priority: Priority.ECONOMY,  weight: '20.00', declaredValue: '68000', createdDaysAgo: 18, departureDaysAgo: 15, etaDaysFromNow: 1  },
+  // ── in transit to Lagos office (3) ──
+  { routeIdx: 0, statusV2: ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE, priority: Priority.EXPRESS,  weight: '3.50',  declaredValue: '25000', createdDaysAgo: 14, departureDaysAgo: 11, etaDaysFromNow: 1  },
+  { routeIdx: 1, statusV2: ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE, priority: Priority.STANDARD, weight: '7.20',  declaredValue: '33000', createdDaysAgo: 16, departureDaysAgo: 13, etaDaysFromNow: 0  },
+  { routeIdx: 9, statusV2: ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE, priority: Priority.ECONOMY,  weight: '20.00', declaredValue: '68000', createdDaysAgo: 18, departureDaysAgo: 15, etaDaysFromNow: 1  },
 
   // ── delivered (5) ── — get payments
-  { routeIdx: 2, status: OrderStatus.DELIVERED,        priority: Priority.STANDARD, weight: '4.80',  declaredValue: '18000', createdDaysAgo: 28, departureDaysAgo: 25, etaDaysFromNow: -20, amount: '52000' },
-  { routeIdx: 3, status: OrderStatus.DELIVERED,        priority: Priority.EXPRESS,  weight: '9.50',  declaredValue: '67000', createdDaysAgo: 25, departureDaysAgo: 22, etaDaysFromNow: -17, amount: '78000' },
-  { routeIdx: 4, status: OrderStatus.DELIVERED,        priority: Priority.ECONOMY,  weight: '16.00', declaredValue: '43000', createdDaysAgo: 29, departureDaysAgo: 26, etaDaysFromNow: -21, amount: '61000' },
-  { routeIdx: 0, status: OrderStatus.DELIVERED,        priority: Priority.STANDARD, weight: '6.20',  declaredValue: '29000', createdDaysAgo: 20, departureDaysAgo: 17, etaDaysFromNow: -12, amount: '45000' },
-  { routeIdx: 8, status: OrderStatus.DELIVERED,        priority: Priority.EXPRESS,  weight: '2.80',  declaredValue: '12000', createdDaysAgo: 22, departureDaysAgo: 19, etaDaysFromNow: -15, amount: '38000' },
+  { routeIdx: 2, statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, priority: Priority.STANDARD, weight: '4.80',  declaredValue: '18000', createdDaysAgo: 28, departureDaysAgo: 25, etaDaysFromNow: -20, amount: '52000' },
+  { routeIdx: 3, statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, priority: Priority.EXPRESS,  weight: '9.50',  declaredValue: '67000', createdDaysAgo: 25, departureDaysAgo: 22, etaDaysFromNow: -17, amount: '78000' },
+  { routeIdx: 4, statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, priority: Priority.ECONOMY,  weight: '16.00', declaredValue: '43000', createdDaysAgo: 29, departureDaysAgo: 26, etaDaysFromNow: -21, amount: '61000' },
+  { routeIdx: 0, statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, priority: Priority.STANDARD, weight: '6.20',  declaredValue: '29000', createdDaysAgo: 20, departureDaysAgo: 17, etaDaysFromNow: -12, amount: '45000' },
+  { routeIdx: 8, statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED, priority: Priority.EXPRESS,  weight: '2.80',  declaredValue: '12000', createdDaysAgo: 22, departureDaysAgo: 19, etaDaysFromNow: -15, amount: '38000' },
 
   // ── cancelled (1) ──
-  { routeIdx: 5, status: OrderStatus.CANCELLED,        priority: Priority.STANDARD, weight: '10.00', declaredValue: '37000', createdDaysAgo: 10 },
+  { routeIdx: 5, statusV2: ShipmentStatusV2.CANCELLED, priority: Priority.STANDARD, weight: '10.00', declaredValue: '37000', createdDaysAgo: 10 },
 
-  // ── returned (1) ──
-  { routeIdx: 6, status: OrderStatus.RETURNED,         priority: Priority.ECONOMY,  weight: '8.00',  declaredValue: '26000', createdDaysAgo: 25, departureDaysAgo: 22, etaDaysFromNow: -15 },
+  // ── cancelled — previously returned (1) ──
+  { routeIdx: 6, statusV2: ShipmentStatusV2.CANCELLED, priority: Priority.ECONOMY, weight: '8.00', declaredValue: '26000', createdDaysAgo: 25, departureDaysAgo: 22, etaDaysFromNow: -15 },
 ]
 
 const RECIPIENTS = [
@@ -226,6 +239,11 @@ async function main() {
     const departureDate = tmpl.departureDaysAgo != null ? daysAgo(tmpl.departureDaysAgo) : null
     const eta = tmpl.etaDaysFromNow != null ? daysFromNow(tmpl.etaDaysFromNow) : null
 
+    const resolvedStatusV2: ShipmentStatusV2 =
+      tmpl.statusV2 === 'pickup' ? pickupStatus(route.transportMode)
+      : tmpl.statusV2 === 'in_transit' ? inTransitStatus(route.transportMode)
+      : tmpl.statusV2
+
     const [order] = await db
       .insert(orders)
       .values({
@@ -237,7 +255,9 @@ async function main() {
         recipientEmail: recipient.email ? encrypt(recipient.email) : null,
         origin: route.origin,
         destination: route.destination,
-        status: tmpl.status,
+        statusV2: resolvedStatusV2,
+        customerStatusV2: resolvedStatusV2,
+        transportMode: route.transportMode,
         orderDirection: route.direction,
         weight: tmpl.weight,
         declaredValue: tmpl.declaredValue,
@@ -278,14 +298,14 @@ async function main() {
 
   // ── Summary ────────────────────────────────────────────────────────────────
   const statusSummary = TEMPLATES.reduce(
-    (acc, t) => { acc[t.status] = (acc[t.status] ?? 0) + 1; return acc },
+    (acc, t) => { const k = String(t.statusV2); acc[k] = (acc[k] ?? 0) + 1; return acc },
     {} as Record<string, number>,
   )
 
   console.log('\n✅  Done!\n')
-  console.log('    Orders by status:')
+  console.log('    Orders by statusV2:')
   for (const [status, count] of Object.entries(statusSummary)) {
-    console.log(`      • ${status.padEnd(20)} ${count}`)
+    console.log(`      • ${status.padEnd(32)} ${count}`)
   }
   console.log(`\n    Test dashboard endpoints:`)
   console.log(`      GET /api/v1/dashboard/stats`)

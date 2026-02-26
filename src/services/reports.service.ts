@@ -23,11 +23,11 @@ export class ReportsService {
   async getOrdersByStatus() {
     const result = await db
       .select({
-        status: orders.status,
+        status: orders.statusV2,
         count: sql<number>`count(*)::int`,
       })
       .from(orders)
-      .groupBy(orders.status)
+      .groupBy(orders.statusV2)
 
     return result
   }
