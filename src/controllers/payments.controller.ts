@@ -94,6 +94,22 @@ export const paymentsController = {
     return reply.send(successResponse(result))
   },
 
+  async listMyPayments(
+    request: FastifyRequest<{
+      Querystring: { page?: string; limit?: string; status?: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await paymentsService.listPayments({
+      page: Number(request.query.page) || 1,
+      limit: Number(request.query.limit) || 20,
+      userId: request.user.id,
+      status: request.query.status as PaymentStatus | undefined,
+    })
+
+    return reply.send(successResponse(result))
+  },
+
   async recordOfflinePayment(
     request: FastifyRequest<{
       Params: { orderId: string }

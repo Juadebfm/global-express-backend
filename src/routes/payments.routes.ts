@@ -126,6 +126,37 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
     handler: paymentsController.handleWebhook,
   })
 
+  app.get('/me', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Payments'],
+      summary: 'List my payments (any authenticated user)',
+      description: `Returns a paginated list of the current user's own payment records. Optionally filter by status.`,
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        page: z.coerce.number().int().positive().optional().default(1).describe('Page number'),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20).describe('Results per page (max 100)'),
+        status: z.nativeEnum(PaymentStatus).optional().describe('Filter by status: pending | successful | failed | abandoned'),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(paymentResponseSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: paymentsController.listMyPayments,
+  })
+
   app.get('/', {
     preHandler: [authenticate, requireSuperAdmin],
     schema: {
