@@ -39,7 +39,8 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
 - \`pendingOrders\` — pending + picked_up
 - \`deliveredToday\` — orders whose status changed to delivered today
 - \`deliveredTotal\` — all-time delivered count
-- \`cancelled\`, \`returned\` — terminal states
+- \`cancelled\` — terminal state
+- \`unmappedOrders\` — orders not yet backfilled to V2 statuses
 - \`revenueMtd\` — admin/staff only (global revenue)
 - \`totalSpent\` — customer only (their own payments)`,
       security: [{ bearerAuth: [] }],
@@ -57,7 +58,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
             deliveredTotal: z.number(),
             deliveredTotalChange: changeSchema,
             cancelled: z.number(),
-            returned: z.number(),
+            unmappedOrders: z.number(),
             revenueMtd: z.string().optional().describe('Superadmin only — global platform revenue'),
             revenueMtdChange: changeSchema.optional().describe('Superadmin only'),
             totalSpent: z.string().optional().describe('Customer only — their own payment total'),
@@ -162,7 +163,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
     deliveredTotal: z.number(),
     deliveredTotalChange: changeSchema,
     cancelled: z.number(),
-    returned: z.number(),
+    unmappedOrders: z.number(),
     revenueMtd: z.string().optional(),
     revenueMtdChange: changeSchema.optional(),
     totalSpent: z.string().optional(),
