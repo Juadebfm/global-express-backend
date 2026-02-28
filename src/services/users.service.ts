@@ -1,6 +1,6 @@
-import { eq, and, isNull, sql } from 'drizzle-orm'
+import { eq, and, isNull, sql, desc } from 'drizzle-orm'
 import { db } from '../config/db'
-import { users } from '../../drizzle/schema'
+import { users, orders, payments } from '../../drizzle/schema'
 import { encrypt, decrypt } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import type { PaginationParams } from '../types'
@@ -52,6 +52,32 @@ export interface NotificationPreferences {
 
 export type UserRecord = Awaited<ReturnType<UsersService['getUserById']>>
 export type DecryptedUser = NonNullable<UserRecord>
+
+export interface GdprExportData {
+  profile: DecryptedUser
+  orders: Array<{
+    trackingNumber: string
+    origin: string
+    destination: string
+    statusV2: string | null
+    shipmentType: string | null
+    weight: string | null
+    description: string | null
+    recipientName: string
+    recipientPhone: string
+    createdAt: string
+  }>
+  payments: Array<{
+    id: string
+    amount: string
+    currency: string
+    status: string
+    paymentType: string
+    paystackReference: string | null
+    paidAt: string | null
+    createdAt: string
+  }>
+}
 
 export type ProfileCompletenessMissingField =
   | 'name'
@@ -280,10 +306,49 @@ export class UsersService {
     return updated ? this.decryptUser(updated) : null
   }
 
-  /** GDPR: export all personal data for a user. */
-  async exportUserData(id: string) {
+  /** GDPR: export all personal data for a user (profile + orders + payments). */
+  async exportUserData(id: string): Promise<GdprExportData | null> {
     const user = await this.getUserById(id)
-    return user
+    if (!user) return null
+
+    const [userOrders, userPayments] = await Promise.all([
+      db
+        .select()
+        .from(orders)
+        .where(and(eq(orders.senderId, id), isNull(orders.deletedAt)))
+        .orderBy(desc(orders.createdAt)),
+      db
+        .select()
+        .from(payments)
+        .where(eq(payments.userId, id))
+        .orderBy(desc(payments.createdAt)),
+    ])
+
+    return {
+      profile: user,
+      orders: userOrders.map((o) => ({
+        trackingNumber: o.trackingNumber,
+        origin: o.origin,
+        destination: o.destination,
+        statusV2: o.statusV2,
+        shipmentType: o.shipmentType,
+        weight: o.weight,
+        description: o.description,
+        recipientName: decrypt(o.recipientName),
+        recipientPhone: decrypt(o.recipientPhone),
+        createdAt: o.createdAt.toISOString(),
+      })),
+      payments: userPayments.map((p) => ({
+        id: p.id,
+        amount: p.amount,
+        currency: p.currency,
+        status: p.status,
+        paymentType: p.paymentType,
+        paystackReference: p.paystackReference,
+        paidAt: p.paidAt?.toISOString() ?? null,
+        createdAt: p.createdAt.toISOString(),
+      })),
+    }
   }
 
   /**

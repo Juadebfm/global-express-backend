@@ -58,8 +58,6 @@ const envSchema = z.object({
   ENCRYPTION_KEY: z
     .string()
     .length(64, 'ENCRYPTION_KEY must be a 64-character hex string (32 bytes)'),
-  // Comma-separated IP addresses allowed on admin routes
-  ADMIN_IP_WHITELIST: z.string().min(1, 'ADMIN_IP_WHITELIST is required'),
   // Comma-separated allowed CORS origins
   CORS_ORIGINS: z.string().min(1, 'CORS_ORIGINS is required'),
 })

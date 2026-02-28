@@ -4,7 +4,6 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { bulkOrdersController } from '../controllers/bulk-orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
-import { ipWhitelist } from '../middleware/ipWhitelist'
 import { ShipmentStatusV2 } from '../types/enums'
 
 const bulkItemResponseSchema = z.object({
@@ -67,7 +66,7 @@ export async function bulkOrdersRoutes(fastify: FastifyInstance): Promise<void> 
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
   app.post('/', {
-    preHandler: [authenticate, requireStaffOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
       summary: 'Create a bulk shipment with multiple customer items',
@@ -119,7 +118,7 @@ The bulk tracking number is visible to staff only. Customers track their package
   })
 
   app.get('/', {
-    preHandler: [authenticate, requireStaffOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
       summary: 'List all bulk orders',
@@ -150,7 +149,7 @@ The bulk tracking number is visible to staff only. Customers track their package
   })
 
   app.get('/:id', {
-    preHandler: [authenticate, requireStaffOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
       summary: 'Get bulk order with all items',
@@ -168,7 +167,7 @@ The bulk tracking number is visible to staff only. Customers track their package
   })
 
   app.patch('/:id/status', {
-    preHandler: [authenticate, requireStaffOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
       summary: 'Update bulk order status (auto-syncs all customer items)',
@@ -194,7 +193,7 @@ The bulk tracking number is visible to staff only. Customers track their package
   })
 
   app.post('/:id/items', {
-    preHandler: [authenticate, requireStaffOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
       summary: 'Add a customer item to an existing bulk order',
@@ -225,7 +224,7 @@ The bulk tracking number is visible to staff only. Customers track their package
   })
 
   app.delete('/:id/items/:itemId', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
       summary: 'Remove a customer item from a bulk order (admin+)',
@@ -246,7 +245,7 @@ The bulk tracking number is visible to staff only. Customers track their package
   })
 
   app.delete('/:id', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
       summary: 'Soft-delete a bulk order (admin+)',

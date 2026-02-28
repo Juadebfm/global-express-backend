@@ -4,7 +4,6 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { usersController } from '../controllers/users.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
-import { ipWhitelist } from '../middleware/ipWhitelist'
 import { PreferredLanguage, UserRole } from '../types/enums'
 
 const userResponseSchema = z.object({
@@ -232,13 +231,12 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
     preHandler: [authenticate],
     schema: {
       tags: ['Users'],
-      summary: 'Export own data (GDPR)',
-      description: 'Returns all personal data held for the authenticated user. Useful for GDPR data subject access requests (Article 15). All encrypted fields are decrypted in the response.',
+      summary: 'Export own data as PDF (GDPR)',
+      description:
+        'Returns a PDF containing all personal data held for the authenticated user ' +
+        '(profile, orders, payments). Useful for GDPR data subject access requests (Article 15).',
       security: [{ bearerAuth: [] }],
-      response: {
-        200: z.object({ success: z.literal(true), data: userResponseSchema.nullable() }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-      },
+      // No response schema — binary PDF cannot be validated by Zod serializer
     },
     handler: usersController.exportMyData,
   })
@@ -246,7 +244,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
   // ─── Admin routes ─────────────────────────────────────────────────────────
 
   app.get('/', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Users — Admin'],
       summary: 'List all users',
@@ -289,7 +287,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
   })
 
   app.get('/:id', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Users — Admin'],
       summary: 'Get a user by ID',
@@ -307,7 +305,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
   })
 
   app.patch('/:id', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Users — Admin'],
       summary: 'Update a user',
@@ -358,7 +356,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
   })
 
   app.patch('/:id/role', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Users — Admin'],
       summary: 'Change user role',
@@ -386,7 +384,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
   })
 
   app.delete('/:id', {
-    preHandler: [authenticate, requireSuperAdmin, ipWhitelist],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Users — SuperAdmin'],
       summary: 'Delete a user (soft delete)',

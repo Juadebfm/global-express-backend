@@ -21,7 +21,6 @@ beforeAll(() => {
     PAYSTACK_SECRET_KEY: "sk_test_placeholder",
     PAYSTACK_PUBLIC_KEY: "pk_test_placeholder",
     ENCRYPTION_KEY: "a".repeat(64),
-    ADMIN_IP_WHITELIST: "127.0.0.1,::1",
     CORS_ORIGINS: "http://localhost:3000",
   });
 });

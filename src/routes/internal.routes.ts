@@ -10,7 +10,6 @@ import {
   requireAdminOrAbove,
   requireStaffOrAbove,
 } from '../middleware/requireRole'
-import { ipWhitelist } from '../middleware/ipWhitelist'
 import { UserRole } from '../types/enums'
 
 const internalUserResponseSchema = z.object({
@@ -84,7 +83,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Superadmin can create any role. Admin can only create staff.
    */
   app.post('/users', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Internal — User Management'],
       summary: 'Create internal staff/admin account',
@@ -154,7 +153,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Reset any internal user's password (superadmin only).
    */
   app.patch('/users/:id/password', {
-    preHandler: [authenticate, requireSuperAdmin, ipWhitelist],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Internal — User Management'],
       summary: 'Reset an internal user\'s password (superadmin)',

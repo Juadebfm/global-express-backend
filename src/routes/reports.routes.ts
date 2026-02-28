@@ -4,13 +4,12 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { reportsController } from '../controllers/reports.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
-import { ipWhitelist } from '../middleware/ipWhitelist'
 
 export async function reportsRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
   app.get('/summary', {
-    preHandler: [authenticate, requireSuperAdmin, ipWhitelist],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Reports'],
       summary: 'Dashboard summary — total orders, users, and revenue (superadmin)',
@@ -49,7 +48,7 @@ export async function reportsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.get('/orders/by-status', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Reports'],
       summary: 'Order count grouped by status',
@@ -86,7 +85,7 @@ export async function reportsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.get('/revenue', {
-    preHandler: [authenticate, requireSuperAdmin, ipWhitelist],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Reports'],
       summary: 'Daily revenue breakdown over a date range (superadmin)',

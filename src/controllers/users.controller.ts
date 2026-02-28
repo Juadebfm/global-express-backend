@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { usersService } from '../services/users.service'
+import { generateGdprExportPdf } from '../services/pdf-export.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import { PreferredLanguage, UserRole } from '../types/enums'
@@ -69,9 +70,19 @@ export const usersController = {
   },
 
   async exportMyData(request: FastifyRequest, reply: FastifyReply) {
-    // GDPR: user can export all their personal data
     const data = await usersService.exportUserData(request.user.id)
-    return reply.send(successResponse(data))
+
+    if (!data) {
+      return reply.code(404).send({ success: false, message: 'User not found' })
+    }
+
+    const today = new Date().toISOString().slice(0, 10)
+    const pdfDoc = generateGdprExportPdf(data)
+
+    return reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', `attachment; filename="globalexpress-account-export-${today}.pdf"`)
+      .send(pdfDoc)
   },
 
   async getMyNotificationPreferences(request: FastifyRequest, reply: FastifyReply) {

@@ -4,7 +4,6 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { settingsController } from '../controllers/settings.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireSuperAdmin, requireStaffOrAbove } from '../middleware/requireRole'
-import { ipWhitelist } from '../middleware/ipWhitelist'
 import { PreferredLanguage, TransportMode } from '../types/enums'
 
 const ruleBaseSchema = z
@@ -343,7 +342,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.patch('/logistics', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Logistics'],
       summary:
@@ -382,7 +381,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.patch('/fx-rate', {
-    preHandler: [authenticate, requireSuperAdmin, ipWhitelist],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Settings - FX'],
       summary: 'Update FX rate settings (superadmin)',
@@ -402,7 +401,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.get('/templates', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Templates'],
       summary: 'List notification templates (admin+)',
@@ -429,7 +428,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.patch('/templates/:id', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Templates'],
       summary: 'Update notification template by id (admin+)',
@@ -481,7 +480,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.patch('/pricing', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Pricing'],
       summary: 'Upsert/delete pricing rules and customer overrides (admin+)',
@@ -557,7 +556,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.patch('/restricted-goods', {
-    preHandler: [authenticate, requireAdminOrAbove, ipWhitelist],
+    preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Restricted Goods'],
       summary: 'Upsert/delete restricted goods catalog entries (admin+)',

@@ -62,6 +62,12 @@ async function main() {
     lastName: 'Admin',
   })
 
+  // Superadmin seeded via script should be active immediately (bypass approval flow)
+  await db
+    .update(users)
+    .set({ isActive: true })
+    .where(eq(users.id, user.id))
+
   console.log('\n✅  Superadmin created successfully!')
   console.log(`     ID:    ${user.id}`)
   console.log(`     Email: ${user.email}`)
