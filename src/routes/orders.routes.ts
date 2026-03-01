@@ -155,7 +155,12 @@ Works for both solo orders and bulk shipment items.
             destination: z.string(),
             estimatedDelivery: z.string().nullable().describe('Estimated delivery date (null until implemented)'),
             lastUpdate: z.string().describe('Human-readable last update timestamp e.g. "Feb 21, 2026 · 09:14 AM"'),
-            lastLocation: z.string().describe('Last known location (destination until location tracking is added)'),
+            lastLocation: z.string().describe('Derived from shipment status: origin, "In Transit", or destination'),
+            timeline: z.array(z.object({
+              status: z.string().nullable(),
+              statusLabel: z.string().nullable(),
+              timestamp: z.string(),
+            })).describe('Chronological list of status changes the shipment has passed through'),
           }),
         }),
         404: z.object({ success: z.literal(false), message: z.string() }),
@@ -352,6 +357,40 @@ The estimate uses the same pricing engine as warehouse verification, including a
       },
     },
     handler: ordersController.getOrderById,
+  })
+
+  app.get('/:id/timeline', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Orders'],
+      summary: 'Get order status timeline',
+      description: `Returns the full status history for an order — every status change with timestamp, in chronological order. Customers can only view their own orders.
+
+Use this to render a step-by-step progress tracker showing each transit milestone the shipment has passed through.`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Order UUID') }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            orderId: z.string().uuid(),
+            trackingNumber: z.string(),
+            currentStatus: z.string().nullable(),
+            currentStatusLabel: z.string().nullable(),
+            timeline: z.array(z.object({
+              id: z.string().uuid(),
+              status: z.string().nullable(),
+              statusLabel: z.string().nullable(),
+              timestamp: z.string(),
+            })),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: ordersController.getStatusTimeline,
   })
 
   app.patch('/:id/status', {

@@ -263,6 +263,9 @@ export class ReportsService {
       revenue: sql`coalesce(sum(p.amount) filter (where p.status = 'successful'), 0) desc`,
     }
 
+    const fromStr = params.from.toISOString()
+    const toStr = params.to.toISOString()
+
     const rows = await db.execute(sql`
       select
         u.id as customer_id,
@@ -279,7 +282,7 @@ export class ReportsService {
         coalesce(sum(p.amount) filter (where p.status = 'successful'), 0)::text as revenue
       from users u
         join orders o on o.sender_id = u.id and o.deleted_at is null
-          and o.created_at >= ${params.from} and o.created_at <= ${params.to}
+          and o.created_at >= ${fromStr}::timestamptz and o.created_at <= ${toStr}::timestamptz
         left join payments p on p.order_id = o.id
       where u.role = 'user' and u.deleted_at is null
       group by u.id
@@ -313,11 +316,14 @@ export class ReportsService {
   // ── 4. Delivery Performance ─────────────────────────────────────────────
 
   async getDeliveryPerformance(params: { from: Date; to: Date }) {
+    const fromStr = params.from.toISOString()
+    const toStr = params.to.toISOString()
+
     const baseWhere = sql`
       o.deleted_at is null
       and o.status_v2 = 'PICKED_UP_COMPLETED'
       and e.status = 'PICKED_UP_COMPLETED'
-      and e.created_at >= ${params.from} and e.created_at <= ${params.to}
+      and e.created_at >= ${fromStr}::timestamptz and e.created_at <= ${toStr}::timestamptz
     `
 
     const overallQuery = db.execute(sql`
@@ -434,6 +440,9 @@ export class ReportsService {
   // ── 6. Payment Breakdown ────────────────────────────────────────────────
 
   async getPaymentBreakdown(params: { from: Date; to: Date }) {
+    const fromStr = params.from.toISOString()
+    const toStr = params.to.toISOString()
+
     const byTypeQuery = db.execute(sql`
       select
         payment_type,
@@ -444,7 +453,7 @@ export class ReportsService {
         count(*) filter (where status = 'abandoned')::int as abandoned,
         coalesce(sum(amount) filter (where status = 'successful'), 0)::text as total_amount
       from payments
-      where created_at >= ${params.from} and created_at <= ${params.to}
+      where created_at >= ${fromStr}::timestamptz and created_at <= ${toStr}::timestamptz
       group by payment_type
     `)
 
@@ -454,7 +463,7 @@ export class ReportsService {
         count(*)::int as count,
         coalesce(sum(amount), 0)::text as amount
       from payments
-      where created_at >= ${params.from} and created_at <= ${params.to}
+      where created_at >= ${fromStr}::timestamptz and created_at <= ${toStr}::timestamptz
       group by status
     `)
 
@@ -465,7 +474,7 @@ export class ReportsService {
         coalesce(sum(final_charge_usd), 0)::text as total_charge
       from orders
       where deleted_at is null
-        and created_at >= ${params.from} and created_at <= ${params.to}
+        and created_at >= ${fromStr}::timestamptz and created_at <= ${toStr}::timestamptz
       group by payment_collection_status
     `)
 
@@ -513,6 +522,9 @@ export class ReportsService {
     to: Date
     isSuperAdmin: boolean
   }) {
+    const fromStr = params.from.toISOString()
+    const toStr = params.to.toISOString()
+
     const mainQuery = db.execute(sql`
       select
         o.transport_mode,
@@ -529,7 +541,7 @@ export class ReportsService {
         left join payments p on p.order_id = o.id
       where o.deleted_at is null
         and o.transport_mode is not null
-        and o.created_at >= ${params.from} and o.created_at <= ${params.to}
+        and o.created_at >= ${fromStr}::timestamptz and o.created_at <= ${toStr}::timestamptz
       group by o.transport_mode
     `)
 
@@ -541,7 +553,7 @@ export class ReportsService {
         join order_status_events e on e.order_id = o.id and e.status = 'PICKED_UP_COMPLETED'
       where o.deleted_at is null
         and o.transport_mode is not null
-        and o.created_at >= ${params.from} and o.created_at <= ${params.to}
+        and o.created_at >= ${fromStr}::timestamptz and o.created_at <= ${toStr}::timestamptz
       group by o.transport_mode
     `)
 

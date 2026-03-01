@@ -110,17 +110,19 @@ export class DashboardService {
       )
 
     // ── Period-over-period count changes (single query, conditional aggregation) ─
-    const inMotionArr = IN_MOTION_V2 as unknown as string[]
-    const preTransitArr = PRE_TRANSIT_V2 as unknown as string[]
+    // Build Postgres array literals from static enum arrays.
+    // Safe: values are compile-time constants from ShipmentStatusV2 enum, never user input.
+    const inMotionPgArr = `{${IN_MOTION_V2.join(',')}}`
+    const preTransitPgArr = `{${PRE_TRANSIT_V2.join(',')}}`
 
     const changeQuery = db
       .select({
         currentOrders:    sql<number>`count(*) filter (where created_at >= ${now30s}::timestamptz)::int`,
         prevOrders:       sql<number>`count(*) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
-        currentActive:    sql<number>`count(*) filter (where status_v2 = ANY(${inMotionArr}::shipment_status_v2[]) and created_at >= ${now30s}::timestamptz)::int`,
-        prevActive:       sql<number>`count(*) filter (where status_v2 = ANY(${inMotionArr}::shipment_status_v2[]) and created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
-        currentPending:   sql<number>`count(*) filter (where status_v2 = ANY(${preTransitArr}::shipment_status_v2[]) and created_at >= ${now30s}::timestamptz)::int`,
-        prevPending:      sql<number>`count(*) filter (where status_v2 = ANY(${preTransitArr}::shipment_status_v2[]) and created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
+        currentActive:    sql<number>`count(*) filter (where status_v2 = ANY(${inMotionPgArr}::shipment_status_v2[]) and created_at >= ${now30s}::timestamptz)::int`,
+        prevActive:       sql<number>`count(*) filter (where status_v2 = ANY(${inMotionPgArr}::shipment_status_v2[]) and created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
+        currentPending:   sql<number>`count(*) filter (where status_v2 = ANY(${preTransitPgArr}::shipment_status_v2[]) and created_at >= ${now30s}::timestamptz)::int`,
+        prevPending:      sql<number>`count(*) filter (where status_v2 = ANY(${preTransitPgArr}::shipment_status_v2[]) and created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
         currentDelivered: sql<number>`count(*) filter (where status_v2 = 'PICKED_UP_COMPLETED' and updated_at >= ${now30s}::timestamptz)::int`,
         prevDelivered:    sql<number>`count(*) filter (where status_v2 = 'PICKED_UP_COMPLETED' and updated_at >= ${now60s}::timestamptz and updated_at < ${now30s}::timestamptz)::int`,
       })
@@ -259,7 +261,7 @@ export class DashboardService {
   async getActiveDeliveries(userId: string, role: string) {
     const isCustomer = role === UserRole.USER
     const now = new Date()
-    const nonTerminalArr = NON_TERMINAL_V2 as unknown as string[]
+    const nonTerminalPgArr = `{${NON_TERMINAL_V2.join(',')}}`
 
     const rows = await db
       .select({
@@ -273,7 +275,7 @@ export class DashboardService {
       .where(
         and(
           isNull(orders.deletedAt),
-          sql`status_v2 = ANY(${nonTerminalArr}::shipment_status_v2[])`,
+          sql`status_v2 = ANY(${nonTerminalPgArr}::shipment_status_v2[])`,
           isCustomer ? eq(orders.senderId, userId) : undefined,
         ),
       )
