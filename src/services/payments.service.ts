@@ -1,5 +1,5 @@
 import { createHmac } from 'crypto'
-import { eq, and, desc, sql } from 'drizzle-orm'
+import { eq, and, desc, sql, isNull } from 'drizzle-orm'
 import axios from 'axios'
 import { db } from '../config/db'
 import { payments, orders } from '../../drizzle/schema'
@@ -138,6 +138,27 @@ export class PaymentsService {
     proofReference?: string
     note?: string
   }) {
+    // Validate: order must exist and amount must not exceed the order charge
+    const [order] = await db
+      .select({ finalChargeUsd: orders.finalChargeUsd, calculatedChargeUsd: orders.calculatedChargeUsd })
+      .from(orders)
+      .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))
+
+    if (!order) {
+      throw new Error('Order not found')
+    }
+
+    if (input.amount <= 0) {
+      throw new Error('Payment amount must be greater than zero')
+    }
+
+    const orderCharge = parseFloat(order.finalChargeUsd ?? order.calculatedChargeUsd ?? '0')
+    if (orderCharge > 0 && input.amount > orderCharge * 100) {
+      // Sanity check: amount in NGN should not wildly exceed the USD charge * rough conversion
+      // This prevents accidental or malicious extreme amounts (e.g. staff typo adding extra zeros)
+      throw new Error('Payment amount appears unreasonably high for this order')
+    }
+
     const [payment] = await db.transaction(async (tx) => {
       const [newPayment] = await tx
         .insert(payments)

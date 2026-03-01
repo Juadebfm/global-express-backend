@@ -2,7 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { paymentsService } from '../services/payments.service'
 import { successResponse } from '../utils/response'
 import type { PaymentStatus } from '../types/enums'
-import { PaymentType } from '../types/enums'
+import { PaymentType, UserRole } from '../types/enums'
 
 export const paymentsController = {
   async initializePayment(
@@ -36,6 +36,11 @@ export const paymentsController = {
 
     if (!payment) {
       return reply.code(404).send({ success: false, message: 'Payment record not found' })
+    }
+
+    // Customers can only verify their own payments
+    if (request.user.role === UserRole.USER && payment.userId !== request.user.id) {
+      return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 
     return reply.send(successResponse(payment))
@@ -73,6 +78,11 @@ export const paymentsController = {
 
     if (!payment) {
       return reply.code(404).send({ success: false, message: 'Payment not found' })
+    }
+
+    // Customers can only view their own payments
+    if (request.user.role === UserRole.USER && payment.userId !== request.user.id) {
+      return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 
     return reply.send(successResponse(payment))

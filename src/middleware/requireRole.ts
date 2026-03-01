@@ -14,7 +14,7 @@ export function requireRole(...allowedRoles: UserRole[]): RolePreHandler {
     const userRole = request.user?.role as UserRole
 
     if (!userRole || !allowedRoles.includes(userRole)) {
-      reply.code(403).send({
+      return reply.code(403).send({
         success: false,
         message: 'Forbidden — you do not have permission to access this resource',
       })

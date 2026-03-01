@@ -93,6 +93,9 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
    * Returns { user, tokens: { accessToken } } — matches frontend operator dashboard contract.
    */
   app.post('/login', {
+    config: {
+      rateLimit: { max: 5, timeWindow: '1 minute' },
+    },
     schema: {
       tags: ['Auth'],
       summary: 'Operator login (staff / admin / superadmin)',
@@ -208,6 +211,9 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   // ─── Forgot password (internal operators only) ────────────────────────────
 
   app.post('/forgot-password/send-otp', {
+    config: {
+      rateLimit: { max: 3, timeWindow: '1 minute' },
+    },
     schema: {
       tags: ['Auth'],
       summary: 'Send password reset OTP',
@@ -227,6 +233,9 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.post('/forgot-password/verify-otp', {
+    config: {
+      rateLimit: { max: 10, timeWindow: '1 minute' },
+    },
     schema: {
       tags: ['Auth'],
       summary: 'Verify password reset OTP',
@@ -250,6 +259,9 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.post('/forgot-password/reset', {
+    config: {
+      rateLimit: { max: 5, timeWindow: '1 minute' },
+    },
     schema: {
       tags: ['Auth'],
       summary: 'Reset password',

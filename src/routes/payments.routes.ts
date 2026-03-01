@@ -103,8 +103,8 @@ Returns the updated payment record with the confirmed status.`,
    */
   app.post('/webhook', {
     config: {
-      // Higher limit for Paystack — they may retry failed deliveries
-      rateLimit: { max: 500, timeWindow: '1 minute' },
+      // Paystack may retry failed deliveries — allow reasonable headroom
+      rateLimit: { max: 50, timeWindow: '1 minute' },
     },
     schema: {
       tags: ['Payments'],
