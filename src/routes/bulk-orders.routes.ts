@@ -18,6 +18,8 @@ const bulkItemResponseSchema = z.object({
   weight: z.string().nullable(),
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
+  pickupRepName: z.string().nullable().describe('Pickup representative name'),
+  pickupRepPhone: z.string().nullable().describe('Pickup representative phone'),
   statusV2: z.nativeEnum(ShipmentStatusV2).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -32,6 +34,8 @@ const bulkItemInputSchema = z.object({
   weight: z.string().optional().describe('Package weight (e.g. "1.5kg")'),
   declaredValue: z.string().optional().describe('Declared value in local currency (e.g. "8000")'),
   description: z.string().optional().describe('Package contents / description'),
+  pickupRepName: z.string().min(1).optional().describe('Pickup representative name (if someone else will collect)'),
+  pickupRepPhone: z.string().min(1).optional().describe('Pickup representative phone number'),
 })
 
 const bulkOrderResponseSchema = z.object({

@@ -91,6 +91,8 @@ export const orders = pgTable(
     paymentCollectionStatus: paymentCollectionStatusEnum('payment_collection_status')
       .notNull()
       .default('UNPAID'),
+    pickupRepName: text('pickup_rep_name'),
+    pickupRepPhone: text('pickup_rep_phone'),
     flaggedForAdminReview: boolean('flagged_for_admin_review').notNull().default(false),
     createdBy: uuid('created_by')
       .notNull()

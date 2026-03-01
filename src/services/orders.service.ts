@@ -107,6 +107,8 @@ export interface CreateOrderInput {
   eta?: Date | null
   isPreorder?: boolean
   createdBy: string
+  pickupRepName?: string
+  pickupRepPhone?: string
 }
 
 export interface UpdateOrderStatusInput {
@@ -181,6 +183,8 @@ export class OrdersService {
         statusV2: initialStatusV2,
         customerStatusV2: initialStatusV2,
         createdBy: input.createdBy,
+        pickupRepName: input.pickupRepName ? encrypt(input.pickupRepName) : null,
+        pickupRepPhone: input.pickupRepPhone ? encrypt(input.pickupRepPhone) : null,
       })
       .returning()
 
@@ -702,6 +706,20 @@ export class OrdersService {
       .orderBy(packageImages.createdAt)
   }
 
+  async updatePickupRep(orderId: string, input: { pickupRepName: string; pickupRepPhone: string }) {
+    const [updated] = await db
+      .update(orders)
+      .set({
+        pickupRepName: encrypt(input.pickupRepName),
+        pickupRepPhone: encrypt(input.pickupRepPhone),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
+      .returning()
+
+    return updated ? this.decryptOrder(updated) : null
+  }
+
   private decryptOrder(order: typeof orders.$inferSelect) {
     // amountDue = finalChargeUsd when payment not yet collected, null when paid or not yet priced
     const amountDue =
@@ -715,7 +733,10 @@ export class OrdersService {
       recipientAddress: decrypt(order.recipientAddress),
       recipientPhone: decrypt(order.recipientPhone),
       recipientEmail: order.recipientEmail ? decrypt(order.recipientEmail) : null,
+      pickupRepName: order.pickupRepName ? decrypt(order.pickupRepName) : null,
+      pickupRepPhone: order.pickupRepPhone ? decrypt(order.pickupRepPhone) : null,
       amountDue,
+      priceCalculatedAt: order.priceCalculatedAt?.toISOString() ?? null,
       createdAt: order.createdAt.toISOString(),
       updatedAt: order.updatedAt.toISOString(),
       deletedAt: order.deletedAt?.toISOString() ?? null,

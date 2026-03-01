@@ -20,6 +20,8 @@ export interface CreateBulkItemInput {
   weight?: string
   declaredValue?: string
   description?: string
+  pickupRepName?: string
+  pickupRepPhone?: string
 }
 
 export interface CreateBulkOrderInput {
@@ -57,6 +59,8 @@ export class BulkOrdersService {
       weight: item.weight ?? null,
       declaredValue: item.declaredValue ?? null,
       description: item.description ?? null,
+      pickupRepName: item.pickupRepName ? encrypt(item.pickupRepName) : null,
+      pickupRepPhone: item.pickupRepPhone ? encrypt(item.pickupRepPhone) : null,
       statusV2: initialStatusV2,
       customerStatusV2: initialStatusV2,
     }))
@@ -253,6 +257,8 @@ export class BulkOrdersService {
         weight: item.weight ?? null,
         declaredValue: item.declaredValue ?? null,
         description: item.description ?? null,
+        pickupRepName: item.pickupRepName ? encrypt(item.pickupRepName) : null,
+        pickupRepPhone: item.pickupRepPhone ? encrypt(item.pickupRepPhone) : null,
       })
       .returning()
 
@@ -287,6 +293,8 @@ export class BulkOrdersService {
       recipientAddress: decrypt(item.recipientAddress),
       recipientPhone: decrypt(item.recipientPhone),
       recipientEmail: item.recipientEmail ? decrypt(item.recipientEmail) : null,
+      pickupRepName: item.pickupRepName ? decrypt(item.pickupRepName) : null,
+      pickupRepPhone: item.pickupRepPhone ? decrypt(item.pickupRepPhone) : null,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
     }

@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
-import { OrderStatus, OrderDirection, ShipmentType, TransportMode, ShipmentStatusV2 } from '../types/enums'
+import { OrderDirection, ShipmentType, TransportMode, ShipmentStatusV2, PricingSource } from '../types/enums'
 
 const orderResponseSchema = z.object({
   id: z.string().uuid().describe('Order UUID'),
@@ -16,7 +16,6 @@ const orderResponseSchema = z.object({
   recipientEmail: z.string().nullable().describe('Recipient email (optional)'),
   origin: z.string().describe('Origin city / location'),
   destination: z.string().describe('Destination city / location'),
-  status: z.nativeEnum(OrderStatus).describe('Current shipment status'),
   orderDirection: z.nativeEnum(OrderDirection).describe('outbound (us → customer) or inbound (customer → us)'),
   weight: z.string().nullable().describe('Package weight (e.g. "2.5kg")'),
   declaredValue: z.string().nullable().describe('Declared monetary value (e.g. "15000")'),
@@ -38,6 +37,8 @@ const orderResponseSchema = z.object({
     .enum(['UNPAID', 'PAYMENT_IN_PROGRESS', 'PAID_IN_FULL'])
     .describe('Payment collection state for pickup validation'),
   amountDue: z.string().nullable().describe('Amount owed in USD — equals finalChargeUsd until paid, then null'),
+  pickupRepName: z.string().nullable().describe('Pickup representative name (if someone other than the customer will collect)'),
+  pickupRepPhone: z.string().nullable().describe('Pickup representative phone number'),
   createdBy: z.string().uuid().describe('UUID of the staff/user who created the order'),
   deletedAt: z.string().nullable(),
   createdAt: z.string(),
@@ -115,7 +116,7 @@ const myShipmentSchema = z.object({
   trackingNumber: z.string(),
   origin: z.string(),
   destination: z.string(),
-  status: z.nativeEnum(OrderStatus),
+  statusV2: z.string().nullable().describe('V2 operational status'),
   orderDirection: z.string().nullable(),
   recipientName: z.string(),
   recipientAddress: z.string(),
@@ -124,9 +125,6 @@ const myShipmentSchema = z.object({
   weight: z.string().nullable(),
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
-  shipmentType: z.nativeEnum(ShipmentType).nullable(),
-  departureDate: z.string().nullable(),
-  eta: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -250,6 +248,8 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
         shipmentType: z.nativeEnum(ShipmentType).optional().describe('Transport mode: air | ocean'),
         departureDate: z.string().datetime().optional().describe('Departure date (ISO 8601)'),
         eta: z.string().datetime().optional().describe('Estimated delivery date (ISO 8601)'),
+        pickupRepName: z.string().min(1).optional().describe('Pickup representative name (if someone else will collect)'),
+        pickupRepPhone: z.string().min(1).optional().describe('Pickup representative phone number'),
       }),
       response: {
         201: z.object({ success: z.literal(true), data: orderResponseSchema }),
@@ -258,6 +258,54 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
       },
     },
     handler: ordersController.createOrder,
+  })
+
+  app.post('/estimate', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Orders'],
+      summary: 'Estimate shipping cost',
+      description: `Returns a ballpark shipping cost estimate based on shipment type and weight/volume.
+
+- **Air**: provide \`weightKg\` — price is calculated per-kg using tiered rates.
+- **Ocean (sea)**: provide \`cbm\` — price is calculated per cubic meter.
+
+The estimate uses the same pricing engine as warehouse verification, including any customer-specific overrides. Final pricing is determined after the package is received and verified at the Korea warehouse.
+
+**Example (air):**
+\`\`\`json
+{ "shipmentType": "air", "weightKg": 5 }
+\`\`\`
+
+**Example (ocean):**
+\`\`\`json
+{ "shipmentType": "ocean", "cbm": 1.2 }
+\`\`\``,
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        shipmentType: z.nativeEnum(ShipmentType).describe('Transport mode: air | ocean'),
+        weightKg: z.number().positive().optional().describe('Estimated weight in kg (required for air)'),
+        cbm: z.number().positive().optional().describe('Estimated volume in cubic meters (required for ocean)'),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            mode: z.nativeEnum(TransportMode).describe('Resolved transport mode: air | sea'),
+            weightKg: z.number().nullable(),
+            cbm: z.number().nullable(),
+            estimatedCostUsd: z.number().describe('Estimated shipping cost in USD'),
+            pricingSource: z.nativeEnum(PricingSource).describe('Which pricing tier was used'),
+            departureFrequency: z.string().describe('How often shipments depart: "Weekly" (air) or "Monthly" (ocean)'),
+            estimatedTransitDays: z.number().describe('Estimated transit time in days (air ≈ 7, ocean ≈ 90)'),
+            disclaimer: z.string(),
+          }),
+        }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: ordersController.estimateShippingCost,
   })
 
   app.get('/', {
@@ -339,6 +387,39 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
       },
     },
     handler: ordersController.updateOrderStatus,
+  })
+
+  app.patch('/:id/pickup-rep', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Orders'],
+      summary: 'Set or update pickup representative',
+      description: `Designate someone else to pick up the package at the Lagos office.
+
+- **Customers** can only update their own orders.
+- **Staff+** can update any order.
+
+**Example:**
+\`\`\`json
+{
+  "pickupRepName": "Emeka Nwosu",
+  "pickupRepPhone": "+2348034567890"
+}
+\`\`\``,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Order UUID') }),
+      body: z.object({
+        pickupRepName: z.string().min(1).describe('Representative full name'),
+        pickupRepPhone: z.string().min(1).describe('Representative phone number'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: orderResponseSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: ordersController.updatePickupRep,
   })
 
   app.post('/:id/warehouse-verify', {

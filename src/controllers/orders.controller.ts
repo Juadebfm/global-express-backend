@@ -3,6 +3,7 @@ import { ordersService } from '../services/orders.service'
 import { bulkOrdersService } from '../services/bulk-orders.service'
 import { usersService } from '../services/users.service'
 import { adminNotificationsService } from '../services/admin-notifications.service'
+import { pricingV2Service } from '../services/pricing-v2.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import { ShipmentStatusV2, TransportMode, UserRole } from '../types/enums'
@@ -50,6 +51,8 @@ export const ordersController = {
         shipmentType?: 'air' | 'ocean'
         departureDate?: string
         eta?: string
+        pickupRepName?: string
+        pickupRepPhone?: string
       }
     }>,
     reply: FastifyReply,
@@ -91,6 +94,8 @@ export const ordersController = {
       // Customers creating for themselves are pre-ordering (item not yet at warehouse)
       isPreorder: userRole === UserRole.USER,
       createdBy: request.user.id,
+      pickupRepName: request.body.pickupRepName,
+      pickupRepPhone: request.body.pickupRepPhone,
     })
 
     await createAuditLog({
@@ -343,11 +348,99 @@ export const ordersController = {
     return reply.send(successResponse({ message: 'Order deleted successfully' }))
   },
 
+  async updatePickupRep(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: { pickupRepName: string; pickupRepPhone: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const order = await ordersService.getOrderById(request.params.id)
+    if (!order) {
+      return reply.code(404).send({ success: false, message: 'Order not found' })
+    }
+
+    // Customers can only update their own orders
+    const userRole = request.user.role as UserRole
+    if (userRole === UserRole.USER && order.senderId !== request.user.id) {
+      return reply.code(403).send({ success: false, message: 'Forbidden' })
+    }
+
+    const updated = await ordersService.updatePickupRep(request.params.id, {
+      pickupRepName: request.body.pickupRepName,
+      pickupRepPhone: request.body.pickupRepPhone,
+    })
+
+    if (!updated) {
+      return reply.code(404).send({ success: false, message: 'Order not found' })
+    }
+
+    return reply.send(successResponse(updated))
+  },
+
   async getOrderImages(
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ) {
     const images = await ordersService.getOrderImages(request.params.id)
     return reply.send(successResponse(images))
+  },
+
+  async estimateShippingCost(
+    request: FastifyRequest<{
+      Body: {
+        shipmentType: 'air' | 'ocean'
+        weightKg?: number
+        cbm?: number
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const { shipmentType, weightKg, cbm } = request.body
+
+    const mode = shipmentType === 'air' ? TransportMode.AIR : TransportMode.SEA
+
+    if (mode === TransportMode.AIR && (!weightKg || weightKg <= 0)) {
+      return reply.code(400).send({
+        success: false,
+        message: 'weightKg is required and must be positive for air shipments',
+      })
+    }
+
+    if (mode === TransportMode.SEA && (!cbm || cbm <= 0)) {
+      return reply.code(400).send({
+        success: false,
+        message: 'cbm is required and must be positive for sea/ocean shipments',
+      })
+    }
+
+    try {
+      const pricing = await pricingV2Service.calculatePricing({
+        customerId: request.user.id,
+        mode,
+        weightKg: mode === TransportMode.AIR ? weightKg : undefined,
+        cbm: mode === TransportMode.SEA ? cbm : undefined,
+      })
+
+      const departureFrequency = mode === TransportMode.AIR ? 'Weekly' : 'Monthly'
+      const estimatedTransitDays = mode === TransportMode.AIR ? 7 : 90
+
+      return reply.send(
+        successResponse({
+          mode,
+          weightKg: weightKg ?? null,
+          cbm: cbm ?? null,
+          estimatedCostUsd: pricing.amountUsd,
+          pricingSource: pricing.pricingSource,
+          departureFrequency,
+          estimatedTransitDays,
+          disclaimer:
+            'This is an estimate. Final pricing is determined after warehouse verification of actual weight/volume. Rates are subject to change without prior notice.',
+        }),
+      )
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Pricing calculation failed'
+      return reply.code(400).send({ success: false, message })
+    }
   },
 }
