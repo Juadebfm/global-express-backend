@@ -17,6 +17,7 @@ import { teamRoutes } from './team.routes'
 import { adminRoutes } from './admin.routes'
 import { settingsRoutes } from './settings.routes'
 import { supportRoutes } from './support.routes'
+import { publicRoutes } from './public.routes'
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
@@ -54,4 +55,5 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(adminRoutes, { prefix: '/api/v1/admin' })
   await app.register(settingsRoutes, { prefix: '/api/v1/settings' })
   await app.register(supportRoutes, { prefix: '/api/v1/support' })
+  await app.register(publicRoutes, { prefix: '/api/v1/public' })
 }
