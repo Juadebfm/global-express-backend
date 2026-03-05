@@ -60,6 +60,12 @@ const envSchema = z.object({
     .length(64, 'ENCRYPTION_KEY must be a 64-character hex string (32 bytes)'),
   // Comma-separated allowed CORS origins
   CORS_ORIGINS: z.string().min(1, 'CORS_ORIGINS is required'),
+
+  // ─── Web Push (VAPID) ────────────────────────────────────────────────────
+  // Generated via: npx web-push generate-vapid-keys
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().optional(), // e.g. "mailto:admin@globalexpress.kr"
 })
 
 const parsed = envSchema.safeParse(process.env)

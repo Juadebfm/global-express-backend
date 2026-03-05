@@ -1,4 +1,4 @@
-import { eq, isNull, and, desc, sql } from 'drizzle-orm'
+import { eq, isNull, and, desc, sql, inArray } from 'drizzle-orm'
 import { db } from '../config/db'
 import { adminNotifications, users } from '../../drizzle/schema'
 import { decrypt } from '../utils/encryption'
@@ -6,6 +6,8 @@ import { sendAccountAlertEmail } from '../notifications/email'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import type { PaginationParams } from '../types'
 import { UserRole } from '../types/enums'
+import { connectedClients, broadcastToUser } from '../websocket/handlers'
+import { webPushService } from './web-push.service'
 
 export type AdminNotificationType =
   | 'new_customer'
@@ -13,6 +15,7 @@ export type AdminNotificationType =
   | 'payment_received'
   | 'payment_failed'
   | 'new_staff_account'
+  | 'staff_onboarding_complete'
 
 export interface NotifyInput {
   type: AdminNotificationType
@@ -36,22 +39,53 @@ export class AdminNotificationsService {
         metadata: input.metadata ?? null,
       })
 
-      // 2. Email all active superadmins
-      const superadmins = await db
-        .select({ email: users.email })
+      // 2. Broadcast via WebSocket to all connected admin+ users
+      const adminUsers = await db
+        .select({ id: users.id, email: users.email, role: users.role })
         .from(users)
         .where(
           and(
-            eq(users.role, UserRole.SUPERADMIN),
+            inArray(users.role, [UserRole.SUPERADMIN, UserRole.ADMIN]),
             eq(users.isActive, true),
             isNull(users.deletedAt),
           ),
         )
 
+      const wsPayload = {
+        type: 'notification',
+        data: {
+          type: input.type,
+          title: input.title,
+          body: input.body,
+          metadata: input.metadata ?? null,
+          createdAt: new Date().toISOString(),
+        },
+      }
+
+      for (const admin of adminUsers) {
+        if (connectedClients.has(admin.id)) {
+          broadcastToUser(admin.id, wsPayload)
+        }
+      }
+
+      // 3. Send browser push notifications to all admin+ users
+      webPushService.sendToAdmins({
+        title: input.title,
+        body: input.body,
+        type: input.type,
+        url: '/notifications',
+        metadata: input.metadata,
+      }).catch((err) => console.error('[WebPush] Failed:', err))
+
+      // 4. Email all active superadmins
+      const superadminEmails = adminUsers
+        .filter((u) => u.role === UserRole.SUPERADMIN)
+        .map((sa) => decrypt(sa.email))
+
       await Promise.allSettled(
-        superadmins.map((sa) =>
+        superadminEmails.map((email) =>
           sendAccountAlertEmail({
-            to: decrypt(sa.email),
+            to: email,
             subject: `[Global Express] ${input.title}`,
             message: input.body,
           }),

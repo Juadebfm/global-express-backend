@@ -6,6 +6,7 @@ export const adminNotificationTypeEnum = pgEnum('admin_notification_type', [
   'payment_received',
   'payment_failed',
   'new_staff_account',
+  'staff_onboarding_complete',
 ])
 
 export const adminNotifications = pgTable('admin_notifications', {

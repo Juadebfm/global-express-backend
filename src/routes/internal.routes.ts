@@ -12,6 +12,8 @@ import {
 } from '../middleware/requireRole'
 import { UserRole } from '../types/enums'
 import { sendWelcomeCredentialsEmail } from '../notifications/email'
+import { webPushService } from '../services/web-push.service'
+import { env } from '../config/env'
 import { eq } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
@@ -346,6 +348,17 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
         })
         .where(eq(users.id, request.user.id))
 
+      // Notify superadmin that the staff member is now fully onboarded and active
+      const profile = await usersService.getUserById(request.user.id)
+      if (profile) {
+        adminNotificationsService.notify({
+          type: 'staff_onboarding_complete',
+          title: 'Staff Onboarding Complete',
+          body: `${profile.firstName} ${profile.lastName} (${profile.role}) has completed onboarding and is now active.`,
+          metadata: { userId: request.user.id, role: profile.role, email: profile.email },
+        })
+      }
+
       return reply.send({ success: true, data: { message: 'Profile completed successfully' } })
     },
   })
@@ -569,6 +582,90 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
           createdAt: updated.createdAt.toISOString(),
         },
       })
+    },
+  })
+
+  // ─── Push Notifications ─────────────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/internal/push/vapid-key
+   * Returns the VAPID public key for the FE to subscribe to push.
+   */
+  app.get('/push/vapid-key', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Push Notifications'],
+      summary: 'Get VAPID public key',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({ vapidPublicKey: z.string().nullable() }),
+        }),
+      },
+    },
+    handler: async (_request, reply) => {
+      return reply.send({
+        success: true,
+        data: { vapidPublicKey: env.VAPID_PUBLIC_KEY ?? null },
+      })
+    },
+  })
+
+  /**
+   * POST /api/v1/internal/push/subscribe
+   * Register a push subscription for the authenticated user.
+   */
+  app.post('/push/subscribe', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Push Notifications'],
+      summary: 'Subscribe to push notifications',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        endpoint: z.string().url(),
+        keys: z.object({
+          p256dh: z.string().min(1),
+          auth: z.string().min(1),
+        }),
+        deviceLabel: z.string().optional(),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
+      },
+    },
+    handler: async (request, reply) => {
+      await webPushService.subscribe({
+        userId: request.user.id,
+        endpoint: request.body.endpoint,
+        keys: request.body.keys,
+        deviceLabel: request.body.deviceLabel,
+      })
+
+      return reply.send({ success: true, data: { message: 'Push subscription registered' } })
+    },
+  })
+
+  /**
+   * POST /api/v1/internal/push/unsubscribe
+   * Remove a push subscription.
+   */
+  app.post('/push/unsubscribe', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Push Notifications'],
+      summary: 'Unsubscribe from push notifications',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        endpoint: z.string().url(),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
+      },
+    },
+    handler: async (request, reply) => {
+      await webPushService.unsubscribe(request.user.id, request.body.endpoint)
+      return reply.send({ success: true, data: { message: 'Push subscription removed' } })
     },
   })
 }
