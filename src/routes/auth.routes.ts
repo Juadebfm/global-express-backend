@@ -17,6 +17,8 @@ const operatorSchema = z.object({
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   role: z.string(),
+  mustChangePassword: z.boolean(),
+  mustCompleteProfile: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -131,6 +133,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
+          mustChangePassword: user.mustChangePassword,
+          mustCompleteProfile: user.mustCompleteProfile,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
@@ -164,6 +168,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         firstName: user.firstName ?? null,
         lastName: user.lastName ?? null,
         role: user.role,
+        mustChangePassword: user.mustChangePassword,
+        mustCompleteProfile: user.mustCompleteProfile,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       })

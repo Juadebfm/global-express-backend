@@ -107,6 +107,34 @@ export async function sendAccountAlertEmail(params: {
   })
 }
 
+export async function sendWelcomeCredentialsEmail(params: {
+  to: string
+  firstName: string
+  role: string
+  temporaryPassword: string
+  loginUrl: string
+}): Promise<void> {
+  const { to, firstName, role, temporaryPassword, loginUrl } = params
+
+  await sendEmail({
+    to,
+    subject: 'Your Global Express Staff Account Has Been Created',
+    html: `
+      <h2>Welcome to Global Express!</h2>
+      <p>Hi ${firstName},</p>
+      <p>A <strong>${role}</strong> account has been created for you. Here are your login credentials:</p>
+      <table style="border-collapse: collapse; margin: 16px 0;">
+        <tr><td style="padding: 8px; font-weight: bold;">Email:</td><td style="padding: 8px;">${to}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Temporary Password:</td><td style="padding: 8px; font-family: monospace; font-size: 18px; letter-spacing: 2px;">${temporaryPassword}</td></tr>
+      </table>
+      <p><strong>You will be required to change your password on first login.</strong></p>
+      <p><a href="${loginUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px;">Log In Now</a></p>
+      <p style="color: #666; font-size: 13px;">If you did not expect this email, please contact your administrator.</p>
+    `,
+    text: `Welcome to Global Express!\n\nHi ${firstName},\nA ${role} account has been created for you.\n\nEmail: ${to}\nTemporary Password: ${temporaryPassword}\n\nYou will be required to change your password on first login.\n\nLog in at: ${loginUrl}`,
+  })
+}
+
 export async function sendPasswordResetOtpEmail(params: {
   to: string
   otp: string

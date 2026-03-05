@@ -2,6 +2,7 @@ import { pgTable, uuid, text, timestamp, pgEnum, boolean } from 'drizzle-orm/pg-
 
 export const userRoleEnum = pgEnum('user_role', ['superadmin', 'admin', 'staff', 'user'])
 export const preferredLanguageEnum = pgEnum('preferred_language', ['en', 'ko'])
+export const genderEnum = pgEnum('gender', ['male', 'female', 'other'])
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -28,6 +29,14 @@ export const users = pgTable('users', {
   // WhatsApp-enabled number — null means same as phone
   whatsappNumber: text('whatsapp_number'),
 
+  // ─── Staff profile (internal users only — collected on first login) ────────
+  gender: genderEnum('gender'),
+  dateOfBirth: text('date_of_birth'), // encrypted PII
+  emergencyContactName: text('emergency_contact_name'), // encrypted
+  emergencyContactPhone: text('emergency_contact_phone'), // encrypted
+  emergencyContactRelationship: text('emergency_contact_relationship'), // plain text
+  nationalId: text('national_id'), // encrypted — optional, toggled by superadmin
+
   // ─── Address (optional at signup; required before placing an order) ────────
   // Street is encrypted (house number + street name is sensitive PII)
   addressStreet: text('address_street'),
@@ -46,6 +55,11 @@ export const users = pgTable('users', {
   notifySmsAlerts: boolean('notify_sms_alerts').notNull().default(true),
   notifyInAppAlerts: boolean('notify_in_app_alerts').notNull().default(true),
   preferredLanguage: preferredLanguageEnum('preferred_language').notNull().default('en'),
+
+  // Internal users must change password on first login
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
+  // Internal users must complete profile after password change
+  mustCompleteProfile: boolean('must_complete_profile').notNull().default(false),
 
   // Soft delete — never hard delete user records
   deletedAt: timestamp('deleted_at'),

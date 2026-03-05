@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
-import { randomUUID } from 'crypto'
+import { randomUUID, randomBytes } from 'crypto'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
@@ -11,7 +11,7 @@ import { UserRole } from '../types/enums'
 
 export interface CreateInternalUserInput {
   email: string
-  password: string
+  password?: string
   role: UserRole.STAFF | UserRole.ADMIN | UserRole.SUPERADMIN
   firstName: string
   lastName: string
@@ -31,8 +31,16 @@ export class InternalAuthService {
    * Creates an internal user (staff / admin / superadmin).
    * No Clerk account — credentials are stored in our DB only.
    */
+  /**
+   * Generates a cryptographically random temporary password.
+   */
+  generateTempPassword(): string {
+    return randomBytes(6).toString('base64url') // 8-char URL-safe string
+  }
+
   async createInternalUser(input: CreateInternalUserInput) {
-    const passwordHash = await bcrypt.hash(input.password, 12)
+    const tempPassword = input.password ?? this.generateTempPassword()
+    const passwordHash = await bcrypt.hash(tempPassword, 12)
     const emailHash = hashEmail(input.email)
 
     const [user] = await db
@@ -46,10 +54,12 @@ export class InternalAuthService {
         lastName: encrypt(input.lastName),
         role: input.role,
         isActive: false,
+        mustChangePassword: true,
+        mustCompleteProfile: true,
       })
       .returning()
 
-    return this.decryptUser(user)
+    return { ...this.decryptUser(user), tempPassword }
   }
 
   /**
@@ -66,7 +76,10 @@ export class InternalAuthService {
       .limit(1)
 
     if (!user || !user.passwordHash) return null
-    if (!user.isActive) return null
+    // Allow login during onboarding (password change + profile completion)
+    // even though isActive is still false
+    const isOnboarding = user.mustChangePassword || user.mustCompleteProfile
+    if (!user.isActive && !isOnboarding) return null
 
     const valid = await bcrypt.compare(password, user.passwordHash)
     if (!valid) return null
@@ -105,7 +118,7 @@ export class InternalAuthService {
     const passwordHash = await bcrypt.hash(newPassword, 12)
     await db
       .update(users)
-      .set({ passwordHash, updatedAt: new Date() })
+      .set({ passwordHash, mustChangePassword: false, updatedAt: new Date() })
       .where(and(eq(users.id, userId), isNull(users.deletedAt)))
   }
 
@@ -118,6 +131,8 @@ export class InternalAuthService {
       lastName: user.lastName ? decrypt(user.lastName) : null,
       role: user.role,
       isActive: user.isActive,
+      mustChangePassword: user.mustChangePassword,
+      mustCompleteProfile: user.mustCompleteProfile,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
     }

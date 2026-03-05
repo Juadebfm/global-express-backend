@@ -11,6 +11,12 @@ import {
   requireStaffOrAbove,
 } from '../middleware/requireRole'
 import { UserRole } from '../types/enums'
+import { sendWelcomeCredentialsEmail } from '../notifications/email'
+import { eq } from 'drizzle-orm'
+import { db } from '../config/db'
+import { users } from '../../drizzle/schema'
+import { appSettings } from '../../drizzle/schema/app-settings'
+import { encrypt } from '../utils/encryption'
 
 const internalUserResponseSchema = z.object({
   id: z.string().uuid(),
@@ -20,6 +26,8 @@ const internalUserResponseSchema = z.object({
   lastName: z.string().nullable(),
   role: z.string(),
   isActive: z.boolean(),
+  mustChangePassword: z.boolean(),
+  mustCompleteProfile: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -92,7 +100,6 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       security: [{ bearerAuth: [] }],
       body: z.object({
         email: z.string().email(),
-        password: z.string().min(8, 'Password must be at least 8 characters'),
         role: z.enum([UserRole.STAFF, UserRole.ADMIN, UserRole.SUPERADMIN]),
         firstName: z.string().min(1),
         lastName: z.string().min(1),
@@ -118,13 +125,23 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       try {
-        const user = await internalAuthService.createInternalUser({
+        const result = await internalAuthService.createInternalUser({
           email: request.body.email,
-          password: request.body.password,
           role: request.body.role as UserRole.STAFF | UserRole.ADMIN | UserRole.SUPERADMIN,
           firstName: request.body.firstName,
           lastName: request.body.lastName,
         })
+
+        const { tempPassword, ...user } = result
+
+        // Fire-and-forget: send welcome email with temp credentials
+        sendWelcomeCredentialsEmail({
+          to: request.body.email,
+          firstName: request.body.firstName,
+          role: request.body.role,
+          temporaryPassword: tempPassword,
+          loginUrl: 'https://app.globalexpress.kr/login',
+        }).catch((err) => request.log.error(err, 'Failed to send welcome email'))
 
         // Fire-and-forget: notify superadmin of new internal account
         adminNotificationsService.notify({
@@ -221,6 +238,189 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       await internalAuthService.updatePassword(request.user.id, request.body.newPassword)
 
       return reply.send({ success: true, data: { message: 'Password updated successfully' } })
+    },
+  })
+
+  // ─── Staff Profile Completion ─────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/internal/me/profile-requirements
+   * Returns which fields are required for profile completion.
+   */
+  app.get('/me/profile-requirements', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Profile'],
+      summary: 'Get profile completion requirements',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            requireNationalId: z.boolean(),
+          }),
+        }),
+      },
+    },
+    handler: async (_request, reply) => {
+      const [setting] = await db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, 'require_national_id'))
+        .limit(1)
+
+      const requireNationalId = (setting?.value as { enabled?: boolean })?.enabled ?? false
+
+      return reply.send({ success: true, data: { requireNationalId } })
+    },
+  })
+
+  /**
+   * PATCH /api/v1/internal/me/profile
+   * Staff/admin completes their profile after first login.
+   */
+  app.patch('/me/profile', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Profile'],
+      summary: 'Complete staff profile',
+      description:
+        'Completes the mandatory profile for internal users. All fields except nationalId are required. nationalId is required only when the superadmin has enabled it via settings.',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        gender: z.enum(['male', 'female', 'other']),
+        dateOfBirth: z.string().min(1, 'Date of birth is required'),
+        phone: z.string().min(1, 'Phone number is required'),
+        addressStreet: z.string().min(1, 'Street address is required'),
+        addressCity: z.string().min(1, 'City is required'),
+        addressState: z.string().min(1, 'State is required'),
+        addressCountry: z.string().min(1, 'Country is required'),
+        addressPostalCode: z.string().min(1, 'Postal code is required'),
+        emergencyContactName: z.string().min(1, 'Emergency contact name is required'),
+        emergencyContactPhone: z.string().min(1, 'Emergency contact phone is required'),
+        emergencyContactRelationship: z.string().min(1, 'Emergency contact relationship is required'),
+        nationalId: z.string().optional(),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: async (request, reply) => {
+      const body = request.body
+
+      // Check if national ID is required
+      const [setting] = await db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, 'require_national_id'))
+        .limit(1)
+
+      const requireNationalId = (setting?.value as { enabled?: boolean })?.enabled ?? false
+
+      if (requireNationalId && !body.nationalId) {
+        return reply.code(400).send({
+          success: false,
+          message: 'National ID / Passport number is required',
+        })
+      }
+
+      await db
+        .update(users)
+        .set({
+          gender: body.gender,
+          dateOfBirth: encrypt(body.dateOfBirth),
+          phone: encrypt(body.phone),
+          addressStreet: encrypt(body.addressStreet),
+          addressCity: body.addressCity,
+          addressState: body.addressState,
+          addressCountry: body.addressCountry,
+          addressPostalCode: body.addressPostalCode,
+          emergencyContactName: encrypt(body.emergencyContactName),
+          emergencyContactPhone: encrypt(body.emergencyContactPhone),
+          emergencyContactRelationship: body.emergencyContactRelationship,
+          ...(body.nationalId ? { nationalId: encrypt(body.nationalId) } : {}),
+          mustCompleteProfile: false,
+          isActive: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, request.user.id))
+
+      return reply.send({ success: true, data: { message: 'Profile completed successfully' } })
+    },
+  })
+
+  // ─── Superadmin Settings ────────────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/internal/settings/require-national-id
+   * Get current state of the national ID requirement toggle.
+   */
+  app.get('/settings/require-national-id', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Internal — Settings'],
+      summary: 'Get national ID requirement setting',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({ enabled: z.boolean() }),
+        }),
+      },
+    },
+    handler: async (_request, reply) => {
+      const [setting] = await db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, 'require_national_id'))
+        .limit(1)
+
+      const enabled = (setting?.value as { enabled?: boolean })?.enabled ?? false
+      return reply.send({ success: true, data: { enabled } })
+    },
+  })
+
+  /**
+   * PATCH /api/v1/internal/settings/require-national-id
+   * Toggle the national ID requirement on or off.
+   */
+  app.patch('/settings/require-national-id', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Internal — Settings'],
+      summary: 'Toggle national ID requirement',
+      description: 'When enabled, staff must provide a national ID or passport number during profile completion.',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        enabled: z.boolean(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({ enabled: z.boolean(), message: z.string() }),
+        }),
+      },
+    },
+    handler: async (request, reply) => {
+      await db
+        .update(appSettings)
+        .set({
+          value: { enabled: request.body.enabled },
+          updatedBy: request.user.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(appSettings.key, 'require_national_id'))
+
+      return reply.send({
+        success: true,
+        data: {
+          enabled: request.body.enabled,
+          message: request.body.enabled
+            ? 'National ID is now required for staff profile completion'
+            : 'National ID is no longer required for staff profile completion',
+        },
+      })
     },
   })
 
