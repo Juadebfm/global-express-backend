@@ -33,6 +33,15 @@ import {
   TransportMode,
 } from '../types/enums'
 
+/** Compute ETA from departure date + shipment type transit days */
+function computeEta(departureDate: Date | null, shipmentType: string | null): string | null {
+  if (!departureDate) return null
+  const transitDays = shipmentType === 'ocean' ? 90 : 7 // air default = 7 days
+  const eta = new Date(departureDate)
+  eta.setDate(eta.getDate() + transitDays)
+  return eta.toISOString()
+}
+
 // Statuses that trigger customer-facing notifications
 const MILESTONE_STATUSES = new Set<ShipmentStatusV2>([
   ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED,
@@ -141,6 +150,7 @@ export interface WarehouseVerifyPackageInput {
 export interface VerifyOrderAtWarehouseInput {
   verifiedBy: string
   transportMode?: TransportMode
+  departureDate?: Date
   packages: WarehouseVerifyPackageInput[]
   manualFinalChargeUsd?: number
   manualAdjustmentReason?: string
@@ -509,6 +519,13 @@ export class OrdersService {
       : pricing.pricingSource
     const statusV2 = ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED
 
+    const eta = input.departureDate
+      ? new Date(
+          input.departureDate.getTime() +
+            (resolvedMode === TransportMode.SEA ? 90 : 7) * 24 * 60 * 60 * 1000,
+        )
+      : null
+
     await db.transaction(async (tx) => {
       await tx
         .update(orders)
@@ -522,6 +539,8 @@ export class OrdersService {
           finalChargeUsd: finalChargeUsd.toString(),
           pricingSource,
           priceAdjustmentReason: input.manualAdjustmentReason?.trim() ?? null,
+          ...(input.departureDate !== undefined && { departureDate: input.departureDate }),
+          ...(eta !== null && { eta }),
           updatedAt: new Date(),
         })
         .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
@@ -638,24 +657,30 @@ export class OrdersService {
         .orderBy(desc(bulkShipmentItems.createdAt)),
     ])
 
-    const normalizedSolo = soloOrders.map((o) => ({
-      type: 'solo' as const,
-      id: o.id,
-      trackingNumber: o.trackingNumber,
-      origin: o.origin,
-      destination: o.destination,
-      statusV2: o.statusV2,
-      orderDirection: o.orderDirection as string,
-      recipientName: decrypt(o.recipientName),
-      recipientAddress: decrypt(o.recipientAddress),
-      recipientPhone: decrypt(o.recipientPhone),
-      recipientEmail: o.recipientEmail ? decrypt(o.recipientEmail) : null,
-      weight: o.weight,
-      declaredValue: o.declaredValue,
-      description: o.description,
-      createdAt: o.createdAt.toISOString(),
-      updatedAt: o.updatedAt.toISOString(),
-    }))
+    const normalizedSolo = soloOrders.map((o) => {
+      const eta = computeEta(o.departureDate, o.shipmentType)
+      return {
+        type: 'solo' as const,
+        id: o.id,
+        trackingNumber: o.trackingNumber,
+        origin: o.origin,
+        destination: o.destination,
+        statusV2: o.statusV2,
+        orderDirection: o.orderDirection as string,
+        recipientName: decrypt(o.recipientName),
+        recipientAddress: decrypt(o.recipientAddress),
+        recipientPhone: decrypt(o.recipientPhone),
+        recipientEmail: o.recipientEmail ? decrypt(o.recipientEmail) : null,
+        weight: o.weight,
+        declaredValue: o.declaredValue,
+        description: o.description,
+        shipmentType: o.shipmentType,
+        departureDate: o.departureDate ? o.departureDate.toISOString() : null,
+        eta,
+        createdAt: o.createdAt.toISOString(),
+        updatedAt: o.updatedAt.toISOString(),
+      }
+    })
 
     const normalizedBulk = userBulkItems.map((item) => ({
       type: 'bulk_item' as const,
@@ -672,6 +697,9 @@ export class OrdersService {
       weight: item.weight,
       declaredValue: item.declaredValue,
       description: item.description,
+      shipmentType: null as string | null,
+      departureDate: null as string | null,
+      eta: null as string | null,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
     }))

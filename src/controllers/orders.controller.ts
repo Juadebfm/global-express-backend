@@ -78,7 +78,7 @@ export const ordersController = {
       Body: {
         senderId?: string
         recipientName: string
-        recipientAddress: string
+        recipientAddress?: string
         recipientPhone: string
         recipientEmail?: string
         orderDirection?: 'outbound' | 'inbound'
@@ -86,8 +86,6 @@ export const ordersController = {
         declaredValue?: string
         description?: string
         shipmentType?: 'air' | 'ocean'
-        departureDate?: string
-        eta?: string
         pickupRepName?: string
         pickupRepPhone?: string
       }
@@ -118,7 +116,7 @@ export const ordersController = {
     const order = await ordersService.createOrder({
       senderId,
       recipientName: request.body.recipientName,
-      recipientAddress: request.body.recipientAddress,
+      recipientAddress: '58B Awoniyi Elemo Street, Ajao Estate, Lagos, Nigeria',
       recipientPhone: request.body.recipientPhone,
       recipientEmail: request.body.recipientEmail,
       orderDirection: request.body.orderDirection,
@@ -126,8 +124,6 @@ export const ordersController = {
       declaredValue: request.body.declaredValue,
       description: request.body.description,
       shipmentType: request.body.shipmentType,
-      departureDate: request.body.departureDate ? new Date(request.body.departureDate) : undefined,
-      eta: request.body.eta ? new Date(request.body.eta) : undefined,
       // Customers creating for themselves are pre-ordering (item not yet at warehouse)
       isPreorder: userRole === UserRole.USER,
       createdBy: request.user.id,
@@ -302,6 +298,7 @@ export const ordersController = {
       Params: { id: string }
       Body: {
         transportMode?: TransportMode
+        departureDate?: string
         packages: Array<{
           description?: string
           itemType?: string
@@ -336,6 +333,7 @@ export const ordersController = {
       const updated = await ordersService.verifyOrderAtWarehouse(request.params.id, {
         verifiedBy: request.user.id,
         transportMode: request.body.transportMode,
+        departureDate: request.body.departureDate ? new Date(request.body.departureDate) : undefined,
         packages: request.body.packages,
         manualFinalChargeUsd: request.body.manualFinalChargeUsd,
         manualAdjustmentReason: request.body.manualAdjustmentReason,

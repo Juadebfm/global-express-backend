@@ -85,6 +85,11 @@ const warehouseVerifyBodySchema = z
       .positive()
       .optional()
       .describe('Optional manually adjusted final charge in USD'),
+    departureDate: z
+      .string()
+      .datetime()
+      .optional()
+      .describe('Scheduled departure date (ISO 8601) — used to compute customer ETA'),
     manualAdjustmentReason: z
       .string()
       .optional()
@@ -125,6 +130,9 @@ const myShipmentSchema = z.object({
   weight: z.string().nullable(),
   declaredValue: z.string().nullable(),
   description: z.string().nullable(),
+  shipmentType: z.string().nullable(),
+  departureDate: z.string().nullable(),
+  eta: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -243,7 +251,7 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
       body: z.object({
         senderId: z.string().uuid().optional().describe('Customer UUID — staff only, to create on behalf of a customer'),
         recipientName: z.string().min(1).describe('Full name of the recipient'),
-        recipientAddress: z.string().min(1).describe('Full delivery address for the recipient'),
+        recipientAddress: z.string().optional().describe('Delivery address — defaults to Global Express Lagos office (58B Awoniyi Elemo Street, Ajao Estate, Lagos)'),
         recipientPhone: z.string().min(1).describe('Recipient contact phone number'),
         recipientEmail: z.string().email().optional().describe('Recipient email (optional, for delivery notifications)'),
         orderDirection: z.nativeEnum(OrderDirection).optional().default(OrderDirection.OUTBOUND).describe('outbound = we ship TO customer; inbound = customer ships TO us'),
@@ -251,8 +259,6 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
         declaredValue: z.string().optional().describe('Declared monetary value in local currency (e.g. "15000")'),
         description: z.string().optional().describe('Package contents / description'),
         shipmentType: z.nativeEnum(ShipmentType).optional().describe('Transport mode: air | ocean'),
-        departureDate: z.string().datetime().optional().describe('Departure date (ISO 8601)'),
-        eta: z.string().datetime().optional().describe('Estimated delivery date (ISO 8601)'),
         pickupRepName: z.string().min(1).optional().describe('Pickup representative name (if someone else will collect)'),
         pickupRepPhone: z.string().min(1).optional().describe('Pickup representative phone number'),
       }),
