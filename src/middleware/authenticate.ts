@@ -76,7 +76,10 @@ export async function authenticate(
         return
       }
 
-      if (!user.isActive) {
+      // Allow onboarding users (password change / profile completion) through
+      // even though isActive is still false — matches validateCredentials logic
+      const isOnboarding = user.mustChangePassword || user.mustCompleteProfile
+      if (!user.isActive && !isOnboarding) {
         reply.code(403).send({ success: false, message: 'Forbidden — account is inactive' })
         return
       }
