@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { internalAuthService } from '../services/internal-auth.service'
 import { usersService } from '../services/users.service'
-import { adminNotificationsService } from '../services/admin-notifications.service'
+import { notificationsService } from '../services/notifications.service'
 import { authenticate } from '../middleware/authenticate'
 import {
   requireSuperAdmin,
@@ -146,7 +146,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
         }).catch((err) => request.log.error(err, 'Failed to send welcome email'))
 
         // Fire-and-forget: notify superadmin of new internal account
-        adminNotificationsService.notify({
+        notificationsService.notifyRole({
+          targetRole: UserRole.ADMIN,
           type: 'new_staff_account',
           title: 'New Staff Account Created',
           body: `A new ${request.body.role} account was created: ${request.body.firstName} ${request.body.lastName}`,
@@ -351,7 +352,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       // Notify superadmin that the staff member is now fully onboarded and active
       const profile = await usersService.getUserById(request.user.id)
       if (profile) {
-        adminNotificationsService.notify({
+        notificationsService.notifyRole({
+          targetRole: UserRole.ADMIN,
           type: 'staff_onboarding_complete',
           title: 'Staff Onboarding Complete',
           body: `${profile.firstName} ${profile.lastName} (${profile.role}) has completed onboarding and is now active.`,
@@ -437,149 +439,96 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     },
   })
 
-  // ─── Admin Notifications ──────────────────────────────────────────────────
+  // ─── Special Packaging Surcharges ─────────────────────────────────────────
 
-  const notificationSchema = z.object({
-    id: z.string().uuid(),
-    type: z.string(),
-    title: z.string(),
-    body: z.string(),
-    metadata: z.record(z.string(), z.unknown()).nullable(),
-    readAt: z.string().nullable(),
-    createdAt: z.string(),
+  const surchargeTypeSchema = z.object({
+    key: z.string().min(1).describe('Unique key (e.g. "liquid", "fragile")'),
+    name: z.string().min(1).describe('Display name (e.g. "Liquid Packaging")'),
+    surchargeUsd: z.number().min(0).describe('Surcharge per package in USD'),
   })
 
   /**
-   * GET /api/v1/internal/notifications
-   * List admin notifications (admin+). Supports ?unreadOnly=true.
+   * GET /api/v1/internal/settings/special-packaging
+   * List all special packaging surcharge types. Staff+ can read (to populate dropdowns).
    */
-  app.get('/notifications', {
-    preHandler: [authenticate, requireAdminOrAbove],
+  app.get('/settings/special-packaging', {
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
-      tags: ['Internal — Notifications'],
-      summary: 'List admin notifications',
+      tags: ['Internal — Settings'],
+      summary: 'Get special packaging surcharge types',
+      description: 'Returns configured special packaging types with their per-package surcharge in USD. Staff+ can read for warehouse verification forms.',
       security: [{ bearerAuth: [] }],
-      querystring: z.object({
-        page: z.coerce.number().int().positive().default(1),
-        limit: z.coerce.number().int().positive().max(100).default(20),
-        unreadOnly: z
-          .string()
-          .optional()
-          .transform((v) => v === 'true'),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({ types: z.array(surchargeTypeSchema) }),
+        }),
+      },
+    },
+    handler: async (_request, reply) => {
+      const [setting] = await db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, 'special_packaging_surcharges'))
+        .limit(1)
+
+      const types = (setting?.value as { types?: { key: string; name: string; surchargeUsd: number }[] })?.types ?? []
+      return reply.send({ success: true, data: { types } })
+    },
+  })
+
+  /**
+   * PUT /api/v1/internal/settings/special-packaging
+   * Replace all special packaging surcharge types. Superadmin only.
+   */
+  app.put('/settings/special-packaging', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Internal — Settings'],
+      summary: 'Set special packaging surcharge types (superadmin)',
+      description: 'Replaces the full list of special packaging types. Each type has a key, display name, and per-package USD surcharge.',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        types: z.array(surchargeTypeSchema).min(0).max(50),
       }),
       response: {
         200: z.object({
           success: z.literal(true),
-          data: z.object({
-            data: z.array(notificationSchema),
-            pagination: z.object({
-              page: z.number(),
-              limit: z.number(),
-              total: z.number(),
-              totalPages: z.number(),
-            }),
-          }),
+          data: z.object({ types: z.array(surchargeTypeSchema), message: z.string() }),
         }),
       },
     },
     handler: async (request, reply) => {
-      const result = await adminNotificationsService.listNotifications({
-        page: request.query.page,
-        limit: request.query.limit,
-        unreadOnly: request.query.unreadOnly,
-      })
-      return reply.send({
-        success: true,
-        data: {
-          data: result.data.map((n) => ({
-            ...n,
-            readAt: n.readAt?.toISOString() ?? null,
-            createdAt: n.createdAt.toISOString(),
-          })),
-          pagination: result.pagination,
-        },
-      })
-    },
-  })
+      // Upsert the setting
+      const existing = await db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, 'special_packaging_surcharges'))
+        .limit(1)
 
-  /**
-   * GET /api/v1/internal/notifications/unread-count
-   * Returns unread notification count for badge display.
-   */
-  app.get('/notifications/unread-count', {
-    preHandler: [authenticate, requireAdminOrAbove],
-    schema: {
-      tags: ['Internal — Notifications'],
-      summary: 'Get unread notification count',
-      security: [{ bearerAuth: [] }],
-      response: {
-        200: z.object({
-          success: z.literal(true),
-          data: z.object({ count: z.number() }),
-        }),
-      },
-    },
-    handler: async (_request, reply) => {
-      const count = await adminNotificationsService.getUnreadCount()
-      return reply.send({ success: true, data: { count } })
-    },
-  })
-
-  /**
-   * PATCH /api/v1/internal/notifications/read-all
-   * Mark all notifications as read.
-   */
-  app.patch('/notifications/read-all', {
-    preHandler: [authenticate, requireAdminOrAbove],
-    schema: {
-      tags: ['Internal — Notifications'],
-      summary: 'Mark all notifications as read',
-      security: [{ bearerAuth: [] }],
-      response: {
-        200: z.object({
-          success: z.literal(true),
-          data: z.object({ message: z.string() }),
-        }),
-      },
-    },
-    handler: async (_request, reply) => {
-      await adminNotificationsService.markAllAsRead()
-      return reply.send({ success: true, data: { message: 'All notifications marked as read' } })
-    },
-  })
-
-  /**
-   * PATCH /api/v1/internal/notifications/:id/read
-   * Mark a single notification as read.
-   */
-  app.patch('/notifications/:id/read', {
-    preHandler: [authenticate, requireAdminOrAbove],
-    schema: {
-      tags: ['Internal — Notifications'],
-      summary: 'Mark a notification as read',
-      security: [{ bearerAuth: [] }],
-      params: z.object({ id: z.string().uuid() }),
-      response: {
-        200: z.object({ success: z.literal(true), data: notificationSchema }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
-      },
-    },
-    handler: async (request, reply) => {
-      const updated = await adminNotificationsService.markAsRead(request.params.id)
-
-      if (!updated) {
-        return reply.code(404).send({
-          success: false,
-          message: 'Notification not found or already read',
+      if (existing.length === 0) {
+        await db.insert(appSettings).values({
+          key: 'special_packaging_surcharges',
+          value: { types: request.body.types },
+          description: 'Special packaging surcharge types for warehouse verification',
+          updatedBy: request.user.id,
         })
+      } else {
+        await db
+          .update(appSettings)
+          .set({
+            value: { types: request.body.types },
+            updatedBy: request.user.id,
+            updatedAt: new Date(),
+          })
+          .where(eq(appSettings.key, 'special_packaging_surcharges'))
       }
 
       return reply.send({
         success: true,
         data: {
-          ...updated,
-          readAt: updated.readAt?.toISOString() ?? null,
-          createdAt: updated.createdAt.toISOString(),
+          types: request.body.types,
+          message: `Updated ${request.body.types.length} special packaging surcharge type(s)`,
         },
       })
     },

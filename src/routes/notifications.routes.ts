@@ -9,7 +9,18 @@ const notificationSchema = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid().nullable(),
   orderId: z.string().uuid().nullable(),
-  type: z.enum(['order_status_update', 'payment_event', 'system_announcement', 'admin_alert']),
+  type: z.enum([
+    'order_status_update',
+    'payment_event',
+    'system_announcement',
+    'admin_alert',
+    'new_customer',
+    'new_order',
+    'payment_received',
+    'payment_failed',
+    'new_staff_account',
+    'staff_onboarding_complete',
+  ]),
   title: z.string(),
   subtitle: z.string().nullable(),
   body: z.string(),
@@ -34,17 +45,19 @@ const paginatedNotificationsSchema = z.object({
 export async function notificationsRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
-  // GET /notifications — user inbox (personal + broadcasts)
+  // GET /notifications — role-aware inbox
   app.get('/', {
     preHandler: [authenticate],
     schema: {
       tags: ['Notifications'],
-      summary: 'Get notification inbox (personal + broadcasts)',
-      description: `Returns paginated notifications for the authenticated user.
+      summary: 'Get notification inbox (role-aware)',
+      description: `Returns paginated notifications for the authenticated user, filtered by role.
 
-Includes:
-- **Personal notifications**: order status updates, payment events, admin alerts addressed to this user.
-- **Broadcast notifications**: system-wide announcements visible to all users.
+**Visibility rules:**
+- **Customers (user)**: personal notifications + system broadcasts
+- **Staff**: personal + broadcasts + staff-targeted notifications
+- **Admin**: personal + broadcasts + staff + admin-targeted notifications
+- **Superadmin**: all notifications
 
 **isRead / isSaved** reflect this user's state for each notification.`,
       security: [{ bearerAuth: [] }],
@@ -90,6 +103,22 @@ Includes:
       },
     },
     handler: notificationsController.markRead,
+  })
+
+  // PATCH /notifications/read-all — mark all notifications as read
+  app.patch('/read-all', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Notifications'],
+      summary: 'Mark all notifications as read',
+      description: 'Marks all visible notifications as read for the authenticated user.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: notificationsController.markAllRead,
   })
 
   // PATCH /notifications/:id/save — toggle saved state

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(fly logs --app your-app-name-snowy-waterfall-9062 --no-tail)",
+      "Bash(fly deploy --app your-app-name-snowy-waterfall-9062)",
+      "Bash(psql \"$DATABASE_URL\" -f drizzle/migrations/2026-03-07_add_special_packaging_surcharge.sql)"
+    ]
+  }
+}

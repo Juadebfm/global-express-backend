@@ -30,7 +30,8 @@ const orderResponseSchema = z.object({
   priceCalculatedAt: z.string().nullable().describe('Timestamp when warehouse verification calculated price'),
   priceCalculatedBy: z.string().uuid().nullable().describe('User who calculated/verified warehouse pricing'),
   calculatedChargeUsd: z.string().nullable().describe('Auto-calculated freight amount in USD'),
-  finalChargeUsd: z.string().nullable().describe('Final charge shown to customer in USD'),
+  specialPackagingSurchargeUsd: z.string().nullable().describe('Total special packaging surcharge in USD'),
+  finalChargeUsd: z.string().nullable().describe('Final charge shown to customer in USD (freight + surcharges)'),
   pricingSource: z.string().nullable().describe('Pricing source used for final charge'),
   priceAdjustmentReason: z.string().nullable().describe('Reason for manual adjustment when applied'),
   paymentCollectionStatus: z
@@ -55,6 +56,7 @@ const warehouseVerifyPackageSchema = z
     heightCm: z.number().positive().optional().describe('Height in centimeters'),
     weightKg: z.number().positive().optional().describe('Actual weight in kilograms'),
     cbm: z.number().positive().optional().describe('Volume in cubic meters (exact, no rounding)'),
+    specialPackagingType: z.string().optional().describe('Special packaging type key (e.g. "liquid", "fragile") — must match a type configured in app settings'),
     isRestricted: z.boolean().optional().describe('Whether package contains a restricted item'),
     restrictedReason: z.string().optional().describe('Restricted item reason'),
     restrictedOverrideApproved: z.boolean().optional().describe('Admin override approval flag'),

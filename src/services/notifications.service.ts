@@ -1,16 +1,29 @@
 import { eq, and, or, desc, sql, isNull, inArray } from 'drizzle-orm'
 import { db } from '../config/db'
-import { notifications, notificationReads } from '../../drizzle/schema'
-import { broadcastToUser, broadcastToAll } from '../websocket/handlers'
+import { notifications, notificationReads, users } from '../../drizzle/schema'
+import { broadcastToUser, broadcastToAll, connectedClients } from '../websocket/handlers'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import type { PaginationParams } from '../types'
+import { UserRole } from '../types/enums'
+import { decrypt } from '../utils/encryption'
+import { sendAccountAlertEmail } from '../notifications/email'
+import { webPushService } from './web-push.service'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type NotificationType =
   | 'order_status_update'
   | 'payment_event'
   | 'system_announcement'
   | 'admin_alert'
+  | 'new_customer'
+  | 'new_order'
+  | 'payment_received'
+  | 'payment_failed'
+  | 'new_staff_account'
+  | 'staff_onboarding_complete'
 
+/** Input for creating a notification targeted at a specific user. */
 export interface CreateNotificationInput {
   userId: string
   orderId?: string
@@ -22,6 +35,7 @@ export interface CreateNotificationInput {
   createdBy?: string
 }
 
+/** Input for creating a system-wide broadcast (visible to all roles). */
 export interface CreateBroadcastInput {
   type: NotificationType
   title: string
@@ -31,10 +45,38 @@ export interface CreateBroadcastInput {
   createdBy: string
 }
 
+/** Input for creating a role-targeted notification (e.g. admin feed). */
+export interface CreateRoleNotificationInput {
+  targetRole: UserRole
+  type: NotificationType
+  title: string
+  subtitle?: string
+  body: string
+  metadata?: Record<string, unknown>
+  createdBy?: string
+}
+
+// ─── Role hierarchy helper ────────────────────────────────────────────────────
+
+const ROLE_HIERARCHY: UserRole[] = [
+  UserRole.USER,
+  UserRole.STAFF,
+  UserRole.ADMIN,
+  UserRole.SUPERADMIN,
+]
+
+/** Returns all targetRole values this user's role can see. */
+function getVisibleTargetRoles(userRole: UserRole): UserRole[] {
+  const level = ROLE_HIERARCHY.indexOf(userRole)
+  if (level < 0) return []
+  return ROLE_HIERARCHY.slice(0, level + 1)
+}
+
+// ─── Service ──────────────────────────────────────────────────────────────────
+
 export class NotificationsService {
   /**
    * Creates a notification for a specific user and pushes it via WebSocket.
-   * Called fire-and-forget in most cases — errors are caught and logged.
    */
   async create(input: CreateNotificationInput) {
     const [notification] = await db
@@ -54,7 +96,6 @@ export class NotificationsService {
       })
       .returning()
 
-    // Push real-time to user if connected
     broadcastToUser(input.userId, {
       type: 'notification:new',
       data: this.formatForUser(notification, false, false),
@@ -65,7 +106,6 @@ export class NotificationsService {
 
   /**
    * Creates a system-wide broadcast notification and pushes it to all connected clients.
-   * Only admin/superadmin can call this.
    */
   async createBroadcast(input: CreateBroadcastInput) {
     const [notification] = await db
@@ -85,7 +125,6 @@ export class NotificationsService {
       })
       .returning()
 
-    // Push to all connected WebSocket clients
     broadcastToAll({
       type: 'notification:broadcast',
       data: this.formatForUser(notification, false, false),
@@ -95,13 +134,101 @@ export class NotificationsService {
   }
 
   /**
-   * Returns paginated notifications for a user: personal notifications + all broadcasts.
-   * For broadcasts, isRead/isSaved state is read from notification_reads.
+   * Creates a role-targeted notification visible to users with the given role or above.
+   * Also sends email alerts to superadmins and browser push to matching roles.
+   * Called fire-and-forget — errors are logged but never thrown to the caller.
    */
-  async listForUser(userId: string, params: PaginationParams) {
-    const offset = getPaginationOffset(params.page, params.limit)
+  async notifyRole(input: CreateRoleNotificationInput): Promise<void> {
+    try {
+      const [notification] = await db
+        .insert(notifications)
+        .values({
+          userId: null,
+          orderId: null,
+          type: input.type,
+          title: input.title,
+          subtitle: input.subtitle ?? null,
+          body: input.body,
+          metadata: input.metadata ?? null,
+          isBroadcast: false,
+          targetRole: input.targetRole,
+          isRead: false,
+          isSaved: false,
+          createdBy: input.createdBy ?? null,
+        })
+        .returning()
 
-    // Count total (personal + broadcasts that the user hasn't deleted)
+      // Push via WebSocket to all connected users at or above the target role
+      const visibleRoles = ROLE_HIERARCHY.slice(ROLE_HIERARCHY.indexOf(input.targetRole))
+      const matchingUsers = await db
+        .select({ id: users.id, email: users.email, role: users.role })
+        .from(users)
+        .where(
+          and(
+            inArray(users.role, visibleRoles),
+            eq(users.isActive, true),
+            isNull(users.deletedAt),
+          ),
+        )
+
+      const wsPayload = {
+        type: 'notification:new',
+        data: this.formatForUser(notification, false, false),
+      }
+
+      for (const user of matchingUsers) {
+        if (connectedClients.has(user.id)) {
+          broadcastToUser(user.id, wsPayload)
+        }
+      }
+
+      // Browser push to matching roles
+      webPushService
+        .sendToAdmins({
+          title: input.title,
+          body: input.body,
+          type: input.type,
+          url: '/notifications',
+          metadata: input.metadata,
+        })
+        .catch((err) => console.error('[WebPush] Failed:', err))
+
+      // Email all active superadmins
+      const superadminEmails = matchingUsers
+        .filter((u) => u.role === UserRole.SUPERADMIN)
+        .map((sa) => decrypt(sa.email))
+
+      await Promise.allSettled(
+        superadminEmails.map((email) =>
+          sendAccountAlertEmail({
+            to: email,
+            subject: `[Global Express] ${input.title}`,
+            message: input.body,
+          }),
+        ),
+      )
+    } catch (err) {
+      console.error('[Notifications] Failed to send role notification:', err)
+    }
+  }
+
+  /**
+   * Returns paginated notifications for a user based on their role.
+   *
+   * Visibility rules:
+   *   - Personal notifications (userId = this user)
+   *   - Broadcasts (isBroadcast = true)
+   *   - Role-targeted (targetRole in visible roles for the user's role)
+   *
+   * Per-user read/saved/deleted state for shared notifications (broadcasts + role-targeted)
+   * is tracked in notification_reads.
+   */
+  async listForUser(userId: string, userRole: UserRole, params: PaginationParams) {
+    const offset = getPaginationOffset(params.page, params.limit)
+    const visibleRoles = getVisibleTargetRoles(userRole)
+
+    const visibilityFilter = this.buildVisibilityFilter(userId, visibleRoles)
+
     const [countResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(notifications)
@@ -114,14 +241,13 @@ export class NotificationsService {
       )
       .where(
         and(
-          sql`(${notifications.userId} = ${userId} OR ${notifications.isBroadcast} = true)`,
+          visibilityFilter,
           or(isNull(notificationReads.isDeleted), eq(notificationReads.isDeleted, false)),
         ),
       )
 
     const total = countResult?.count ?? 0
 
-    // Fetch paginated rows, joining notification_reads for broadcast state
     const rows = await db
       .select({
         id: notifications.id,
@@ -133,12 +259,11 @@ export class NotificationsService {
         body: notifications.body,
         metadata: notifications.metadata,
         isBroadcast: notifications.isBroadcast,
-        // For personal: use column values. For broadcasts: use notification_reads row.
+        targetRole: notifications.targetRole,
         isRead: notifications.isRead,
         isSaved: notifications.isSaved,
         createdBy: notifications.createdBy,
         createdAt: notifications.createdAt,
-        // Broadcast-specific read state for THIS user
         readReadAt: notificationReads.readAt,
         readIsSaved: notificationReads.isSaved,
       })
@@ -152,7 +277,7 @@ export class NotificationsService {
       )
       .where(
         and(
-          sql`(${notifications.userId} = ${userId} OR ${notifications.isBroadcast} = true)`,
+          visibilityFilter,
           or(isNull(notificationReads.isDeleted), eq(notificationReads.isDeleted, false)),
         ),
       )
@@ -161,7 +286,8 @@ export class NotificationsService {
       .offset(offset)
 
     const data = rows.map((row) => {
-      if (row.isBroadcast) {
+      // Shared notifications (broadcast or role-targeted) use notification_reads for per-user state
+      if (row.isBroadcast || row.targetRole) {
         return this.formatForUser(row, !!row.readReadAt, row.readIsSaved ?? false)
       }
       return this.formatForUser(row, row.isRead, row.isSaved)
@@ -172,20 +298,23 @@ export class NotificationsService {
 
   /**
    * Marks a notification as read for a user.
-   * Personal: updates isRead on the notification row.
-   * Broadcast: upserts a notification_reads row.
+   * Personal: updates isRead on the row. Shared: upserts notification_reads.
    */
   async markRead(notificationId: string, userId: string): Promise<boolean> {
     const [notification] = await db
-      .select({ id: notifications.id, userId: notifications.userId, isBroadcast: notifications.isBroadcast })
+      .select({
+        id: notifications.id,
+        userId: notifications.userId,
+        isBroadcast: notifications.isBroadcast,
+        targetRole: notifications.targetRole,
+      })
       .from(notifications)
       .where(eq(notifications.id, notificationId))
       .limit(1)
 
     if (!notification) return false
 
-    if (notification.isBroadcast) {
-      // Upsert into notification_reads
+    if (notification.isBroadcast || notification.targetRole) {
       await db
         .insert(notificationReads)
         .values({ notificationId, userId, readAt: new Date() })
@@ -194,7 +323,6 @@ export class NotificationsService {
           set: { readAt: new Date() },
         })
     } else {
-      // Must be the owner
       if (notification.userId !== userId) return false
       await db
         .update(notifications)
@@ -206,21 +334,75 @@ export class NotificationsService {
   }
 
   /**
+   * Marks all notifications as read for a user (personal + shared).
+   */
+  async markAllRead(userId: string, userRole: UserRole): Promise<void> {
+    const visibleRoles = getVisibleTargetRoles(userRole)
+
+    // Mark personal notifications as read
+    await db
+      .update(notifications)
+      .set({ isRead: true })
+      .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)))
+
+    // Find unread shared notifications (broadcasts + role-targeted) that this user can see
+    const sharedUnread = await db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .leftJoin(
+        notificationReads,
+        and(
+          eq(notificationReads.notificationId, notifications.id),
+          eq(notificationReads.userId, userId),
+        ),
+      )
+      .where(
+        and(
+          or(
+            eq(notifications.isBroadcast, true),
+            visibleRoles.length > 0
+              ? inArray(notifications.targetRole, visibleRoles)
+              : sql`false`,
+          ),
+          isNull(notificationReads.readAt),
+          or(isNull(notificationReads.isDeleted), eq(notificationReads.isDeleted, false)),
+        ),
+      )
+
+    if (sharedUnread.length > 0) {
+      await Promise.all(
+        sharedUnread.map((n) =>
+          db
+            .insert(notificationReads)
+            .values({ notificationId: n.id, userId, readAt: new Date() })
+            .onConflictDoUpdate({
+              target: [notificationReads.notificationId, notificationReads.userId],
+              set: { readAt: new Date() },
+            }),
+        ),
+      )
+    }
+  }
+
+  /**
    * Toggles saved state for a notification.
-   * Personal: flips isSaved on the notification row.
-   * Broadcast: upserts a notification_reads row with toggled isSaved.
    */
   async toggleSaved(notificationId: string, userId: string): Promise<boolean> {
     const [notification] = await db
-      .select({ id: notifications.id, userId: notifications.userId, isBroadcast: notifications.isBroadcast, isSaved: notifications.isSaved })
+      .select({
+        id: notifications.id,
+        userId: notifications.userId,
+        isBroadcast: notifications.isBroadcast,
+        targetRole: notifications.targetRole,
+        isSaved: notifications.isSaved,
+      })
       .from(notifications)
       .where(eq(notifications.id, notificationId))
       .limit(1)
 
     if (!notification) return false
 
-    if (notification.isBroadcast) {
-      // Upsert — toggle isSaved
+    if (notification.isBroadcast || notification.targetRole) {
       const [existing] = await db
         .select({ isSaved: notificationReads.isSaved })
         .from(notificationReads)
@@ -252,17 +434,26 @@ export class NotificationsService {
   }
 
   /**
-   * Returns the unread notification count for a user (personal + broadcasts not yet read).
+   * Returns the unread notification count for a user.
    */
-  async getUnreadCount(userId: string): Promise<number> {
+  async getUnreadCount(userId: string, userRole: UserRole): Promise<number> {
+    const visibleRoles = getVisibleTargetRoles(userRole)
+
     // Personal unread
     const [personal] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(notifications)
       .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)))
 
-    // Unread broadcasts (no notification_reads row, or readAt is null)
-    const [broadcasts] = await db
+    // Unread shared (broadcasts + role-targeted)
+    const sharedFilter = or(
+      eq(notifications.isBroadcast, true),
+      visibleRoles.length > 0
+        ? inArray(notifications.targetRole, visibleRoles)
+        : sql`false`,
+    )
+
+    const [shared] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(notifications)
       .leftJoin(
@@ -274,30 +465,34 @@ export class NotificationsService {
       )
       .where(
         and(
-          eq(notifications.isBroadcast, true),
+          sharedFilter,
           isNull(notificationReads.readAt),
           or(isNull(notificationReads.isDeleted), eq(notificationReads.isDeleted, false)),
         ),
       )
 
-    return (personal?.count ?? 0) + (broadcasts?.count ?? 0)
+    return (personal?.count ?? 0) + (shared?.count ?? 0)
   }
 
   /**
    * Deletes a single notification for a user.
-   * Personal notifications are hard-deleted (must be the owner).
-   * Broadcasts are soft-deleted per-user via notification_reads.isDeleted.
+   * Personal: hard-delete (must be owner). Shared: soft-delete via notification_reads.
    */
   async deleteNotification(notificationId: string, userId: string): Promise<boolean> {
     const [notification] = await db
-      .select({ id: notifications.id, userId: notifications.userId, isBroadcast: notifications.isBroadcast })
+      .select({
+        id: notifications.id,
+        userId: notifications.userId,
+        isBroadcast: notifications.isBroadcast,
+        targetRole: notifications.targetRole,
+      })
       .from(notifications)
       .where(eq(notifications.id, notificationId))
       .limit(1)
 
     if (!notification) return false
 
-    if (notification.isBroadcast) {
+    if (notification.isBroadcast || notification.targetRole) {
       await db
         .insert(notificationReads)
         .values({ notificationId, userId, isDeleted: true })
@@ -314,19 +509,25 @@ export class NotificationsService {
   }
 
   /**
-   * Deletes multiple notifications for a user. Returns count of successfully deleted items.
+   * Deletes multiple notifications for a user. Returns count processed.
    */
   async bulkDeleteNotifications(notificationIds: string[], userId: string): Promise<number> {
-    // Fetch all target notifications in one query
     const rows = await db
-      .select({ id: notifications.id, userId: notifications.userId, isBroadcast: notifications.isBroadcast })
+      .select({
+        id: notifications.id,
+        userId: notifications.userId,
+        isBroadcast: notifications.isBroadcast,
+        targetRole: notifications.targetRole,
+      })
       .from(notifications)
       .where(inArray(notifications.id, notificationIds))
 
     const personalIds = rows
-      .filter((n) => !n.isBroadcast && n.userId === userId)
+      .filter((n) => !n.isBroadcast && !n.targetRole && n.userId === userId)
       .map((n) => n.id)
-    const broadcastIds = rows.filter((n) => n.isBroadcast).map((n) => n.id)
+    const sharedIds = rows
+      .filter((n) => n.isBroadcast || n.targetRole)
+      .map((n) => n.id)
 
     const ops: Promise<unknown>[] = []
 
@@ -334,10 +535,9 @@ export class NotificationsService {
       ops.push(db.delete(notifications).where(inArray(notifications.id, personalIds)))
     }
 
-    if (broadcastIds.length > 0) {
-      // Upsert isDeleted=true for each broadcast (one per user-notification pair)
+    if (sharedIds.length > 0) {
       ops.push(
-        ...broadcastIds.map((notificationId) =>
+        ...sharedIds.map((notificationId) =>
           db
             .insert(notificationReads)
             .values({ notificationId, userId, isDeleted: true })
@@ -350,7 +550,27 @@ export class NotificationsService {
     }
 
     await Promise.all(ops)
-    return personalIds.length + broadcastIds.length
+    return personalIds.length + sharedIds.length
+  }
+
+  // ─── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Builds the WHERE clause for notification visibility.
+   * A user sees: personal (userId=me) OR broadcast OR role-targeted (if role matches).
+   */
+  private buildVisibilityFilter(userId: string, visibleRoles: UserRole[]) {
+    const conditions = [
+      sql`${notifications.userId} = ${userId}`,
+      sql`${notifications.isBroadcast} = true`,
+    ]
+
+    if (visibleRoles.length > 0) {
+      const roleList = visibleRoles.map((r) => `'${r}'`).join(', ')
+      conditions.push(sql.raw(`${notifications.targetRole.name} IN (${roleList})`))
+    }
+
+    return sql`(${sql.join(conditions, sql` OR `)})`
   }
 
   private formatForUser(

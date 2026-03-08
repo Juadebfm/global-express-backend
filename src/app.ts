@@ -124,6 +124,21 @@ export async function buildApp() {
     return payload
   })
 
+  // ─── Handle empty JSON bodies ────────────────────────────────────────────
+  // Fastify rejects empty bodies with Content-Type: application/json by default.
+  // Many FE frameworks send this header even on PATCH/DELETE with no body.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    if (typeof body === 'string' && body.trim().length === 0) {
+      done(null, undefined)
+    } else {
+      try {
+        done(null, JSON.parse(body as string))
+      } catch (err) {
+        done(err as Error, undefined)
+      }
+    }
+  })
+
   // ─── Centralized error handler ────────────────────────────────────────────
   app.setErrorHandler(errorHandler)
 

@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { notificationsService } from '../services/notifications.service'
 import { successResponse } from '../utils/response'
 import type { NotificationType } from '../services/notifications.service'
+import type { UserRole } from '../types/enums'
 
 export const notificationsController = {
   async list(
@@ -10,16 +11,28 @@ export const notificationsController = {
     }>,
     reply: FastifyReply,
   ) {
-    const result = await notificationsService.listForUser(request.user.id, {
-      page: Number(request.query.page) || 1,
-      limit: Number(request.query.limit) || 20,
-    })
+    const result = await notificationsService.listForUser(
+      request.user.id,
+      request.user.role as UserRole,
+      {
+        page: Number(request.query.page) || 1,
+        limit: Number(request.query.limit) || 20,
+      },
+    )
     return reply.send(successResponse(result))
   },
 
   async unreadCount(request: FastifyRequest, reply: FastifyReply) {
-    const count = await notificationsService.getUnreadCount(request.user.id)
+    const count = await notificationsService.getUnreadCount(
+      request.user.id,
+      request.user.role as UserRole,
+    )
     return reply.send(successResponse({ count }))
+  },
+
+  async markAllRead(request: FastifyRequest, reply: FastifyReply) {
+    await notificationsService.markAllRead(request.user.id, request.user.role as UserRole)
+    return reply.send(successResponse({ message: 'All notifications marked as read' }))
   },
 
   async markRead(

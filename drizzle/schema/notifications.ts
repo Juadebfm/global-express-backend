@@ -9,7 +9,7 @@ import {
   index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
-import { users } from './users'
+import { users, userRoleEnum } from './users'
 import { orders } from './orders'
 
 export const notificationTypeEnum = pgEnum('notification_type', [
@@ -17,13 +17,20 @@ export const notificationTypeEnum = pgEnum('notification_type', [
   'payment_event',
   'system_announcement',
   'admin_alert',
+  // Admin / internal notification types (formerly in admin_notifications table)
+  'new_customer',
+  'new_order',
+  'payment_received',
+  'payment_failed',
+  'new_staff_account',
+  'staff_onboarding_complete',
 ])
 
 export const notifications = pgTable(
   'notifications',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    // null = broadcast to all users (isBroadcast must be true)
+    // null = broadcast/role-targeted notification
     userId: uuid('user_id').references(() => users.id),
     // linked order — set for order_status_update and payment_event types
     orderId: uuid('order_id').references(() => orders.id),
@@ -32,10 +39,14 @@ export const notifications = pgTable(
     subtitle: text('subtitle'),
     body: text('body').notNull(),
     metadata: jsonb('metadata').$type<Record<string, unknown>>(),
-    // true = system-wide broadcast; userId should be null for broadcasts
+    // true = system-wide broadcast visible to ALL users; userId should be null
     isBroadcast: boolean('is_broadcast').notNull().default(false),
-    // Per-user read/saved state — only used for user-specific (non-broadcast) notifications.
-    // For broadcasts, per-user state is tracked in notification_reads instead.
+    // Role-based targeting: minimum role required to see this notification.
+    // null = not role-targeted (use userId or isBroadcast instead).
+    // 'staff' = staff + admin + superadmin; 'admin' = admin + superadmin; etc.
+    targetRole: userRoleEnum('target_role'),
+    // Per-user read/saved state — only used for personal (userId-set) notifications.
+    // For broadcasts and role-targeted, per-user state is tracked in notification_reads.
     isRead: boolean('is_read').notNull().default(false),
     isSaved: boolean('is_saved').notNull().default(false),
     // null = auto-triggered by system; UUID = admin/superadmin who created it
@@ -47,6 +58,7 @@ export const notifications = pgTable(
     index('notifications_created_at_idx').on(table.createdAt),
     index('notifications_type_idx').on(table.type),
     index('notifications_is_broadcast_idx').on(table.isBroadcast),
+    index('notifications_target_role_idx').on(table.targetRole),
   ],
 )
 

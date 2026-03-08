@@ -7,7 +7,7 @@ import { env } from '../config/env'
 import { UserRole } from '../types/enums'
 import { encrypt, decrypt, hashEmail } from '../utils/encryption'
 import { internalAuthService } from '../services/internal-auth.service'
-import { adminNotificationsService } from '../services/admin-notifications.service'
+import { notificationsService } from '../services/notifications.service'
 
 const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY })
 
@@ -225,7 +225,8 @@ export async function authenticate(
     }
 
     // Fire-and-forget: notify superadmin of new customer signup
-    adminNotificationsService.notify({
+    notificationsService.notifyRole({
+      targetRole: UserRole.ADMIN,
       type: 'new_customer',
       title: 'New Customer Signup',
       body: `A new customer signed up: ${primaryEmail.emailAddress}`,

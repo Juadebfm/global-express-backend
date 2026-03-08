@@ -145,6 +145,24 @@ export class AdminNotificationsService {
 
     return result?.count ?? 0
   }
+
+  async deleteNotification(id: string): Promise<boolean> {
+    const [deleted] = await db
+      .delete(adminNotifications)
+      .where(eq(adminNotifications.id, id))
+      .returning({ id: adminNotifications.id })
+
+    return !!deleted
+  }
+
+  async bulkDeleteNotifications(ids: string[]): Promise<number> {
+    const result = await db
+      .delete(adminNotifications)
+      .where(inArray(adminNotifications.id, ids))
+      .returning({ id: adminNotifications.id })
+
+    return result.length
+  }
 }
 
 export const adminNotificationsService = new AdminNotificationsService()

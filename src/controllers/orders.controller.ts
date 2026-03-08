@@ -3,7 +3,7 @@ import { ordersService } from '../services/orders.service'
 import { orderStatusEventsService } from '../services/order-status-events.service'
 import { bulkOrdersService } from '../services/bulk-orders.service'
 import { usersService } from '../services/users.service'
-import { adminNotificationsService } from '../services/admin-notifications.service'
+import { notificationsService } from '../services/notifications.service'
 import { pricingV2Service } from '../services/pricing-v2.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
@@ -140,7 +140,8 @@ export const ordersController = {
     })
 
     // Fire-and-forget: notify superadmin of new order
-    adminNotificationsService.notify({
+    notificationsService.notifyRole({
+      targetRole: UserRole.ADMIN,
       type: 'new_order',
       title: 'New Order Created',
       body: `Order ${order.trackingNumber} was created`,

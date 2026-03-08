@@ -7,6 +7,7 @@ import {
   bulkShipments,
   orderPackages,
 } from '../../drizzle/schema'
+import { appSettings } from '../../drizzle/schema/app-settings'
 import { encrypt, decrypt } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { generateTrackingNumber } from '../utils/tracking'
@@ -141,6 +142,7 @@ export interface WarehouseVerifyPackageInput {
   heightCm?: number
   weightKg?: number
   cbm?: number
+  specialPackagingType?: string
   isRestricted?: boolean
   restrictedReason?: string
   restrictedOverrideApproved?: boolean
@@ -182,8 +184,8 @@ export class OrdersService {
         origin: ORIGIN,
         destination: DESTINATION,
         orderDirection: input.orderDirection ?? 'outbound',
-        weight: input.weight ?? null,
-        declaredValue: input.declaredValue ?? null,
+        weight: input.weight ? String(parseFloat(input.weight.replace(/[^0-9.]/g, '')) || 0) : null,
+        declaredValue: input.declaredValue ? String(parseFloat(input.declaredValue.replace(/[^0-9.]/g, '')) || 0) : null,
         description: input.description ?? null,
         shipmentType: input.shipmentType ?? null,
         transportMode: inferredTransportMode,
@@ -426,12 +428,36 @@ export class OrdersService {
       throw new Error('At least one package is required for warehouse verification.')
     }
 
+    // ── Look up special packaging surcharge types from app_settings ──
+    let surchargeMap = new Map<string, number>()
+    const packagesHaveSpecialType = input.packages.some((p) => p.specialPackagingType)
+    if (packagesHaveSpecialType) {
+      const [setting] = await db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, 'special_packaging_surcharges'))
+        .limit(1)
+      if (setting?.value) {
+        const types = (setting.value as { types?: { key: string; name: string; surchargeUsd: number }[] }).types ?? []
+        for (const t of types) surchargeMap.set(t.key, t.surchargeUsd)
+      }
+    }
+
     const normalizedPackages = input.packages.map((pkg) => {
       const derivedCbm =
         pkg.cbm ??
         (pkg.lengthCm && pkg.widthCm && pkg.heightCm
           ? roundTo((pkg.lengthCm * pkg.widthCm * pkg.heightCm) / 1_000_000, 6)
           : undefined)
+
+      let specialPackagingSurchargeUsd: number | null = null
+      if (pkg.specialPackagingType) {
+        const surcharge = surchargeMap.get(pkg.specialPackagingType)
+        if (surcharge === undefined) {
+          throw new Error(`Unknown special packaging type: "${pkg.specialPackagingType}". Check app settings.`)
+        }
+        specialPackagingSurchargeUsd = surcharge * (pkg.quantity ?? 1)
+      }
 
       return {
         description: pkg.description ?? null,
@@ -442,6 +468,8 @@ export class OrdersService {
         heightCm: pkg.heightCm ?? null,
         weightKg: pkg.weightKg ?? null,
         cbm: derivedCbm ?? null,
+        specialPackagingType: pkg.specialPackagingType ?? null,
+        specialPackagingSurchargeUsd,
         isRestricted: pkg.isRestricted ?? false,
         restrictedReason: pkg.restrictedReason ?? null,
         restrictedOverrideApproved: pkg.restrictedOverrideApproved ?? false,
@@ -501,6 +529,11 @@ export class OrdersService {
       cbm: resolvedMode === TransportMode.SEA ? totalCbm : undefined,
     })
 
+    const totalSpecialPackagingSurcharge = roundTo(
+      normalizedPackages.reduce((sum, pkg) => sum + (pkg.specialPackagingSurchargeUsd ?? 0), 0),
+      2,
+    )
+
     const hasManualFinalCharge = input.manualFinalChargeUsd !== undefined
     if (hasManualFinalCharge && !input.manualAdjustmentReason?.trim()) {
       throw new Error('manualAdjustmentReason is required when manualFinalChargeUsd is provided.')
@@ -508,7 +541,7 @@ export class OrdersService {
 
     const finalChargeUsd = hasManualFinalCharge
       ? input.manualFinalChargeUsd!
-      : pricing.amountUsd
+      : pricing.amountUsd + totalSpecialPackagingSurcharge
 
     if (finalChargeUsd <= 0) {
       throw new Error('Final charge must be greater than zero.')
@@ -536,6 +569,7 @@ export class OrdersService {
           priceCalculatedAt: new Date(),
           priceCalculatedBy: input.verifiedBy,
           calculatedChargeUsd: pricing.amountUsd.toString(),
+          specialPackagingSurchargeUsd: totalSpecialPackagingSurcharge > 0 ? totalSpecialPackagingSurcharge.toString() : null,
           finalChargeUsd: finalChargeUsd.toString(),
           pricingSource,
           priceAdjustmentReason: input.manualAdjustmentReason?.trim() ?? null,
@@ -558,6 +592,8 @@ export class OrdersService {
           heightCm: pkg.heightCm !== null ? pkg.heightCm.toString() : null,
           weightKg: pkg.weightKg !== null ? pkg.weightKg.toString() : null,
           cbm: pkg.cbm !== null ? pkg.cbm.toString() : null,
+          specialPackagingType: pkg.specialPackagingType,
+          specialPackagingSurchargeUsd: pkg.specialPackagingSurchargeUsd !== null ? pkg.specialPackagingSurchargeUsd.toString() : null,
           isRestricted: pkg.isRestricted,
           restrictedReason: pkg.restrictedReason,
           restrictedOverrideApproved: pkg.restrictedOverrideApproved,

@@ -35,6 +35,8 @@ export const orderPackages = pgTable(
       .notNull()
       .default(false),
     restrictedOverrideReason: text('restricted_override_reason'),
+    specialPackagingType: text('special_packaging_type'),
+    specialPackagingSurchargeUsd: numeric('special_packaging_surcharge_usd', { precision: 10, scale: 2 }),
     restrictedOverrideBy: uuid('restricted_override_by').references(() => users.id),
     createdBy: uuid('created_by').references(() => users.id),
     updatedBy: uuid('updated_by').references(() => users.id),

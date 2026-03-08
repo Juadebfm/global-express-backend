@@ -87,6 +87,7 @@ export const orders = pgTable(
     calculatedChargeUsd: numeric('calculated_charge_usd', { precision: 12, scale: 2 }),
     finalChargeUsd: numeric('final_charge_usd', { precision: 12, scale: 2 }),
     pricingSource: pricingSourceEnum('pricing_source'),
+    specialPackagingSurchargeUsd: numeric('special_packaging_surcharge_usd', { precision: 10, scale: 2 }),
     priceAdjustmentReason: text('price_adjustment_reason'),
     paymentCollectionStatus: paymentCollectionStatusEnum('payment_collection_status')
       .notNull()
