@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(npx tsx -e \":*)",
-      "Bash(npx tsx tmp-migrate.ts)"
+      "Bash(npx tsx tmp-migrate.ts)",
+      "Bash(source .env)",
+      "Bash(npx tsx scripts/run-migration.ts drizzle/migrations/2026-03-08_wipe_non_superadmin.sql)"
     ]
   }
 }

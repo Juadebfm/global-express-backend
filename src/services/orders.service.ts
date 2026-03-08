@@ -46,56 +46,41 @@ function computeEta(departureDate: Date | null, shipmentType: string | null): st
 // Statuses that trigger customer-facing notifications
 const MILESTONE_STATUSES = new Set<ShipmentStatusV2>([
   ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED,
-  ShipmentStatusV2.DISPATCHED_TO_ORIGIN_AIRPORT,
-  ShipmentStatusV2.DISPATCHED_TO_ORIGIN_PORT,
   ShipmentStatusV2.FLIGHT_DEPARTED,
   ShipmentStatusV2.VESSEL_DEPARTED,
   ShipmentStatusV2.FLIGHT_LANDED_LAGOS,
   ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT,
   ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS,
-  ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE,
   ShipmentStatusV2.READY_FOR_PICKUP,
-  ShipmentStatusV2.PICKED_UP_COMPLETED,
   ShipmentStatusV2.ON_HOLD,
   ShipmentStatusV2.CANCELLED,
   ShipmentStatusV2.RESTRICTED_ITEM_REJECTED,
-  ShipmentStatusV2.RESTRICTED_ITEM_OVERRIDE_APPROVED,
 ])
 
 const V2_MILESTONE_TITLES: Partial<Record<ShipmentStatusV2, string>> = {
   [ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED]: 'Package Verified & Priced',
-  [ShipmentStatusV2.DISPATCHED_TO_ORIGIN_AIRPORT]: 'Dispatched to Airport',
-  [ShipmentStatusV2.DISPATCHED_TO_ORIGIN_PORT]: 'Dispatched to Port',
   [ShipmentStatusV2.FLIGHT_DEPARTED]: 'Flight Departed',
   [ShipmentStatusV2.VESSEL_DEPARTED]: 'Vessel Departed',
   [ShipmentStatusV2.FLIGHT_LANDED_LAGOS]: 'Landed in Lagos',
   [ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT]: 'Arrived at Lagos Port',
   [ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS]: 'Customs Cleared',
-  [ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE]: 'In Transit to Office',
   [ShipmentStatusV2.READY_FOR_PICKUP]: 'Ready for Pickup',
-  [ShipmentStatusV2.PICKED_UP_COMPLETED]: 'Pickup Completed',
   [ShipmentStatusV2.ON_HOLD]: 'Shipment On Hold',
   [ShipmentStatusV2.CANCELLED]: 'Shipment Cancelled',
   [ShipmentStatusV2.RESTRICTED_ITEM_REJECTED]: 'Item Rejected — Restricted',
-  [ShipmentStatusV2.RESTRICTED_ITEM_OVERRIDE_APPROVED]: 'Restricted Item Override Approved',
 }
 
 const V2_MILESTONE_BODIES: Partial<Record<ShipmentStatusV2, (tracking: string) => string>> = {
   [ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED]: (t) => `Your package ${t} has been verified at the warehouse and priced.`,
-  [ShipmentStatusV2.DISPATCHED_TO_ORIGIN_AIRPORT]: (t) => `Your shipment ${t} has been dispatched to the origin airport.`,
-  [ShipmentStatusV2.DISPATCHED_TO_ORIGIN_PORT]: (t) => `Your shipment ${t} has been dispatched to the origin port.`,
   [ShipmentStatusV2.FLIGHT_DEPARTED]: (t) => `Your shipment ${t} is on its way — the flight has departed.`,
   [ShipmentStatusV2.VESSEL_DEPARTED]: (t) => `Your shipment ${t} is on its way — the vessel has departed.`,
   [ShipmentStatusV2.FLIGHT_LANDED_LAGOS]: (t) => `Your shipment ${t} has landed in Lagos.`,
   [ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT]: (t) => `Your shipment ${t} has arrived at Lagos port.`,
   [ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS]: (t) => `Your shipment ${t} has cleared customs in Lagos.`,
-  [ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE]: (t) => `Your package ${t} is in transit to our Lagos office.`,
   [ShipmentStatusV2.READY_FOR_PICKUP]: (t) => `Your package ${t} is ready for pickup at our Lagos office.`,
-  [ShipmentStatusV2.PICKED_UP_COMPLETED]: (t) => `Your package ${t} has been picked up. Thank you!`,
   [ShipmentStatusV2.ON_HOLD]: (t) => `Your shipment ${t} has been placed on hold. Please contact us for more details.`,
   [ShipmentStatusV2.CANCELLED]: (t) => `Your shipment ${t} has been cancelled.`,
   [ShipmentStatusV2.RESTRICTED_ITEM_REJECTED]: (t) => `Your shipment ${t} contains a restricted item and has been rejected.`,
-  [ShipmentStatusV2.RESTRICTED_ITEM_OVERRIDE_APPROVED]: (t) => `The restricted item in your shipment ${t} has been approved with an override.`,
 }
 
 // Active lane is fixed for this release
@@ -331,7 +316,53 @@ export class OrdersService {
       },
     })
 
-    // 9. Milestone-only customer notifications (fire-and-forget)
+    // 9a. Pre-order picked up — notify customer that staff is now processing their order
+    if (
+      existing.isPreorder &&
+      existing.statusV2 === ShipmentStatusV2.PREORDER_SUBMITTED &&
+      input.statusV2 === ShipmentStatusV2.AWAITING_WAREHOUSE_RECEIPT
+    ) {
+      const title = 'Your Pre-Order Is Being Processed'
+      const body = `Your pre-order ${decrypted.trackingNumber} has been picked up by our team and is now being processed.`
+
+      if (input.notifyInAppAlerts ?? true) {
+        notifyUser({
+          userId: updated.senderId,
+          orderId: updated.id,
+          type: 'order_status_update',
+          title,
+          subtitle: decrypted.trackingNumber,
+          body,
+          metadata: { orderId: updated.id, trackingNumber: updated.trackingNumber, statusV2: input.statusV2 },
+        }).catch(() => {})
+      }
+
+      if (input.senderEmail && (input.notifyEmailAlerts ?? true)) {
+        sendOrderStatusUpdateEmail({
+          to: input.senderEmail,
+          recipientName: decrypted.recipientName,
+          trackingNumber: decrypted.trackingNumber,
+          status: input.statusV2,
+          templateKey: 'order.preorder_processing',
+          locale: (input.preferredLanguage ?? 'en') as import('../types/enums').PreferredLanguage,
+        }).catch((err) => {
+          console.error('Failed to send pre-order processing email', err)
+        })
+      }
+
+      if (input.senderPhone && (input.notifySmsAlerts ?? true)) {
+        sendOrderStatusWhatsApp({
+          phone: input.senderPhone,
+          recipientName: decrypted.recipientName,
+          trackingNumber: decrypted.trackingNumber,
+          status: input.statusV2,
+        }).catch((err) => {
+          console.error('Failed to send pre-order processing WhatsApp', err)
+        })
+      }
+    }
+
+    // 9b. Milestone-only customer notifications (fire-and-forget)
     if (MILESTONE_STATUSES.has(input.statusV2)) {
       const templateKey = `order.${input.statusV2.toLowerCase()}`
       const locale = (input.preferredLanguage ?? 'en') as import('../types/enums').PreferredLanguage
