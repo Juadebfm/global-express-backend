@@ -247,7 +247,8 @@ PREORDER_SUBMITTED → AWAITING_WAREHOUSE_RECEIPT → WAREHOUSE_RECEIVED
 #### On each status update:
 1. Status saved + audit event recorded
 2. WebSocket push: `{ "type": "order_status_updated", "data": { "orderId", "trackingNumber", "statusV2", "updatedAt" } }`
-3. For milestone statuses: in-app notification + email + WhatsApp
+3. Pre-order pickup: when `PREORDER_SUBMITTED` → `AWAITING_WAREHOUSE_RECEIPT`, customer gets in-app + email + WhatsApp ("Your Pre-Order Is Being Processed")
+4. For milestone statuses: in-app notification + email + WhatsApp (see Status → Notification Mapping below)
 
 ---
 
@@ -585,21 +586,17 @@ These statuses trigger customer notifications (in-app + email + WhatsApp):
 
 | Status | Notification Title |
 |---|---|
+| `PREORDER_SUBMITTED` → `AWAITING_WAREHOUSE_RECEIPT` | Your Pre-Order Is Being Processed |
 | `WAREHOUSE_VERIFIED_PRICED` | Package Verified & Priced |
-| `DISPATCHED_TO_ORIGIN_AIRPORT` | Dispatched to Airport |
-| `DISPATCHED_TO_ORIGIN_PORT` | Dispatched to Port |
 | `FLIGHT_DEPARTED` | Flight Departed |
 | `VESSEL_DEPARTED` | Vessel Departed |
 | `FLIGHT_LANDED_LAGOS` | Landed in Lagos |
 | `VESSEL_ARRIVED_LAGOS_PORT` | Arrived at Lagos Port |
 | `CUSTOMS_CLEARED_LAGOS` | Customs Cleared |
-| `IN_TRANSIT_TO_LAGOS_OFFICE` | In Transit to Office |
 | `READY_FOR_PICKUP` | Ready for Pickup |
-| `PICKED_UP_COMPLETED` | Pickup Completed |
 | `ON_HOLD` | Shipment On Hold |
 | `CANCELLED` | Shipment Cancelled |
 | `RESTRICTED_ITEM_REJECTED` | Item Rejected - Restricted |
-| `RESTRICTED_ITEM_OVERRIDE_APPROVED` | Restricted Item Override Approved |
 
 ---
 
