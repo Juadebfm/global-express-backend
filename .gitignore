@@ -4,8 +4,13 @@ node_modules/
 # Build output
 dist/
 
-# Environment — never commit the real .env
+# Environment files
+# Ignore all local/secret env variants
 .env
+.env.*
+# Keep env templates in git
+!.env.example
+!.env*.example
 
 # Logs
 logs/
