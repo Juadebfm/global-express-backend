@@ -1,6 +1,6 @@
 ﻿import type { FastifyRequest, FastifyReply } from 'fastify'
 import { createClerkClient, verifyToken as verifyClerkToken } from '@clerk/backend'
-import { eq, and, isNull } from 'drizzle-orm'
+import { eq, and, isNull, ne } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users, revokedTokens } from '../../drizzle/schema'
 import { env } from '../config/env'
@@ -173,12 +173,43 @@ export async function authenticate(
       return
     }
 
-    // Check for a staff-created stub with this email (emailHash is deterministic HMAC)
+    // Block customer auto-provision if this email is already used by an internal operator account.
+    // Internal accounts (staff/admin/superadmin) must authenticate via /api/v1/auth/login.
     const emailH = hashEmail(primaryEmail.emailAddress)
+    const [internalEmailOwner] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        and(
+          isNull(users.deletedAt),
+          isNull(users.clerkId),
+          eq(users.emailHash, emailH),
+          ne(users.role, UserRole.USER),
+        ),
+      )
+      .limit(1)
+
+    if (internalEmailOwner) {
+      reply.code(409).send({
+        success: false,
+        message:
+          'Conflict — this email is already assigned to an internal account. Use operator login instead.',
+      })
+      return
+    }
+
+    // Check for a staff-created customer stub with this email (emailHash is deterministic HMAC)
     const [stubUser] = await db
       .select()
       .from(users)
-      .where(and(isNull(users.clerkId), isNull(users.deletedAt), eq(users.emailHash, emailH)))
+      .where(
+        and(
+          isNull(users.clerkId),
+          isNull(users.deletedAt),
+          eq(users.emailHash, emailH),
+          eq(users.role, UserRole.USER),
+        ),
+      )
       .limit(1)
 
     if (stubUser) {
@@ -211,6 +242,7 @@ export async function authenticate(
       .values({
         clerkId,
         email: encrypt(primaryEmail.emailAddress),
+        emailHash: emailH,
         firstName: clerkUser.firstName ? encrypt(clerkUser.firstName) : null,
         lastName: clerkUser.lastName ? encrypt(clerkUser.lastName) : null,
         role: UserRole.USER,
@@ -237,4 +269,3 @@ export async function authenticate(
     reply.code(500).send({ success: false, message: 'Internal server error during authentication' })
   }
 }
-

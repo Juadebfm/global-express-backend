@@ -82,6 +82,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
             updatedAt: z.string(),
           }),
         }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
         401: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
