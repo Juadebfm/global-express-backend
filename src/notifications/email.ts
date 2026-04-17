@@ -24,6 +24,23 @@ async function sendEmail(params: SendEmailParams): Promise<void> {
   })
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function plainTextToHtml(message: string): string {
+  return message
+    .trim()
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${paragraph.split('\n').map(escapeHtml).join('<br>')}</p>`)
+    .join('')
+}
+
 export async function sendOrderConfirmationEmail(params: {
   to: string
   recipientName: string
@@ -102,7 +119,7 @@ export async function sendAccountAlertEmail(params: {
   await sendEmail({
     to: params.to,
     subject: params.subject,
-    html: `<p>${params.message}</p>`,
+    html: plainTextToHtml(params.message),
     text: params.message,
   })
 }

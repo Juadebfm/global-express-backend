@@ -1,6 +1,6 @@
 ﻿import type { FastifyRequest, FastifyReply } from 'fastify'
 import { createClerkClient, verifyToken as verifyClerkToken } from '@clerk/backend'
-import { eq, and, isNull, ne } from 'drizzle-orm'
+import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users, revokedTokens } from '../../drizzle/schema'
 import { env } from '../config/env'
@@ -11,15 +11,112 @@ import { notificationsService } from '../services/notifications.service'
 
 const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY })
 
+type SignupMetadata = Record<string, unknown>
+type RequiredSignupField =
+  | 'phone'
+  | 'addressStreet'
+  | 'addressCity'
+  | 'addressState'
+  | 'addressCountry'
+  | 'addressPostalCode'
+
+interface RequiredSignupProfileInput {
+  phone?: string | null
+  addressStreet?: string | null
+  addressCity?: string | null
+  addressState?: string | null
+  addressCountry?: string | null
+  addressPostalCode?: string | null
+}
+
+function readMetadataString(
+  metadata: SignupMetadata,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = metadata[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+
+  return undefined
+}
+
+function getMissingRequiredSignupFields(input: RequiredSignupProfileInput): RequiredSignupField[] {
+  const missing: RequiredSignupField[] = []
+
+  if (!input.phone?.trim()) missing.push('phone')
+  if (!input.addressStreet?.trim()) missing.push('addressStreet')
+  if (!input.addressCity?.trim()) missing.push('addressCity')
+  if (!input.addressState?.trim()) missing.push('addressState')
+  if (!input.addressCountry?.trim()) missing.push('addressCountry')
+  if (!input.addressPostalCode?.trim()) missing.push('addressPostalCode')
+
+  return missing
+}
+
+function buildMissingSignupFieldsMessage(missingFields: RequiredSignupField[]): string {
+  return `Unprocessable — missing required signup fields: ${missingFields.join(', ')}`
+}
+
+function formatOptional(value: string | null | undefined): string {
+  return value?.trim() || 'Not provided yet'
+}
+
+function formatLabel(value: string | null | undefined): string {
+  const text = value?.trim()
+  if (!text) return 'Not provided yet'
+
+  return text
+    .replace(/[_-]/g, ' ')
+    .replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+}
+
+function buildNewCustomerSignupBody(input: {
+  name: string | null
+  email: string
+  userId: string
+  clerkId: string
+  accountType?: string
+  businessName?: string
+  phone?: string
+  whatsappNumber?: string
+  addressStreet?: string
+  addressState?: string
+  addressPostalCode?: string
+  country?: string
+  city?: string
+  preferredLanguage?: string
+  signupAt: Date
+}): string {
+  return [
+    'A new customer signed up.',
+    '',
+    `Name: ${formatOptional(input.name)}`,
+    `Email: ${input.email}`,
+    `Account type: ${formatLabel(input.accountType)}`,
+    `Business name: ${formatOptional(input.businessName)}`,
+    `Phone: ${formatOptional(input.phone)}`,
+    `WhatsApp: ${formatOptional(input.whatsappNumber)}`,
+    `Street: ${formatOptional(input.addressStreet)}`,
+    `Country: ${formatOptional(input.country)}`,
+    `City: ${formatOptional(input.city)}`,
+    `State: ${formatOptional(input.addressState)}`,
+    `Postal code: ${formatOptional(input.addressPostalCode)}`,
+    `Preferred language: ${formatOptional(input.preferredLanguage)}`,
+    `Customer ID: ${input.userId}`,
+    `Clerk ID: ${input.clerkId}`,
+    `Signup time: ${input.signupAt.toISOString()}`,
+    'Profile status: Email verified, profile pending',
+  ].join('\n')
+}
+
 /**
- * Unified authentication middleware â€” handles two token types:
+ * Unified authentication middleware handles two token types:
  *
- *   1. Internal JWT  â€” issued by POST /api/v1/internal/auth/login
- *                      for staff / admin / superadmin accounts.
- *                      Identified by `type: 'internal'` claim in the payload.
+ *   1. Internal JWT, issued by POST /api/v1/internal/auth/login
+ *      for staff / admin / superadmin accounts.
  *
- *   2. Clerk JWT     â€” issued by Clerk after customer sign-in.
- *                      All other Bearer tokens fall into this path.
+ *   2. Clerk JWT, issued by Clerk after customer sign-in.
  *
  * Attaches `request.user` identically for both paths.
  * Must be used as a preHandler on every protected route.
@@ -33,13 +130,13 @@ export async function authenticate(
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     reply
       .code(401)
-      .send({ success: false, message: 'Unauthorized â€” missing or invalid Authorization header' })
+      .send({ success: false, message: 'Unauthorized - missing or invalid Authorization header' })
     return
   }
 
   const token = authHeader.slice(7)
 
-  // â”€â”€â”€ Peek at the JWT payload without verifying â€” check for internal token â”€â”€
+  // Peek at the JWT payload without verifying to check for an internal token.
   // We decode (not verify) to read the `type` claim so we know which path to take.
   // Actual verification happens inside each branch.
   let tokenType: string | undefined
@@ -50,17 +147,17 @@ export async function authenticate(
       tokenType = decoded?.type
     }
   } catch {
-    // malformed token â€” will fail in the appropriate branch below
+    // Malformed token will fail in the appropriate branch below.
   }
 
-  // â”€â”€â”€ Branch 1: Internal JWT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Branch 1: Internal JWT
   if (tokenType === 'internal') {
     let payload: ReturnType<typeof internalAuthService.verifyToken>
 
     try {
       payload = internalAuthService.verifyToken(token)
     } catch {
-      reply.code(401).send({ success: false, message: 'Unauthorized â€” invalid or expired token' })
+      reply.code(401).send({ success: false, message: 'Unauthorized - invalid or expired token' })
       return
     }
 
@@ -109,20 +206,20 @@ export async function authenticate(
     return
   }
 
-  // â”€â”€â”€ Branch 2: Clerk JWT (customers) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Branch 2: Clerk JWT (customers)
   let clerkId: string
 
   try {
     const payload = await verifyClerkToken(token, { secretKey: env.CLERK_SECRET_KEY })
 
     if (!payload?.sub) {
-      reply.code(401).send({ success: false, message: 'Unauthorized â€” invalid token payload' })
+      reply.code(401).send({ success: false, message: 'Unauthorized - invalid token payload' })
       return
     }
 
     clerkId = payload.sub
   } catch {
-    reply.code(401).send({ success: false, message: 'Unauthorized â€” token verification failed' })
+    reply.code(401).send({ success: false, message: 'Unauthorized - token verification failed' })
     return
   }
 
@@ -135,7 +232,7 @@ export async function authenticate(
 
     if (existingUser) {
       if (!existingUser.isActive) {
-        reply.code(403).send({ success: false, message: 'Forbidden â€” account is inactive' })
+        reply.code(403).send({ success: false, message: 'Forbidden - account is inactive' })
         return
       }
 
@@ -173,58 +270,122 @@ export async function authenticate(
       return
     }
 
-    // Block customer auto-provision if this email is already used by an internal operator account.
-    // Internal accounts (staff/admin/superadmin) must authenticate via /api/v1/auth/login.
-    const emailH = hashEmail(primaryEmail.emailAddress)
-    const [internalEmailOwner] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(
-        and(
-          isNull(users.deletedAt),
-          isNull(users.clerkId),
-          eq(users.emailHash, emailH),
-          ne(users.role, UserRole.USER),
-        ),
-      )
-      .limit(1)
-
-    if (internalEmailOwner) {
-      reply.code(409).send({
-        success: false,
-        message:
-          'Conflict — this email is already assigned to an internal account. Use operator login instead.',
-      })
-      return
+    const signupMetadata = {
+      ...((clerkUser.publicMetadata ?? {}) as SignupMetadata),
+      ...((clerkUser.unsafeMetadata ?? {}) as SignupMetadata),
     }
+    const customerName = clerkUser.fullName ?? [clerkUser.firstName, clerkUser.lastName]
+      .filter(Boolean)
+      .join(' ')
+    const accountType = readMetadataString(signupMetadata, ['accountType', 'account_type', 'type'])
+    const businessName = readMetadataString(signupMetadata, ['businessName', 'business_name', 'company'])
+    const metadataPhone = readMetadataString(signupMetadata, ['phone', 'phoneNumber', 'phone_number'])
+    const phone = clerkUser.primaryPhoneNumber?.phoneNumber ?? metadataPhone
+    const whatsappNumber = readMetadataString(signupMetadata, [
+      'whatsappNumber',
+      'whatsapp_number',
+      'whatsapp',
+    ])
+    const addressStreet = readMetadataString(signupMetadata, [
+      'addressStreet',
+      'address_street',
+      'streetAddress',
+      'street',
+      'addressLine1',
+      'address_line_1',
+    ])
+    const country = readMetadataString(signupMetadata, ['country', 'addressCountry', 'address_country'])
+    const city = readMetadataString(signupMetadata, ['city', 'addressCity', 'address_city'])
+    const addressState = readMetadataString(signupMetadata, ['state', 'addressState', 'address_state'])
+    const addressPostalCode = readMetadataString(signupMetadata, [
+      'postalCode',
+      'postal_code',
+      'zip',
+      'zipCode',
+      'addressPostalCode',
+      'address_postal_code',
+    ])
+    const preferredLanguage = readMetadataString(signupMetadata, [
+      'preferredLanguage',
+      'preferred_language',
+      'locale',
+    ])
+    const signupPreferredLanguage =
+      preferredLanguage?.toLowerCase() === 'ko'
+        ? 'ko'
+        : preferredLanguage?.toLowerCase() === 'en'
+          ? 'en'
+          : undefined
 
-    // Check for a staff-created customer stub with this email (emailHash is deterministic HMAC)
-    const [stubUser] = await db
+    // Use emailHash as the canonical identity key. This lets us safely reconnect
+    // a verified Clerk user to an existing backend customer row if Clerk issued a
+    // new user ID for the same email.
+    const emailH = hashEmail(primaryEmail.emailAddress)
+    const [emailOwner] = await db
       .select()
       .from(users)
-      .where(
-        and(
-          isNull(users.clerkId),
-          isNull(users.deletedAt),
-          eq(users.emailHash, emailH),
-          eq(users.role, UserRole.USER),
-        ),
-      )
+      .where(and(isNull(users.deletedAt), eq(users.emailHash, emailH)))
       .limit(1)
 
-    if (stubUser) {
-      // Link this Clerk account to the existing stub — activates the account
+    if (emailOwner) {
+      if (emailOwner.role !== UserRole.USER) {
+        reply.code(409).send({
+          success: false,
+          message:
+            'Conflict - this email is already assigned to an internal account. Use operator login instead.',
+        })
+        return
+      }
+
+      const existingPhone = emailOwner.phone ? decrypt(emailOwner.phone) : undefined
+      const existingAddressStreet = emailOwner.addressStreet
+        ? decrypt(emailOwner.addressStreet)
+        : undefined
+
+      const resolvedPhone = existingPhone ?? phone
+      const resolvedAddressStreet = existingAddressStreet ?? addressStreet
+      const resolvedAddressCity = emailOwner.addressCity ?? city
+      const resolvedAddressState = emailOwner.addressState ?? addressState
+      const resolvedAddressCountry = emailOwner.addressCountry ?? country
+      const resolvedAddressPostalCode = emailOwner.addressPostalCode ?? addressPostalCode
+
+      const missingRequiredFields = getMissingRequiredSignupFields({
+        phone: resolvedPhone,
+        addressStreet: resolvedAddressStreet,
+        addressCity: resolvedAddressCity,
+        addressState: resolvedAddressState,
+        addressCountry: resolvedAddressCountry,
+        addressPostalCode: resolvedAddressPostalCode,
+      })
+
+      if (missingRequiredFields.length > 0) {
+        reply
+          .code(422)
+          .send({ success: false, message: buildMissingSignupFieldsMessage(missingRequiredFields) })
+        return
+      }
+
+      // Link staff-created stubs, or reconnect an existing customer row when a
+      // new Clerk user ID is created for the same verified email address.
       const [linkedUser] = await db
         .update(users)
         .set({
           clerkId,
           isActive: true,
-          // Backfill name from Clerk only if stub didn't already have them
-          firstName: stubUser.firstName ?? (clerkUser.firstName ? encrypt(clerkUser.firstName) : null),
-          lastName: stubUser.lastName ?? (clerkUser.lastName ? encrypt(clerkUser.lastName) : null),
+          firstName: emailOwner.firstName ?? (clerkUser.firstName ? encrypt(clerkUser.firstName) : null),
+          lastName: emailOwner.lastName ?? (clerkUser.lastName ? encrypt(clerkUser.lastName) : null),
+          businessName: emailOwner.businessName ?? (businessName ? encrypt(businessName) : null),
+          phone: emailOwner.phone ?? encrypt(resolvedPhone!),
+          whatsappNumber: emailOwner.whatsappNumber ?? (whatsappNumber ? encrypt(whatsappNumber) : null),
+          addressStreet: emailOwner.addressStreet ?? encrypt(resolvedAddressStreet!),
+          addressCity: emailOwner.addressCity ?? resolvedAddressCity!,
+          addressState: emailOwner.addressState ?? resolvedAddressState!,
+          addressCountry: emailOwner.addressCountry ?? resolvedAddressCountry!,
+          addressPostalCode: emailOwner.addressPostalCode ?? resolvedAddressPostalCode!,
+          preferredLanguage: signupPreferredLanguage ?? emailOwner.preferredLanguage,
           updatedAt: new Date(),
         })
-        .where(eq(users.id, stubUser.id))
+        .where(eq(users.id, emailOwner.id))
         .returning()
 
       request.user = {
@@ -233,6 +394,22 @@ export async function authenticate(
         role: linkedUser.role,
         email: primaryEmail.emailAddress,
       }
+      return
+    }
+
+    const missingRequiredFields = getMissingRequiredSignupFields({
+      phone,
+      addressStreet,
+      addressCity: city,
+      addressState,
+      addressCountry: country,
+      addressPostalCode,
+    })
+
+    if (missingRequiredFields.length > 0) {
+      reply
+        .code(422)
+        .send({ success: false, message: buildMissingSignupFieldsMessage(missingRequiredFields) })
       return
     }
 
@@ -245,9 +422,19 @@ export async function authenticate(
         emailHash: emailH,
         firstName: clerkUser.firstName ? encrypt(clerkUser.firstName) : null,
         lastName: clerkUser.lastName ? encrypt(clerkUser.lastName) : null,
+        businessName: businessName ? encrypt(businessName) : null,
+        phone: encrypt(phone!),
+        whatsappNumber: whatsappNumber ? encrypt(whatsappNumber) : null,
+        addressStreet: encrypt(addressStreet!),
+        addressCity: city!,
+        addressState: addressState!,
+        addressCountry: country!,
+        addressPostalCode: addressPostalCode!,
+        preferredLanguage: signupPreferredLanguage,
         role: UserRole.USER,
       })
       .returning()
+    const signupAt = newUser.createdAt ?? new Date()
 
     request.user = {
       id: newUser.id,
@@ -261,8 +448,40 @@ export async function authenticate(
       targetRole: UserRole.ADMIN,
       type: 'new_customer',
       title: 'New Customer Signup',
-      body: `A new customer signed up: ${primaryEmail.emailAddress}`,
-      metadata: { userId: newUser.id, email: primaryEmail.emailAddress },
+      body: buildNewCustomerSignupBody({
+        name: customerName,
+        email: primaryEmail.emailAddress,
+        userId: newUser.id,
+        clerkId,
+        accountType,
+        businessName,
+        phone,
+        whatsappNumber,
+        addressStreet,
+        addressState,
+        addressPostalCode,
+        country,
+        city,
+        preferredLanguage,
+        signupAt,
+      }),
+      metadata: {
+        userId: newUser.id,
+        clerkId,
+        email: primaryEmail.emailAddress,
+        name: customerName,
+        accountType,
+        businessName,
+        phone,
+        whatsappNumber,
+        addressStreet,
+        addressState,
+        addressPostalCode,
+        country,
+        city,
+        preferredLanguage,
+        signupAt: signupAt.toISOString(),
+      },
     })
   } catch (err) {
     request.log.error({ err }, 'Authentication database lookup failed')
