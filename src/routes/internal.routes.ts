@@ -41,15 +41,15 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
   /**
    * POST /api/v1/internal/auth/login
-   * Staff / Admin / Superadmin email + password login.
+   * Staff / Superadmin email + password login.
    * Returns a signed JWT valid for JWT_EXPIRES_IN (default 8h).
    */
   app.post('/auth/login', {
     schema: {
       tags: ['Internal — Auth'],
-      summary: 'Internal staff/admin login',
+      summary: 'Internal staff/superadmin login',
       description:
-        'Authenticates staff, admin, or superadmin using email and password stored in the backend database. Returns a JWT — include it as `Authorization: Bearer <token>` on all subsequent requests.',
+        'Authenticates staff or superadmin using email and password stored in the backend database. Returns a JWT — include it as `Authorization: Bearer <token>` on all subsequent requests.',
       body: z.object({
         email: z.string().email(),
         password: z.string().min(1),
@@ -85,24 +85,24 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     },
   })
 
-  // ─── User management (superadmin / admin only) ────────────────────────────
+  // ─── User management (superadmin / staff only) ────────────────────────────
 
   /**
    * POST /api/v1/internal/users
-   * Create a new internal staff, admin, or superadmin account.
-   * Superadmin can create any role. Admin can only create staff.
+   * Create a new internal staff or superadmin account.
+   * Superadmin can create any internal role. Staff can only create staff.
    */
   app.post('/users', {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Internal — User Management'],
-      summary: 'Create internal staff/admin account',
+      summary: 'Create internal staff/superadmin account',
       description:
-        'Creates a staff, admin, or superadmin account. No Clerk account is created — credentials are managed internally. Superadmin can assign any role; admin can only create staff accounts.',
+        'Creates a staff or superadmin account. No Clerk account is created — credentials are managed internally. Superadmin can assign any internal role; staff can only create staff accounts.',
       security: [{ bearerAuth: [] }],
       body: z.object({
         email: z.string().email(),
-        role: z.enum([UserRole.STAFF, UserRole.ADMIN, UserRole.SUPERADMIN]),
+        role: z.enum([UserRole.STAFF, UserRole.SUPER_ADMIN]),
         firstName: z.string().min(1),
         lastName: z.string().min(1),
       }),
@@ -115,21 +115,21 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     handler: async (request, reply) => {
       const requesterRole = request.user.role as UserRole
 
-      // Admins can only create staff accounts
+      // Staff can only create staff accounts
       if (
-        requesterRole === UserRole.ADMIN &&
-        (request.body.role === UserRole.ADMIN || request.body.role === UserRole.SUPERADMIN)
+        requesterRole === UserRole.STAFF &&
+        request.body.role === UserRole.SUPER_ADMIN
       ) {
         return reply.code(403).send({
           success: false,
-          message: 'Forbidden — admins can only create staff accounts',
+          message: 'Forbidden — staff can only create staff accounts',
         })
       }
 
       try {
         const result = await internalAuthService.createInternalUser({
           email: request.body.email,
-          role: request.body.role as UserRole.STAFF | UserRole.ADMIN | UserRole.SUPERADMIN,
+          role: request.body.role as UserRole.STAFF | UserRole.SUPER_ADMIN,
           firstName: request.body.firstName,
           lastName: request.body.lastName,
         })
@@ -147,7 +147,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
         // Fire-and-forget: notify superadmin of new internal account
         notificationsService.notifyRole({
-          targetRole: UserRole.ADMIN,
+          targetRole: UserRole.STAFF,
           type: 'new_staff_account',
           title: 'New Staff Account Created',
           body: `A new ${request.body.role} account was created: ${request.body.firstName} ${request.body.lastName}`,
@@ -210,7 +210,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       tags: ['Internal — Auth'],
       summary: 'Change own password',
       description:
-        'Changes password for authenticated internal operators only (staff/admin/superadmin). Customer (Clerk) accounts must use Clerk-managed password/2FA flows.',
+        'Changes password for authenticated internal operators only (staff/superadmin). Customer (Clerk) accounts must use Clerk-managed password/2FA flows.',
       security: [{ bearerAuth: [] }],
       body: z.object({
         currentPassword: z.string().min(1),
@@ -280,7 +280,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
   /**
    * PATCH /api/v1/internal/me/profile
-   * Staff/admin completes their profile after first login.
+   * Staff/superadmin completes their profile after first login.
    */
   app.patch('/me/profile', {
     preHandler: [authenticate, requireStaffOrAbove],
@@ -353,7 +353,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       const profile = await usersService.getUserById(request.user.id)
       if (profile) {
         notificationsService.notifyRole({
-          targetRole: UserRole.ADMIN,
+          targetRole: UserRole.STAFF,
           type: 'staff_onboarding_complete',
           title: 'Staff Onboarding Complete',
           body: `${profile.firstName} ${profile.lastName} (${profile.role}) has completed onboarding and is now active.`,
@@ -618,4 +618,3 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     },
   })
 }
-

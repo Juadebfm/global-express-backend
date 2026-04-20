@@ -236,6 +236,15 @@ export async function authenticate(
         return
       }
 
+      // Internal operator roles must never authenticate through Clerk.
+      if ([UserRole.STAFF, UserRole.SUPER_ADMIN].includes(existingUser.role as UserRole)) {
+        reply.code(403).send({
+          success: false,
+          message: 'Forbidden — internal roles must sign in via internal auth',
+        })
+        return
+      }
+
       request.user = {
         id: existingUser.id,
         clerkId: existingUser.clerkId,
@@ -445,7 +454,7 @@ export async function authenticate(
 
     // Fire-and-forget: notify superadmin of new customer signup
     notificationsService.notifyRole({
-      targetRole: UserRole.ADMIN,
+      targetRole: UserRole.STAFF,
       type: 'new_customer',
       title: 'New Customer Signup',
       body: buildNewCustomerSignupBody({

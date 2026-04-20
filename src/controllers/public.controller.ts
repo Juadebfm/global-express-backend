@@ -3,11 +3,14 @@ import {
   pricingV2Service,
   DEFAULT_AIR_TIERS,
   DEFAULT_SEA_USD_PER_CBM,
+  SEA_CBM_TO_KG_FACTOR,
 } from '../services/pricing-v2.service'
 import { TransportMode } from '../types/enums'
 import { successResponse } from '../utils/response'
 import { db } from '../config/db'
 import { newsletterSubscribers } from '../../drizzle/schema'
+
+const AIR_VOLUMETRIC_DIVISOR = 6000
 
 export const publicController = {
   async calculateEstimate(
@@ -48,13 +51,29 @@ export const publicController = {
     }
 
     try {
+      const volumetricWeightKg =
+        mode === TransportMode.AIR && cbm && cbm > 0
+          ? (cbm * 1_000_000) / AIR_VOLUMETRIC_DIVISOR
+          : undefined
+
+      const billableAirWeightKg =
+        mode === TransportMode.AIR ? Math.max(weightKg ?? 0, volumetricWeightKg ?? 0) : undefined
+
+      const seaChargeableWeightKg =
+        mode === TransportMode.SEA && cbm ? cbm * SEA_CBM_TO_KG_FACTOR : undefined
+
       const pricing = pricingV2Service.calculateDefaultPricing({
         mode,
-        weightKg: mode === TransportMode.AIR ? weightKg : undefined,
+        weightKg:
+          mode === TransportMode.AIR
+            ? billableAirWeightKg
+            : mode === TransportMode.SEA
+              ? seaChargeableWeightKg
+              : undefined,
         cbm: mode === TransportMode.SEA ? cbm : undefined,
       })
 
-      const departureFrequency = mode === TransportMode.AIR ? 'Weekly' : 'Monthly'
+      const departureFrequency = 'Event-driven (based on warehouse movement)'
       const estimatedTransitDays = mode === TransportMode.AIR ? 7 : 90
 
       return reply.send(

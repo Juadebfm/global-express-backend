@@ -47,14 +47,14 @@ export interface RequestingUser {
   role: string
 }
 
-const STAFF_ROLES = [UserRole.STAFF, UserRole.ADMIN, UserRole.SUPERADMIN] as string[]
+const STAFF_ROLES = [UserRole.STAFF, UserRole.SUPER_ADMIN] as string[]
 
 function isStaff(role: string): boolean {
   return STAFF_ROLES.includes(role)
 }
 
 function isAdminOrAbove(role: string): boolean {
-  return role === UserRole.ADMIN || role === UserRole.SUPERADMIN
+  return role === UserRole.STAFF || role === UserRole.SUPER_ADMIN
 }
 
 async function generateTicketNumber(): Promise<string> {

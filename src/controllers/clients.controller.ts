@@ -3,7 +3,7 @@ import { clientsService } from '../services/clients.service'
 import { ordersService } from '../services/orders.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
-import type { ShipmentStatusV2 } from '../types/enums'
+import { UserRole, type ShipmentStatusV2 } from '../types/enums'
 
 export const clientsController = {
   async list(
@@ -70,16 +70,28 @@ export const clientsController = {
         lastName?: string
         businessName?: string
         phone?: string
+        shippingMark?: string
       }
     }>,
     reply: FastifyReply,
   ) {
+    if (
+      request.body.shippingMark &&
+      request.user.role !== UserRole.SUPER_ADMIN
+    ) {
+      return reply.code(403).send({
+        success: false,
+        message: 'Forbidden — only superadmin can set shipping mark during user creation',
+      })
+    }
+
     const stub = await clientsService.createClientStub({
       email: request.body.email,
       firstName: request.body.firstName,
       lastName: request.body.lastName,
       businessName: request.body.businessName,
       phone: request.body.phone,
+      shippingMark: request.body.shippingMark?.trim(),
     })
 
     // Send Clerk invite — let errors surface (e.g. email already has a Clerk account)

@@ -55,8 +55,8 @@ export async function notificationsRoutes(fastify: FastifyInstance): Promise<voi
 
 **Visibility rules:**
 - **Customers (user)**: personal notifications + system broadcasts
+- **Suppliers**: personal notifications + system broadcasts
 - **Staff**: personal + broadcasts + staff-targeted notifications
-- **Admin**: personal + broadcasts + staff + admin-targeted notifications
 - **Superadmin**: all notifications
 
 **isRead / isSaved** reflect this user's state for each notification.`,

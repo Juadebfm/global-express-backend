@@ -3,9 +3,9 @@ import { db } from '../config/db'
 import {
   orders,
   packageImages,
-  bulkShipmentItems,
-  bulkShipments,
   orderPackages,
+  invoices,
+  users,
 } from '../../drizzle/schema'
 import { appSettings } from '../../drizzle/schema/app-settings'
 import { encrypt, decrypt } from '../utils/encryption'
@@ -16,8 +16,9 @@ import { sendOrderStatusUpdateEmail } from '../notifications/email'
 import { sendOrderStatusWhatsApp } from '../notifications/whatsapp'
 import { notifyUser } from './notifications.service'
 import { orderStatusEventsService } from './order-status-events.service'
-import { pricingV2Service } from './pricing-v2.service'
+import { pricingV2Service, SEA_CBM_TO_KG_FACTOR } from './pricing-v2.service'
 import { settingsTemplatesService } from './settings-templates.service'
+import { dispatchBatchesService } from './dispatch-batches.service'
 import {
   normalizeTransportMode,
   resolveTransportModeFromShipmentType,
@@ -32,6 +33,7 @@ import {
   PricingSource,
   ShipmentStatusV2,
   TransportMode,
+  UserRole,
 } from '../types/enums'
 
 /** Compute ETA from departure date + shipment type transit days */
@@ -109,6 +111,7 @@ export interface CreateOrderInput {
 export interface UpdateOrderStatusInput {
   statusV2: ShipmentStatusV2
   updatedBy: string
+  actorRole: UserRole
   // For notification purposes
   senderEmail?: string
   senderPhone?: string
@@ -119,6 +122,8 @@ export interface UpdateOrderStatusInput {
 }
 
 export interface WarehouseVerifyPackageInput {
+  supplierId?: string
+  arrivalAt?: Date
   description?: string
   itemType?: string
   quantity?: number
@@ -127,6 +132,7 @@ export interface WarehouseVerifyPackageInput {
   heightCm?: number
   weightKg?: number
   cbm?: number
+  itemCostUsd?: number
   specialPackagingType?: string
   isRestricted?: boolean
   restrictedReason?: string
@@ -148,10 +154,41 @@ function roundTo(n: number, decimals: number): number {
   return Math.round(n * factor) / factor
 }
 
+const AIR_VOLUMETRIC_DIVISOR = 6000
+
 export class OrdersService {
   async createOrder(input: CreateOrderInput) {
     const trackingNumber = generateTrackingNumber()
     const inferredTransportMode = resolveTransportModeFromShipmentType(input.shipmentType)
+    const shouldAttachToBatch = Boolean(inferredTransportMode) && !(input.isPreorder ?? false)
+    const dispatchBatchId = shouldAttachToBatch
+      ? (await dispatchBatchesService.getOrCreateOpenBatch(inferredTransportMode!, input.createdBy)).id
+      : null
+
+    if (shouldAttachToBatch && dispatchBatchId && inferredTransportMode) {
+      const [existingInBatch] = await db
+        .select()
+        .from(orders)
+        .where(
+          and(
+            eq(orders.senderId, input.senderId),
+            eq(orders.dispatchBatchId, dispatchBatchId),
+            eq(orders.transportMode, inferredTransportMode),
+            isNull(orders.deletedAt),
+          ),
+        )
+        .orderBy(desc(orders.createdAt))
+        .limit(1)
+
+      if (existingInBatch) {
+        await dispatchBatchesService.ensureDraftInvoiceForOrder({
+          orderId: existingInBatch.id,
+          actorId: input.createdBy,
+          totalUsd: Number(existingInBatch.finalChargeUsd ?? existingInBatch.calculatedChargeUsd ?? 0),
+        })
+        return this.decryptOrder(existingInBatch)
+      }
+    }
     // Pre-orders (customer self-created) start at PREORDER_SUBMITTED; staff-created start at AWAITING_WAREHOUSE_RECEIPT
     const initialStatusV2 = input.isPreorder
       ? ShipmentStatusV2.PREORDER_SUBMITTED
@@ -174,6 +211,7 @@ export class OrdersService {
         description: input.description ?? null,
         shipmentType: input.shipmentType ?? null,
         transportMode: inferredTransportMode,
+        dispatchBatchId,
         isPreorder: input.isPreorder ?? false,
         departureDate: input.departureDate ?? null,
         eta: input.eta ?? null,
@@ -184,6 +222,12 @@ export class OrdersService {
         pickupRepPhone: input.pickupRepPhone ? encrypt(input.pickupRepPhone) : null,
       })
       .returning()
+
+    await dispatchBatchesService.ensureDraftInvoiceForOrder({
+      orderId: order.id,
+      actorId: input.createdBy,
+      totalUsd: Number(order.finalChargeUsd ?? order.calculatedChargeUsd ?? 0),
+    })
 
     if (initialStatusV2) {
       orderStatusEventsService
@@ -291,6 +335,14 @@ export class OrdersService {
       .returning()
 
     if (!updated) return null
+
+    await dispatchBatchesService.handleDepartureStatus({
+      orderId: updated.id,
+      orderBatchId: updated.dispatchBatchId ?? null,
+      status: input.statusV2,
+      actorId: input.updatedBy,
+      actorRole: input.actorRole,
+    })
 
     // 7. Record status event (fire-and-forget)
     orderStatusEventsService
@@ -481,6 +533,19 @@ export class OrdersService {
           ? roundTo((pkg.lengthCm * pkg.widthCm * pkg.heightCm) / 1_000_000, 6)
           : undefined)
 
+      const derivedAirVolumetricWeightKg =
+        pkg.lengthCm && pkg.widthCm && pkg.heightCm
+          ? roundTo((pkg.lengthCm * pkg.widthCm * pkg.heightCm) / AIR_VOLUMETRIC_DIVISOR, 3)
+          : derivedCbm && derivedCbm > 0
+            ? roundTo((derivedCbm * 1_000_000) / AIR_VOLUMETRIC_DIVISOR, 3)
+            : null
+
+      // If dimensions are not available, fall back to actual measured weight for air billing.
+      const airChargeableWeightKg = roundTo(
+        Math.max(pkg.weightKg ?? 0, derivedAirVolumetricWeightKg ?? 0),
+        3,
+      )
+
       let specialPackagingSurchargeUsd: number | null = null
       if (pkg.specialPackagingType) {
         const surcharge = surchargeMap.get(pkg.specialPackagingType)
@@ -491,6 +556,8 @@ export class OrdersService {
       }
 
       return {
+        supplierId: pkg.supplierId ?? null,
+        arrivalAt: pkg.arrivalAt ?? new Date(),
         description: pkg.description ?? null,
         itemType: pkg.itemType ?? null,
         quantity: pkg.quantity ?? 1,
@@ -499,8 +566,11 @@ export class OrdersService {
         heightCm: pkg.heightCm ?? null,
         weightKg: pkg.weightKg ?? null,
         cbm: derivedCbm ?? null,
+        airVolumetricWeightKg: derivedAirVolumetricWeightKg,
+        airChargeableWeightKg,
         specialPackagingType: pkg.specialPackagingType ?? null,
         specialPackagingSurchargeUsd,
+        itemCostUsd: pkg.itemCostUsd ?? null,
         isRestricted: pkg.isRestricted ?? false,
         restrictedReason: pkg.restrictedReason ?? null,
         restrictedOverrideApproved: pkg.restrictedOverrideApproved ?? false,
@@ -526,8 +596,8 @@ export class OrdersService {
       )
     }
 
-    const totalWeightKg = roundTo(
-      normalizedPackages.reduce((sum, pkg) => sum + (pkg.weightKg ?? 0), 0),
+    const totalAirChargeableWeightKg = roundTo(
+      normalizedPackages.reduce((sum, pkg) => sum + pkg.airChargeableWeightKg, 0),
       3,
     )
 
@@ -541,11 +611,13 @@ export class OrdersService {
         ? Number(existing.weight)
         : undefined
 
-    const billableWeightKg = totalWeightKg > 0 ? totalWeightKg : fallbackWeight
+    const billableAirWeightKg = totalAirChargeableWeightKg > 0
+      ? totalAirChargeableWeightKg
+      : fallbackWeight
 
-    if (resolvedMode === TransportMode.AIR && (!billableWeightKg || billableWeightKg <= 0)) {
+    if (resolvedMode === TransportMode.AIR && (!billableAirWeightKg || billableAirWeightKg <= 0)) {
       throw new Error(
-        'Air verification requires positive weight (package weightKg or order weight).',
+        'Air verification requires positive chargeable weight (actual and/or volumetric from dimensions).',
       )
     }
 
@@ -553,10 +625,20 @@ export class OrdersService {
       throw new Error('Sea verification requires positive cbm (direct or derived from dimensions).')
     }
 
+    const seaChargeableWeightKg =
+      resolvedMode === TransportMode.SEA
+        ? roundTo(totalCbm * SEA_CBM_TO_KG_FACTOR, 3)
+        : undefined
+
     const pricing = await pricingV2Service.calculatePricing({
       customerId: existing.senderId,
       mode: resolvedMode,
-      weightKg: resolvedMode === TransportMode.AIR ? billableWeightKg : undefined,
+      weightKg:
+        resolvedMode === TransportMode.AIR
+          ? billableAirWeightKg
+          : resolvedMode === TransportMode.SEA
+            ? seaChargeableWeightKg
+            : undefined,
       cbm: resolvedMode === TransportMode.SEA ? totalCbm : undefined,
     })
 
@@ -615,6 +697,8 @@ export class OrdersService {
       await tx.insert(orderPackages).values(
         normalizedPackages.map((pkg) => ({
           orderId: id,
+          supplierId: pkg.supplierId,
+          arrivalAt: pkg.arrivalAt,
           description: pkg.description,
           itemType: pkg.itemType,
           quantity: pkg.quantity,
@@ -623,6 +707,7 @@ export class OrdersService {
           heightCm: pkg.heightCm !== null ? pkg.heightCm.toString() : null,
           weightKg: pkg.weightKg !== null ? pkg.weightKg.toString() : null,
           cbm: pkg.cbm !== null ? pkg.cbm.toString() : null,
+          itemCostUsd: pkg.itemCostUsd !== null ? pkg.itemCostUsd.toString() : null,
           specialPackagingType: pkg.specialPackagingType,
           specialPackagingSurchargeUsd: pkg.specialPackagingSurchargeUsd !== null ? pkg.specialPackagingSurchargeUsd.toString() : null,
           isRestricted: pkg.isRestricted,
@@ -634,6 +719,12 @@ export class OrdersService {
           updatedBy: input.verifiedBy,
         })),
       )
+    })
+
+    await dispatchBatchesService.ensureDraftInvoiceForOrder({
+      orderId: id,
+      actorId: input.verifiedBy,
+      totalUsd: finalChargeUsd,
     })
 
     orderStatusEventsService
@@ -688,43 +779,40 @@ export class OrdersService {
   }
 
   /**
-   * Unified customer shipments view — combines solo orders + bulk items for a user.
-   * Customers see everything in one list without knowing which is solo vs bulk.
+   * Customer shipments view.
+   * Bulk-item flow has been retired in favor of aggregated customer shipments.
    */
   async getMyShipments(userId: string, params: PaginationParams) {
-    // Fetch all solo orders and bulk items for the user in parallel
-    const [soloOrders, userBulkItems] = await Promise.all([
-      db
-        .select()
-        .from(orders)
-        .where(and(eq(orders.senderId, userId), isNull(orders.deletedAt)))
-        .orderBy(desc(orders.createdAt)),
-      db
-        .select({
-          id: bulkShipmentItems.id,
-          trackingNumber: bulkShipmentItems.trackingNumber,
-          statusV2: bulkShipmentItems.statusV2,
-          recipientName: bulkShipmentItems.recipientName,
-          recipientAddress: bulkShipmentItems.recipientAddress,
-          recipientPhone: bulkShipmentItems.recipientPhone,
-          recipientEmail: bulkShipmentItems.recipientEmail,
-          weight: bulkShipmentItems.weight,
-          declaredValue: bulkShipmentItems.declaredValue,
-          description: bulkShipmentItems.description,
-          createdAt: bulkShipmentItems.createdAt,
-          updatedAt: bulkShipmentItems.updatedAt,
-          origin: bulkShipments.origin,
-          destination: bulkShipments.destination,
-        })
-        .from(bulkShipmentItems)
-        .innerJoin(bulkShipments, eq(bulkShipmentItems.bulkShipmentId, bulkShipments.id))
-        .where(
-          and(eq(bulkShipmentItems.customerId, userId), isNull(bulkShipments.deletedAt)),
-        )
-        .orderBy(desc(bulkShipmentItems.createdAt)),
-    ])
+    const rows = await db
+      .select({
+        id: orders.id,
+        trackingNumber: orders.trackingNumber,
+        origin: orders.origin,
+        destination: orders.destination,
+        statusV2: orders.statusV2,
+        orderDirection: orders.orderDirection,
+        recipientName: orders.recipientName,
+        recipientAddress: orders.recipientAddress,
+        recipientPhone: orders.recipientPhone,
+        recipientEmail: orders.recipientEmail,
+        weight: orders.weight,
+        declaredValue: orders.declaredValue,
+        description: orders.description,
+        shipmentType: orders.shipmentType,
+        departureDate: orders.departureDate,
+        eta: orders.eta,
+        createdAt: orders.createdAt,
+        updatedAt: orders.updatedAt,
+        invoiceStatus: invoices.status,
+        invoiceTotalUsd: invoices.totalUsd,
+        invoiceTotalNgn: invoices.totalNgn,
+      })
+      .from(orders)
+      .leftJoin(invoices, eq(invoices.orderId, orders.id))
+      .where(and(eq(orders.senderId, userId), isNull(orders.deletedAt)))
+      .orderBy(desc(orders.createdAt))
 
-    const normalizedSolo = soloOrders.map((o) => {
+    const normalized = rows.map((o) => {
       const eta = computeEta(o.departureDate, o.shipmentType)
       return {
         type: 'solo' as const,
@@ -744,41 +832,17 @@ export class OrdersService {
         shipmentType: o.shipmentType,
         departureDate: o.departureDate ? o.departureDate.toISOString() : null,
         eta,
+        invoiceStatus: o.invoiceStatus ?? null,
+        invoiceTotalUsd: o.invoiceTotalUsd ?? null,
+        invoiceTotalNgn: o.invoiceTotalNgn ?? null,
         createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),
       }
     })
 
-    const normalizedBulk = userBulkItems.map((item) => ({
-      type: 'bulk_item' as const,
-      id: item.id,
-      trackingNumber: item.trackingNumber,
-      origin: item.origin,
-      destination: item.destination,
-      statusV2: item.statusV2,
-      orderDirection: null as string | null,
-      recipientName: decrypt(item.recipientName),
-      recipientAddress: decrypt(item.recipientAddress),
-      recipientPhone: decrypt(item.recipientPhone),
-      recipientEmail: item.recipientEmail ? decrypt(item.recipientEmail) : null,
-      weight: item.weight,
-      declaredValue: item.declaredValue,
-      description: item.description,
-      shipmentType: null as string | null,
-      departureDate: null as string | null,
-      eta: null as string | null,
-      createdAt: item.createdAt.toISOString(),
-      updatedAt: item.updatedAt.toISOString(),
-    }))
-
-    // Combine and sort by createdAt descending
-    const combined = [...normalizedSolo, ...normalizedBulk].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    )
-
-    const total = combined.length
+    const total = normalized.length
     const offset = getPaginationOffset(params.page, params.limit)
-    const data = combined.slice(offset, offset + params.limit)
+    const data = normalized.slice(offset, offset + params.limit)
 
     return buildPaginatedResult(data, total, params)
   }
@@ -791,6 +855,60 @@ export class OrdersService {
       .returning({ id: orders.id })
 
     return deleted ?? null
+  }
+
+  async getOrderGoodsBreakdown(orderId: string) {
+    const rows = await db
+      .select({
+        id: orderPackages.id,
+        description: orderPackages.description,
+        itemType: orderPackages.itemType,
+        quantity: orderPackages.quantity,
+        weightKg: orderPackages.weightKg,
+        cbm: orderPackages.cbm,
+        lengthCm: orderPackages.lengthCm,
+        widthCm: orderPackages.widthCm,
+        heightCm: orderPackages.heightCm,
+        itemCostUsd: orderPackages.itemCostUsd,
+        arrivalAt: orderPackages.arrivalAt,
+        supplierId: users.id,
+        supplierFirstName: users.firstName,
+        supplierLastName: users.lastName,
+        supplierBusinessName: users.businessName,
+      })
+      .from(orderPackages)
+      .leftJoin(users, eq(orderPackages.supplierId, users.id))
+      .where(eq(orderPackages.orderId, orderId))
+      .orderBy(desc(orderPackages.arrivalAt))
+
+    return rows.map((row) => {
+      const supplierFirstName = row.supplierFirstName ? decrypt(row.supplierFirstName) : null
+      const supplierLastName = row.supplierLastName ? decrypt(row.supplierLastName) : null
+      const supplierBusinessName = row.supplierBusinessName ? decrypt(row.supplierBusinessName) : null
+      const supplierName =
+        (supplierFirstName && supplierLastName && `${supplierFirstName} ${supplierLastName}`) ||
+        supplierFirstName ||
+        supplierBusinessName ||
+        null
+
+      return {
+        id: row.id,
+        description: row.description,
+        itemType: row.itemType,
+        quantity: row.quantity,
+        weightKg: row.weightKg,
+        cbm: row.cbm,
+        dimensionsCm: {
+          length: row.lengthCm,
+          width: row.widthCm,
+          height: row.heightCm,
+        },
+        itemCostUsd: row.itemCostUsd,
+        arrivalAt: row.arrivalAt?.toISOString() ?? null,
+        supplierId: row.supplierId ?? null,
+        supplierName,
+      }
+    })
   }
 
   async getOrderImages(orderId: string) {

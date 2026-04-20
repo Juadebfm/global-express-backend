@@ -77,7 +77,7 @@ export class WebPushService {
   }
 
   /**
-   * Send a push notification to all admin+ users.
+   * Send a push notification to all staff+ users.
    */
   async sendToAdmins(payload: PushPayload): Promise<void> {
     if (!isConfigured()) return
@@ -87,7 +87,7 @@ export class WebPushService {
       .from(users)
       .where(
         and(
-          inArray(users.role, [UserRole.SUPERADMIN, UserRole.ADMIN]),
+          inArray(users.role, [UserRole.SUPER_ADMIN, UserRole.STAFF]),
           eq(users.isActive, true),
         ),
       )

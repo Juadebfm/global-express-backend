@@ -33,8 +33,9 @@ export class ClientsService {
           firstName: users.firstName,
           lastName: users.lastName,
           businessName: users.businessName,
-          phone: users.phone,
-          addressCity: users.addressCity,
+        phone: users.phone,
+        shippingMark: users.shippingMark,
+        addressCity: users.addressCity,
           addressCountry: users.addressCountry,
           isActive: users.isActive,
           createdAt: users.createdAt,
@@ -78,6 +79,7 @@ export class ClientsService {
         lastName: users.lastName,
         businessName: users.businessName,
         phone: users.phone,
+        shippingMark: users.shippingMark,
         whatsappNumber: users.whatsappNumber,
         addressStreet: users.addressStreet,
         addressCity: users.addressCity,
@@ -112,6 +114,7 @@ export class ClientsService {
     lastName?: string
     businessName?: string
     phone?: string
+    shippingMark?: string
   }) {
     const [stub] = await db
       .insert(users)
@@ -123,6 +126,7 @@ export class ClientsService {
         lastName: input.lastName ? encrypt(input.lastName) : null,
         businessName: input.businessName ? encrypt(input.businessName) : null,
         phone: input.phone ? encrypt(input.phone) : null,
+        shippingMark: input.shippingMark ? encrypt(input.shippingMark) : null,
         role: UserRole.USER,
         isActive: false,
       })
@@ -147,6 +151,7 @@ export class ClientsService {
       lastName: string | null
       businessName: string | null
       phone: string | null
+      shippingMark: string | null
       isActive: boolean
       addressCity: string | null
       addressCountry: string | null
@@ -180,6 +185,7 @@ export class ClientsService {
       businessName,
       displayName,
       phone: row.phone ? decrypt(row.phone) : null,
+      shippingMark: row.shippingMark ? decrypt(row.shippingMark) : null,
       addressCity: row.addressCity,
       addressCountry: row.addressCountry,
       isActive: row.isActive,

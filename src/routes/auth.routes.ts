@@ -65,6 +65,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
             businessName: z.string().nullable(),
             phone: z.string().nullable(),
             whatsappNumber: z.string().nullable(),
+            shippingMark: z.string().nullable(),
             addressStreet: z.string().nullable(),
             addressCity: z.string().nullable(),
             addressState: z.string().nullable(),
@@ -89,7 +90,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     handler: usersController.getMe,
   })
 
-  // ─── Operator auth (internal staff / admin / superadmin) ──────────────────
+  // ─── Operator auth (internal staff / superadmin) ──────────────────
 
   /**
    * POST /api/v1/auth/login
@@ -101,7 +102,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     },
     schema: {
       tags: ['Auth'],
-      summary: 'Operator login (staff / admin / superadmin)',
+      summary: 'Operator login (staff / superadmin)',
       description: 'Authenticates an internal operator using email and password. Returns the user profile and a JWT access token.',
       body: z.object({
         email: z.string().email().describe('Operator email address'),

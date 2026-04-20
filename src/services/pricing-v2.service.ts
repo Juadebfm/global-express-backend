@@ -28,6 +28,9 @@ interface AirRateRuleLike {
 }
 
 interface SeaRateRuleLike {
+  minWeightKg: string | number | null
+  maxWeightKg: string | number | null
+  rateUsdPerKg: string | number | null
   flatRateUsdPerCbm: string | number | null
 }
 
@@ -40,7 +43,19 @@ export const DEFAULT_AIR_TIERS: readonly AirTier[] = [
   { minKg: 1501, maxKg: null, usdPerKg: 9.8 },
 ]
 
-export const DEFAULT_SEA_USD_PER_CBM = 550
+/**
+ * Sea chargeable-weight conversion:
+ * kg = cbm * 550
+ */
+export const SEA_CBM_TO_KG_FACTOR = 550
+
+/**
+ * Default sea rate is now expressed per chargeable kilogram.
+ * With DEFAULT_SEA_USD_PER_KG=1 and factor 550, the equivalent
+ * baseline remains 550 USD/CBM (legacy behavior).
+ */
+export const DEFAULT_SEA_USD_PER_KG = 1
+export const DEFAULT_SEA_USD_PER_CBM = SEA_CBM_TO_KG_FACTOR * DEFAULT_SEA_USD_PER_KG
 
 function roundToTwo(n: number): number {
   return Math.round(n * 100) / 100
@@ -95,12 +110,32 @@ export function pickAirRateFromRules(
   return candidates[0]?.rate ?? null
 }
 
-export function pickSeaRateFromRules(rules: readonly SeaRateRuleLike[]): number | null {
-  for (const rule of rules) {
-    const rate = toNumber(rule.flatRateUsdPerCbm)
-    if (rate !== null && rate > 0) return rate
-  }
-  return null
+export function pickSeaRateFromRules(
+  chargeableWeightKg: number,
+  rules: readonly SeaRateRuleLike[],
+): number | null {
+  const candidates = rules
+    .map((rule) => {
+      const perKgRate = toNumber(rule.rateUsdPerKg)
+      const flatPerCbmRate = toNumber(rule.flatRateUsdPerCbm)
+
+      // Backward compatibility: allow legacy sea flat-CBM rules by converting to per-kg.
+      const normalizedPerKgRate =
+        perKgRate ?? (flatPerCbmRate !== null ? flatPerCbmRate / SEA_CBM_TO_KG_FACTOR : null)
+
+      return {
+        min: toNumber(rule.minWeightKg),
+        max: toNumber(rule.maxWeightKg),
+        rate: normalizedPerKgRate,
+      }
+    })
+    .filter(
+      (rule): rule is { min: number | null; max: number | null; rate: number } =>
+        rule.rate !== null && inWeightRange(chargeableWeightKg, rule.min, rule.max),
+    )
+    .sort((a, b) => (b.min ?? -Infinity) - (a.min ?? -Infinity))
+
+  return candidates[0]?.rate ?? null
 }
 
 export interface ResolvedPricingContext extends PricingContext {
@@ -145,25 +180,23 @@ export class PricingV2Service {
       return fallbackDefault
     }
 
-    if (context.cbm === undefined || context.cbm <= 0) {
-      throw new Error('Sea pricing requires a positive cbm')
-    }
+    const seaChargeableWeightKg = this.resolveSeaChargeableWeightKg(context)
 
     const customerRules = await this.getActiveCustomerRules(customerId, TransportMode.SEA, at)
-    const overrideSeaRate = pickSeaRateFromRules(customerRules)
+    const overrideSeaRate = pickSeaRateFromRules(seaChargeableWeightKg, customerRules)
     if (overrideSeaRate !== null) {
       return {
-        amountUsd: roundToTwo(context.cbm * overrideSeaRate),
+        amountUsd: roundToTwo(seaChargeableWeightKg * overrideSeaRate),
         mode: TransportMode.SEA,
         pricingSource: PricingSource.CUSTOMER_OVERRIDE,
       }
     }
 
     const defaultRules = await this.getActiveDefaultRules(TransportMode.SEA, at)
-    const defaultSeaRate = pickSeaRateFromRules(defaultRules)
+    const defaultSeaRate = pickSeaRateFromRules(seaChargeableWeightKg, defaultRules)
     if (defaultSeaRate !== null) {
       return {
-        amountUsd: roundToTwo(context.cbm * defaultSeaRate),
+        amountUsd: roundToTwo(seaChargeableWeightKg * defaultSeaRate),
         mode: TransportMode.SEA,
         pricingSource: PricingSource.DEFAULT_RATE,
       }
@@ -186,15 +219,25 @@ export class PricingV2Service {
       }
     }
 
-    if (context.cbm === undefined || context.cbm <= 0) {
-      throw new Error('Sea pricing requires a positive cbm')
-    }
+    const seaChargeableWeightKg = this.resolveSeaChargeableWeightKg(context)
 
     return {
-      amountUsd: roundToTwo(context.cbm * DEFAULT_SEA_USD_PER_CBM),
+      amountUsd: roundToTwo(seaChargeableWeightKg * DEFAULT_SEA_USD_PER_KG),
       mode: TransportMode.SEA,
       pricingSource: PricingSource.DEFAULT_RATE,
     }
+  }
+
+  private resolveSeaChargeableWeightKg(context: PricingContext): number {
+    if (context.weightKg !== undefined && context.weightKg > 0) {
+      return context.weightKg
+    }
+
+    if (context.cbm !== undefined && context.cbm > 0) {
+      return context.cbm * SEA_CBM_TO_KG_FACTOR
+    }
+
+    throw new Error('Sea pricing requires a positive cbm or chargeable weightKg')
   }
 
   private async getActiveCustomerRules(

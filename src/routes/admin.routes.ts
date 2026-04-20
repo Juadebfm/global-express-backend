@@ -14,6 +14,7 @@ const clientSchema = z.object({
   businessName: z.string().nullable(),
   displayName: z.string().nullable(),
   phone: z.string().nullable(),
+  shippingMark: z.string().nullable(),
   addressCity: z.string().nullable(),
   addressCountry: z.string().nullable(),
   isActive: z.boolean(),
@@ -85,6 +86,7 @@ The stub is created with \`isActive: false\`. When the customer accepts the invi
         lastName: z.string().optional().describe('Customer last name (optional)'),
         businessName: z.string().optional().describe('Business / company name (optional)'),
         phone: z.string().optional().describe('Customer phone number (optional)'),
+        shippingMark: z.string().optional().describe('Optional shipping mark (superadmin only)'),
       }),
       response: {
         201: z.object({
@@ -135,7 +137,7 @@ The stub is created with \`isActive: false\`. When the customer accepts the invi
 - \`totalSpent\` — sum of successful payments
 - \`lastOrderDate\` — most recent order date
 
-Requires **staff**, **admin**, or **superadmin** role.`,
+Requires **staff** or **superadmin** role.`,
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         page: z.coerce.number().int().positive().optional().default(1),

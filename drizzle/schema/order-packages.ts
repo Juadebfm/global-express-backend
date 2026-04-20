@@ -38,6 +38,9 @@ export const orderPackages = pgTable(
     specialPackagingType: text('special_packaging_type'),
     specialPackagingSurchargeUsd: numeric('special_packaging_surcharge_usd', { precision: 10, scale: 2 }),
     restrictedOverrideBy: uuid('restricted_override_by').references(() => users.id),
+    supplierId: uuid('supplier_id').references(() => users.id),
+    arrivalAt: timestamp('arrival_at').notNull().defaultNow(),
+    itemCostUsd: numeric('item_cost_usd', { precision: 12, scale: 2 }),
     createdBy: uuid('created_by').references(() => users.id),
     updatedBy: uuid('updated_by').references(() => users.id),
     createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -46,6 +49,8 @@ export const orderPackages = pgTable(
   (table) => [
     index('order_packages_order_id_idx').on(table.orderId),
     index('order_packages_bulk_item_id_idx').on(table.bulkItemId),
+    index('order_packages_supplier_id_idx').on(table.supplierId),
+    index('order_packages_arrival_at_idx').on(table.arrivalAt),
     index('order_packages_item_type_idx').on(table.itemType),
   ],
 )

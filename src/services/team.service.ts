@@ -9,13 +9,12 @@ import { UserRole } from '../types/enums'
 // Role → permissions mapping shown in the team panel
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   superadmin: ['Manage Users', 'Manage Team', 'View Reports', 'Manage Orders', 'Send Notifications', 'System Settings'],
-  admin:       ['Manage Users', 'View Reports', 'Manage Orders', 'Send Notifications'],
   staff:       ['View Reports', 'Manage Orders'],
 }
 
 export class TeamService {
   /**
-   * Paginated list of internal users (staff, admin, superadmin).
+   * Paginated list of internal users (staff, superadmin).
    * Returns decrypted PII + derived permissions array.
    */
   async listTeam(params: PaginationParams & { role?: string; isActive?: boolean }) {
@@ -23,8 +22,9 @@ export class TeamService {
 
     const baseWhere = and(
       isNull(users.deletedAt),
-      // Internal users only — exclude customers
+      // Internal users only — exclude customers and suppliers
       ne(users.role, UserRole.USER),
+      ne(users.role, UserRole.SUPPLIER),
       params.role ? eq(users.role, params.role as UserRole) : undefined,
       params.isActive !== undefined ? eq(users.isActive, params.isActive) : undefined,
     )
@@ -65,6 +65,7 @@ export class TeamService {
           eq(users.id, userId),
           isNull(users.deletedAt),
           ne(users.role, UserRole.USER),
+          ne(users.role, UserRole.SUPPLIER),
         ),
       )
       .returning()

@@ -2,8 +2,9 @@ import { createHmac } from 'crypto'
 import { eq, and, desc, sql, isNull } from 'drizzle-orm'
 import axios from 'axios'
 import { db } from '../config/db'
-import { payments, orders } from '../../drizzle/schema'
+import { payments, orders, invoices } from '../../drizzle/schema'
 import { notificationsService } from './notifications.service'
+import { dispatchBatchesService } from './dispatch-batches.service'
 import { UserRole } from '../types/enums'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { env } from '../config/env'
@@ -13,7 +14,8 @@ import { PaymentStatus, PaymentType } from '../types/enums'
 const PAYSTACK_API = 'https://api.paystack.co'
 
 export interface InitializePaymentInput {
-  orderId: string
+  orderId?: string
+  invoiceId?: string
   userId: string
   amount: number // in smallest currency unit (kobo for NGN)
   currency?: string
@@ -48,8 +50,36 @@ export interface PaystackVerifyResponse {
 
 export class PaymentsService {
   async initializePayment(input: InitializePaymentInput) {
-    const { orderId, userId, amount, email, callbackUrl, metadata } = input
+    const { userId, amount, email, callbackUrl, metadata } = input
     const currency = input.currency ?? 'NGN'
+
+    let resolvedOrderId = input.orderId
+    let resolvedInvoiceId = input.invoiceId
+
+    if (resolvedInvoiceId) {
+      const [invoice] = await db
+        .select({ id: invoices.id, orderId: invoices.orderId })
+        .from(invoices)
+        .where(eq(invoices.id, resolvedInvoiceId))
+        .limit(1)
+
+      if (!invoice) {
+        throw new Error('Invoice not found')
+      }
+      resolvedOrderId = invoice.orderId
+    }
+
+    if (!resolvedOrderId) {
+      throw new Error('orderId or invoiceId is required')
+    }
+
+    if (!resolvedInvoiceId) {
+      const invoice = await dispatchBatchesService.getInvoiceByOrderId(resolvedOrderId)
+      if (!invoice) {
+        throw new Error('Invoice not found for order')
+      }
+      resolvedInvoiceId = invoice.id
+    }
 
     const response = await axios.post<PaystackInitializeResponse>(
       `${PAYSTACK_API}/transaction/initialize`,
@@ -78,7 +108,8 @@ export class PaymentsService {
     const [payment] = await db
       .insert(payments)
       .values({
-        orderId,
+        orderId: resolvedOrderId,
+        invoiceId: resolvedInvoiceId ?? null,
         userId,
         amount: String(amount / 100), // store in major units
         currency,
@@ -125,13 +156,18 @@ export class PaymentsService {
         .update(orders)
         .set({ paymentCollectionStatus: 'PAID_IN_FULL', updatedAt: new Date() })
         .where(eq(orders.id, updated.orderId))
+      await dispatchBatchesService.markInvoicePaidByOrder({
+        orderId: updated.orderId,
+        paidAt: updated.paidAt,
+      })
     }
 
     return updated ?? null
   }
 
   async recordOfflinePayment(input: {
-    orderId: string
+    orderId?: string
+    invoiceId?: string
     userId: string
     recordedBy: string
     amount: number // major currency units (NGN)
@@ -139,11 +175,26 @@ export class PaymentsService {
     proofReference?: string
     note?: string
   }) {
+    let resolvedOrderId = input.orderId
+
+    if (!resolvedOrderId && input.invoiceId) {
+      const [invoice] = await db
+        .select({ orderId: invoices.orderId })
+        .from(invoices)
+        .where(eq(invoices.id, input.invoiceId))
+        .limit(1)
+      resolvedOrderId = invoice?.orderId
+    }
+
+    if (!resolvedOrderId) {
+      throw new Error('orderId or invoiceId is required')
+    }
+
     // Validate: order must exist and amount must not exceed the order charge
     const [order] = await db
       .select({ finalChargeUsd: orders.finalChargeUsd, calculatedChargeUsd: orders.calculatedChargeUsd })
       .from(orders)
-      .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))
+      .where(and(eq(orders.id, resolvedOrderId), isNull(orders.deletedAt)))
 
     if (!order) {
       throw new Error('Order not found')
@@ -164,7 +215,8 @@ export class PaymentsService {
       const [newPayment] = await tx
         .insert(payments)
         .values({
-          orderId: input.orderId,
+          orderId: resolvedOrderId,
+          invoiceId: input.invoiceId ?? null,
           userId: input.userId,
           amount: String(input.amount),
           currency: 'NGN',
@@ -181,9 +233,15 @@ export class PaymentsService {
       await tx
         .update(orders)
         .set({ paymentCollectionStatus: 'PAID_IN_FULL', updatedAt: new Date() })
-        .where(eq(orders.id, input.orderId))
+        .where(eq(orders.id, resolvedOrderId))
 
       return [newPayment]
+    })
+
+    await dispatchBatchesService.markInvoicePaidByOrder({
+      orderId: resolvedOrderId,
+      actorId: input.recordedBy,
+      paidAt: payment.paidAt,
     })
 
     return payment
@@ -226,11 +284,15 @@ export class PaymentsService {
           .update(orders)
           .set({ paymentCollectionStatus: 'PAID_IN_FULL', updatedAt: new Date() })
           .where(eq(orders.id, payment.orderId))
+        await dispatchBatchesService.markInvoicePaidByOrder({
+          orderId: payment.orderId,
+          paidAt: payment.paidAt,
+        })
       }
 
       // Fire-and-forget: notify superadmin of successful payment
       notificationsService.notifyRole({
-        targetRole: UserRole.ADMIN,
+        targetRole: UserRole.STAFF,
         type: 'payment_received',
         title: 'Payment Received',
         body: `Payment received for reference ${event.data.reference}`,
@@ -248,7 +310,7 @@ export class PaymentsService {
 
       // Fire-and-forget: notify superadmin of failed payment
       notificationsService.notifyRole({
-        targetRole: UserRole.ADMIN,
+        targetRole: UserRole.STAFF,
         type: 'payment_failed',
         title: 'Payment Failed',
         body: `Payment failed for reference ${event.data.reference}`,

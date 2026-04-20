@@ -50,15 +50,15 @@ export class DashboardService {
   /**
    * KPI stats — counts by V2 status + financial summary + period-over-period change.
    *
-   * Admin/staff/superadmin: global data across all orders.
-   * Customer (role=user):   filtered to their own orders + their own payments.
+   * Staff/superadmin: global data across all orders.
+   * Customer (role=user/supplier): filtered to their own orders + their own payments.
    *
    * Change fields compare last 30 days vs the prior 30 days (days 31–60).
    * Returns null when the prior period had 0 activity (no baseline to compare).
    */
   async getStats(userId: string, role: string) {
-    const isCustomer  = role === UserRole.USER
-    const isSuperAdmin = role === UserRole.SUPERADMIN
+    const isCustomer  = role === UserRole.USER || role === UserRole.SUPPLIER
+    const isSuperAdmin = role === UserRole.SUPER_ADMIN
     // Only fetch financial data for roles that will use it
     const needsFinancial = isCustomer || isSuperAdmin
 
@@ -211,7 +211,7 @@ export class DashboardService {
    * Returns all 12 months, defaulting to "0" for months with no data.
    */
   async getTrends(userId: string, role: string, year: number) {
-    const isCustomer = role === UserRole.USER
+    const isCustomer = role === UserRole.USER || role === UserRole.SUPPLIER
     const yearStart = new Date(`${year}-01-01T00:00:00Z`)
     const yearEnd   = new Date(`${year + 1}-01-01T00:00:00Z`)
 
@@ -256,10 +256,10 @@ export class DashboardService {
    * Active deliveries — current non-terminal orders grouped by destination.
    * Status: on_time (ETA >= now), delayed (ETA < now and not null), unknown (no ETA).
    *
-   * Admin/staff: all orders. Customer: their own.
+   * Staff/superadmin: all orders. Customer/supplier: their own.
    */
   async getActiveDeliveries(userId: string, role: string) {
-    const isCustomer = role === UserRole.USER
+    const isCustomer = role === UserRole.USER || role === UserRole.SUPPLIER
     const now = new Date()
     const nonTerminalPgArr = `{${NON_TERMINAL_V2.join(',')}}`
 

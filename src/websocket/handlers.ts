@@ -5,6 +5,7 @@ import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { internalAuthService } from '../services/internal-auth.service'
+import { UserRole } from '../types/enums'
 
 /** Maps DB userId → set of open WebSocket connections for that user. */
 // WebSocket type comes from the ws package bundled with @fastify/websocket
@@ -19,7 +20,7 @@ export const ticketRooms = new Map<string, Set<string>>()
  *
  * Supports two token types via the `token` query parameter:
  *   1. Clerk JWT    — for customers (role: user)
- *   2. Internal JWT — for staff / admin / superadmin
+ *   2. Internal JWT — for staff / superadmin
  *
  * Token type is detected by peeking at the `type` claim in the JWT payload
  * (same strategy as the authenticate middleware).
@@ -55,7 +56,7 @@ export async function handleWebSocketConnection(
 
   let userId: string
 
-  // ─── Branch 1: Internal JWT (staff / admin / superadmin) ─────────────────
+  // ─── Branch 1: Internal JWT (staff / superadmin) ─────────────────
   if (tokenType === 'internal') {
     try {
       const payload = internalAuthService.verifyToken(token)
@@ -87,13 +88,19 @@ export async function handleWebSocketConnection(
       }
 
       const [user] = await db
-        .select({ id: users.id })
+        .select({ id: users.id, role: users.role })
         .from(users)
         .where(and(eq(users.clerkId, payload.sub), isNull(users.deletedAt)))
         .limit(1)
 
       if (!user) {
         socket.close(4001, 'Unauthorized — user not found')
+        return
+      }
+
+      // Internal operator roles must never authenticate through Clerk.
+      if ([UserRole.STAFF, UserRole.SUPER_ADMIN].includes(user.role as UserRole)) {
+        socket.close(4003, 'Forbidden — internal roles must sign in via internal auth')
         return
       }
 

@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { ordersService } from '../services/orders.service'
 import { orderStatusEventsService } from '../services/order-status-events.service'
-import { bulkOrdersService } from '../services/bulk-orders.service'
+import { dispatchBatchesService } from '../services/dispatch-batches.service'
 import { usersService } from '../services/users.service'
 import { notificationsService } from '../services/notifications.service'
 import { pricingV2Service } from '../services/pricing-v2.service'
@@ -9,6 +9,12 @@ import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import { ShipmentStatusV2, TransportMode, UserRole } from '../types/enums'
 import { STATUS_LABELS } from '../domain/shipment-v2/status-labels'
+
+const SEA_CBM_TO_KG_FACTOR = 550
+
+function isCustomerRole(role: UserRole): boolean {
+  return role === UserRole.USER || role === UserRole.SUPPLIER
+}
 
 function formatLastUpdate(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date
@@ -54,6 +60,7 @@ function buildTrackingResponse(params: {
   status: string
   updatedAt: Date | string
   timeline?: Array<{ status: string | null; createdAt: Date }>
+  details?: Record<string, unknown>
 }) {
   return {
     trackingNumber: params.trackingNumber,
@@ -69,6 +76,7 @@ function buildTrackingResponse(params: {
       statusLabel: STATUS_LABELS[e.status ?? ''] ?? e.status,
       timestamp: e.createdAt.toISOString(),
     })),
+    ...(params.details ?? {}),
   }
 }
 
@@ -95,14 +103,13 @@ export const ordersController = {
     const userRole = request.user.role as UserRole
 
     // Customers always create for themselves — only staff+ can specify a different senderId
-    const senderId =
-      userRole === UserRole.USER
-        ? request.user.id
-        : (request.body.senderId ?? request.user.id)
+    const senderId = isCustomerRole(userRole)
+      ? request.user.id
+      : (request.body.senderId ?? request.user.id)
 
     // Customers must have a complete profile (name, phone, full address) before placing an order.
     // Staff creating on behalf of a customer bypass this check.
-    if (userRole === UserRole.USER) {
+    if (isCustomerRole(userRole)) {
       const profile = await usersService.getUserById(request.user.id)
       if (!profile || !usersService.isProfileComplete(profile)) {
         return reply.code(422).send({
@@ -125,7 +132,7 @@ export const ordersController = {
       description: request.body.description,
       shipmentType: request.body.shipmentType,
       // Customers creating for themselves are pre-ordering (item not yet at warehouse)
-      isPreorder: userRole === UserRole.USER,
+      isPreorder: isCustomerRole(userRole),
       createdBy: request.user.id,
       pickupRepName: request.body.pickupRepName,
       pickupRepPhone: request.body.pickupRepPhone,
@@ -141,7 +148,7 @@ export const ordersController = {
 
     // Fire-and-forget: notify superadmin of new order
     notificationsService.notifyRole({
-      targetRole: UserRole.ADMIN,
+      targetRole: UserRole.STAFF,
       type: 'new_order',
       title: 'New Order Created',
       body: `Order ${order.trackingNumber} was created`,
@@ -160,10 +167,9 @@ export const ordersController = {
     const userRole = request.user.role as UserRole
 
     // Regular users only see their own orders
-    const senderId =
-      userRole === UserRole.USER
-        ? request.user.id
-        : (request.query.senderId ?? undefined)
+    const senderId = isCustomerRole(userRole)
+      ? request.user.id
+      : (request.query.senderId ?? undefined)
 
     const result = await ordersService.listOrders({
       page: Number(request.query.page) || 1,
@@ -201,7 +207,7 @@ export const ordersController = {
 
     // Users can only view their own orders
     const userRole = request.user.role as UserRole
-    if (userRole === UserRole.USER && order.senderId !== request.user.id) {
+    if (isCustomerRole(userRole) && order.senderId !== request.user.id) {
       return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 
@@ -214,10 +220,24 @@ export const ordersController = {
   ) {
     const { trackingNumber } = request.params
 
-    // Check solo orders first
     const order = await ordersService.getOrderByTrackingNumber(trackingNumber)
     if (order) {
-      const events = await orderStatusEventsService.getByOrderId(order.id)
+      const [events, goods, invoice] = await Promise.all([
+        orderStatusEventsService.getByOrderId(order.id),
+        ordersService.getOrderGoodsBreakdown(order.id),
+        dispatchBatchesService.getInvoiceByOrderId(order.id),
+      ])
+
+      const distinctVendors = new Set(
+        goods.map((g) => g.supplierId).filter((id): id is string => typeof id === 'string'),
+      )
+      const paymentStatus =
+        invoice
+          ? await dispatchBatchesService.getPaymentStatusForInvoice(invoice.id)
+          : order.paymentCollectionStatus === 'PAID_IN_FULL'
+            ? 'completed'
+            : 'pending'
+
       return reply.send(
         successResponse(buildTrackingResponse({
           trackingNumber: order.trackingNumber,
@@ -226,20 +246,17 @@ export const ordersController = {
           status: order.statusV2 ?? '',
           updatedAt: order.updatedAt,
           timeline: events,
-        })),
-      )
-    }
-
-    // Check bulk shipment items (no status events table for bulk — timeline is empty)
-    const bulkItem = await bulkOrdersService.getBulkItemByTrackingNumber(trackingNumber)
-    if (bulkItem) {
-      return reply.send(
-        successResponse(buildTrackingResponse({
-          trackingNumber: bulkItem.trackingNumber,
-          origin: bulkItem.origin,
-          destination: bulkItem.destination,
-          status: bulkItem.statusV2 ?? '',
-          updatedAt: bulkItem.updatedAt.toISOString(),
+          details: {
+            paymentStatus,
+            estimatedDelivery: order.eta ?? null,
+            shipmentCost: {
+              usd: invoice?.totalUsd ?? order.finalChargeUsd ?? order.calculatedChargeUsd ?? null,
+              ngn: invoice?.totalNgn ?? null,
+              invoiceStatus: invoice?.status ?? null,
+            },
+            vendorCount: distinctVendors.size,
+            goodsBreakdown: goods,
+          },
         })),
       )
     }
@@ -266,6 +283,7 @@ export const ordersController = {
       updated = await ordersService.updateOrderStatus(request.params.id, {
         statusV2: request.body.statusV2,
         updatedBy: request.user.id,
+        actorRole: request.user.role as UserRole,
         senderEmail: sender?.email,
         senderPhone: sender?.phone ?? undefined,
         notifyEmailAlerts: sender?.notifyEmailAlerts,
@@ -301,6 +319,8 @@ export const ordersController = {
         transportMode?: TransportMode
         departureDate?: string
         packages: Array<{
+          supplierId?: string
+          arrivalAt?: string
           description?: string
           itemType?: string
           quantity?: number
@@ -309,6 +329,7 @@ export const ordersController = {
           heightCm?: number
           weightKg?: number
           cbm?: number
+          itemCostUsd?: number
           isRestricted?: boolean
           restrictedReason?: string
           restrictedOverrideApproved?: boolean
@@ -327,7 +348,7 @@ export const ordersController = {
       if (hasRestrictedOverride && request.user.role === UserRole.STAFF) {
         return reply.code(403).send({
           success: false,
-          message: 'Only admin or superadmin can approve restricted-item overrides.',
+          message: 'Only superadmin can approve restricted-item overrides.',
         })
       }
 
@@ -335,7 +356,10 @@ export const ordersController = {
         verifiedBy: request.user.id,
         transportMode: request.body.transportMode,
         departureDate: request.body.departureDate ? new Date(request.body.departureDate) : undefined,
-        packages: request.body.packages,
+        packages: request.body.packages.map((pkg) => ({
+          ...pkg,
+          arrivalAt: pkg.arrivalAt ? new Date(pkg.arrivalAt) : undefined,
+        })),
         manualFinalChargeUsd: request.body.manualFinalChargeUsd,
         manualAdjustmentReason: request.body.manualAdjustmentReason,
       })
@@ -400,7 +424,7 @@ export const ordersController = {
 
     // Customers can only update their own orders
     const userRole = request.user.role as UserRole
-    if (userRole === UserRole.USER && order.senderId !== request.user.id) {
+    if (isCustomerRole(userRole) && order.senderId !== request.user.id) {
       return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 
@@ -453,14 +477,22 @@ export const ordersController = {
     }
 
     try {
+      const seaChargeableWeightKg =
+        mode === TransportMode.SEA && cbm ? cbm * SEA_CBM_TO_KG_FACTOR : undefined
+
       const pricing = await pricingV2Service.calculatePricing({
         customerId: request.user.id,
         mode,
-        weightKg: mode === TransportMode.AIR ? weightKg : undefined,
+        weightKg:
+          mode === TransportMode.AIR
+            ? weightKg
+            : mode === TransportMode.SEA
+              ? seaChargeableWeightKg
+              : undefined,
         cbm: mode === TransportMode.SEA ? cbm : undefined,
       })
 
-      const departureFrequency = mode === TransportMode.AIR ? 'Weekly' : 'Monthly'
+      const departureFrequency = 'Event-driven (based on warehouse movement)'
       const estimatedTransitDays = mode === TransportMode.AIR ? 7 : 90
 
       return reply.send(
@@ -492,7 +524,7 @@ export const ordersController = {
     }
 
     const userRole = request.user.role as UserRole
-    if (userRole === UserRole.USER && order.senderId !== request.user.id) {
+    if (isCustomerRole(userRole) && order.senderId !== request.user.id) {
       return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 

@@ -58,18 +58,32 @@ export interface CreateRoleNotificationInput {
 
 // ─── Role hierarchy helper ────────────────────────────────────────────────────
 
-const ROLE_HIERARCHY: UserRole[] = [
-  UserRole.USER,
-  UserRole.STAFF,
-  UserRole.ADMIN,
-  UserRole.SUPERADMIN,
-]
-
 /** Returns all targetRole values this user's role can see. */
 function getVisibleTargetRoles(userRole: UserRole): UserRole[] {
-  const level = ROLE_HIERARCHY.indexOf(userRole)
-  if (level < 0) return []
-  return ROLE_HIERARCHY.slice(0, level + 1)
+  if (userRole === UserRole.SUPER_ADMIN) {
+    return [UserRole.USER, UserRole.SUPPLIER, UserRole.STAFF, UserRole.SUPER_ADMIN]
+  }
+  if (userRole === UserRole.STAFF) {
+    return [UserRole.USER, UserRole.SUPPLIER, UserRole.STAFF]
+  }
+  if (userRole === UserRole.SUPPLIER) {
+    return [UserRole.SUPPLIER]
+  }
+  return [UserRole.USER]
+}
+
+/** Returns all user roles that should receive a notification targeted at `targetRole`. */
+function getAudienceRolesForTargetRole(targetRole: UserRole): UserRole[] {
+  if (targetRole === UserRole.SUPER_ADMIN) {
+    return [UserRole.SUPER_ADMIN]
+  }
+  if (targetRole === UserRole.STAFF) {
+    return [UserRole.STAFF, UserRole.SUPER_ADMIN]
+  }
+  if (targetRole === UserRole.SUPPLIER) {
+    return [UserRole.SUPPLIER, UserRole.STAFF, UserRole.SUPER_ADMIN]
+  }
+  return [UserRole.USER, UserRole.STAFF, UserRole.SUPER_ADMIN]
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -159,7 +173,7 @@ export class NotificationsService {
         .returning()
 
       // Push via WebSocket to all connected users at or above the target role
-      const visibleRoles = ROLE_HIERARCHY.slice(ROLE_HIERARCHY.indexOf(input.targetRole))
+      const visibleRoles = getAudienceRolesForTargetRole(input.targetRole)
       const matchingUsers = await db
         .select({ id: users.id, email: users.email, role: users.role })
         .from(users)
@@ -195,7 +209,7 @@ export class NotificationsService {
 
       // Email all active superadmins
       const superadminEmails = matchingUsers
-        .filter((u) => u.role === UserRole.SUPERADMIN)
+        .filter((u) => u.role === UserRole.SUPER_ADMIN)
         .map((sa) => decrypt(sa.email))
 
       await Promise.allSettled(

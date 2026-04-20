@@ -9,6 +9,7 @@ import { PaymentStatus, PaymentType } from '../types/enums'
 const paymentResponseSchema = z.object({
   id: z.string().uuid().describe('Payment UUID'),
   orderId: z.string().uuid().describe('UUID of the linked order'),
+  invoiceId: z.string().uuid().nullable().describe('UUID of the linked invoice (preferred billing entity)'),
   userId: z.string().uuid().describe('UUID of the customer who made the payment'),
   amount: z.string().describe('Amount in major currency units (e.g. "5000" = ₦5,000)'),
   currency: z.string().describe('ISO currency code (e.g. NGN)'),
@@ -48,7 +49,7 @@ After the customer pays and returns to your \`callbackUrl\`, call \`POST /api/v1
 **Example request body:**
 \`\`\`json
 {
-  "orderId": "550e8400-e29b-41d4-a716-446655440000",
+  "invoiceId": "550e8400-e29b-41d4-a716-446655440001",
   "amount": 500000,
   "currency": "NGN",
   "callbackUrl": "https://yourapp.com/payment/callback"
@@ -56,10 +57,13 @@ After the customer pays and returns to your \`callbackUrl\`, call \`POST /api/v1
 \`\`\``,
       security: [{ bearerAuth: [] }],
       body: z.object({
-        orderId: z.string().uuid().describe('UUID of the order being paid for'),
+        orderId: z.string().uuid().optional().describe('UUID of the order being paid for (legacy)'),
+        invoiceId: z.string().uuid().optional().describe('UUID of the invoice being paid for (preferred)'),
         amount: z.number().int().positive().describe('Amount in kobo — ₦5,000 = 500000'),
         currency: z.string().default('NGN').optional().describe('ISO currency code (default: NGN)'),
         callbackUrl: z.string().url().optional().describe('URL Paystack redirects to after payment — include your success/failure handling'),
+      }).refine((v) => Boolean(v.orderId || v.invoiceId), {
+        message: 'Either orderId or invoiceId is required',
       }),
       response: {
         201: z.object({
@@ -244,6 +248,7 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
       params: z.object({ orderId: z.string().uuid().describe('UUID of the order being paid for') }),
       body: z.object({
         userId: z.string().uuid().describe('UUID of the customer making the payment'),
+        invoiceId: z.string().uuid().optional().describe('Invoice UUID (preferred). If omitted, backend resolves from orderId.'),
         amount: z.number().positive().describe('Amount in major currency units (NGN) — e.g. 45000 = ₦45,000'),
         paymentType: z.enum(['transfer', 'cash']).describe('Offline payment method: transfer | cash'),
         proofReference: z.string().optional().describe('Bank receipt / transfer reference code'),

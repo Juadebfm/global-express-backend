@@ -8,7 +8,8 @@ export const paymentsController = {
   async initializePayment(
     request: FastifyRequest<{
       Body: {
-        orderId: string
+        orderId?: string
+        invoiceId?: string
         amount: number
         currency?: string
         callbackUrl?: string
@@ -18,6 +19,7 @@ export const paymentsController = {
   ) {
     const result = await paymentsService.initializePayment({
       orderId: request.body.orderId,
+      invoiceId: request.body.invoiceId,
       userId: request.user.id,
       amount: request.body.amount,
       currency: request.body.currency,
@@ -39,7 +41,10 @@ export const paymentsController = {
     }
 
     // Customers can only verify their own payments
-    if (request.user.role === UserRole.USER && payment.userId !== request.user.id) {
+    if (
+      [UserRole.USER, UserRole.SUPPLIER].includes(request.user.role as UserRole) &&
+      payment.userId !== request.user.id
+    ) {
       return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 
@@ -81,7 +86,10 @@ export const paymentsController = {
     }
 
     // Customers can only view their own payments
-    if (request.user.role === UserRole.USER && payment.userId !== request.user.id) {
+    if (
+      [UserRole.USER, UserRole.SUPPLIER].includes(request.user.role as UserRole) &&
+      payment.userId !== request.user.id
+    ) {
       return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 
@@ -125,6 +133,7 @@ export const paymentsController = {
       Params: { orderId: string }
       Body: {
         userId: string
+        invoiceId?: string
         amount: number
         paymentType: PaymentType.TRANSFER | PaymentType.CASH
         proofReference?: string
@@ -135,6 +144,7 @@ export const paymentsController = {
   ) {
     const payment = await paymentsService.recordOfflinePayment({
       orderId: request.params.orderId,
+      invoiceId: request.body.invoiceId,
       userId: request.body.userId,
       recordedBy: request.user.id,
       amount: request.body.amount,

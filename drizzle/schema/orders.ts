@@ -92,6 +92,7 @@ export const orders = pgTable(
     paymentCollectionStatus: paymentCollectionStatusEnum('payment_collection_status')
       .notNull()
       .default('UNPAID'),
+    dispatchBatchId: uuid('dispatch_batch_id'),
     pickupRepName: text('pickup_rep_name'),
     pickupRepPhone: text('pickup_rep_phone'),
     flaggedForAdminReview: boolean('flagged_for_admin_review').notNull().default(false),
@@ -108,6 +109,7 @@ export const orders = pgTable(
     index('orders_sender_id_idx').on(table.senderId),
     index('orders_status_v2_idx').on(table.statusV2),
     index('orders_transport_mode_idx').on(table.transportMode),
+    index('orders_dispatch_batch_id_idx').on(table.dispatchBatchId),
     index('orders_tracking_number_idx').on(table.trackingNumber),
     index('orders_created_at_idx').on(table.createdAt),
   ],

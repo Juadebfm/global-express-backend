@@ -1,6 +1,6 @@
 import { pgTable, uuid, text, timestamp, pgEnum, boolean } from 'drizzle-orm/pg-core'
 
-export const userRoleEnum = pgEnum('user_role', ['superadmin', 'admin', 'staff', 'user'])
+export const userRoleEnum = pgEnum('user_role', ['superadmin', 'staff', 'user', 'supplier'])
 export const preferredLanguageEnum = pgEnum('preferred_language', ['en', 'ko'])
 export const genderEnum = pgEnum('gender', ['male', 'female', 'other'])
 
@@ -28,6 +28,8 @@ export const users = pgTable('users', {
   phone: text('phone'),
   // WhatsApp-enabled number — null means same as phone
   whatsappNumber: text('whatsapp_number'),
+  // Shipping mark / customer identifier for package labeling (encrypted PII)
+  shippingMark: text('shipping_mark'),
 
   // ─── Staff profile (internal users only — collected on first login) ────────
   gender: genderEnum('gender'),

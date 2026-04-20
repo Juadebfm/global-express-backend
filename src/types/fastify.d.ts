@@ -4,11 +4,11 @@ declare module 'fastify' {
   interface FastifyRequest {
     /**
      * Populated by the authenticate middleware after token verification.
-     * Works for both Clerk-authenticated customers and internal staff/admin/superadmin.
+     * Works for both Clerk-authenticated customers/suppliers and internal staff/superadmin.
      */
     user: {
       id: string
-      /** null for internal staff/admin/superadmin accounts (no Clerk account) */
+      /** null for internal staff/superadmin accounts (no Clerk account) */
       clerkId: string | null
       role: string
       email: string

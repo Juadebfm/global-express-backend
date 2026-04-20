@@ -116,7 +116,7 @@ The \`r2Key\` must match the key returned by \`POST /api/v1/uploads/presign\`.
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Uploads'],
-      summary: 'Delete a package image (admin+)',
+      summary: 'Delete a package image (staff+)',
       description: 'Deletes the image record from the database and removes the file from Cloudflare R2. Admin role required.',
       security: [{ bearerAuth: [] }],
       params: z.object({ imageId: z.string().uuid().describe('Image record UUID') }),

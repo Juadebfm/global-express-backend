@@ -11,7 +11,7 @@ const teamMemberSchema = z.object({
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   displayName: z.string().nullable().describe('Derived: firstName + lastName, or null'),
-  role: z.enum(['superadmin', 'admin', 'staff']),
+  role: z.enum(['superadmin', 'staff']),
   isActive: z.boolean(),
   permissions: z.array(z.string()).describe('Derived list of permission labels for this role'),
   createdAt: z.string(),
@@ -25,19 +25,19 @@ export async function teamRoutes(fastify: FastifyInstance): Promise<void> {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Team'],
-      summary: 'List internal team members (admin+)',
-      description: `Returns a paginated list of internal users (staff, admin, superadmin) with decrypted PII and derived permission labels.
+      summary: 'List internal team members (staff+)',
+      description: `Returns a paginated list of internal users (staff, superadmin) with decrypted PII and derived permission labels.
 
-Requires **admin** or **superadmin** role.
+Requires **staff** or **superadmin** role.
 
 **Optional filters:**
-- \`role\`: filter by specific role (staff | admin | superadmin)
+- \`role\`: filter by specific role (staff | superadmin)
 - \`isActive\`: filter by active status`,
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         page: z.coerce.number().int().positive().optional().default(1),
         limit: z.coerce.number().int().min(1).max(100).optional().default(20),
-        role: z.enum(['superadmin', 'admin', 'staff']).optional().describe('Filter by role'),
+        role: z.enum(['superadmin', 'staff']).optional().describe('Filter by role'),
         isActive: z.enum(['true', 'false']).optional().describe('Filter by active status'),
       }),
       response: {

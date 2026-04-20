@@ -44,14 +44,11 @@ const defaultRuleUpsertSchema = ruleBaseSchema
         message: 'rateUsdPerKg is required for air pricing rules',
       })
     }
-    if (
-      value.mode === TransportMode.SEA &&
-      value.flatRateUsdPerCbm === undefined
-    ) {
+    if (value.mode === TransportMode.SEA && value.rateUsdPerKg === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['flatRateUsdPerCbm'],
-        message: 'flatRateUsdPerCbm is required for sea pricing rules',
+        path: ['rateUsdPerKg'],
+        message: 'rateUsdPerKg is required for sea pricing rules',
       })
     }
     if (
@@ -85,14 +82,11 @@ const customerOverrideUpsertSchema = ruleBaseSchema
         message: 'rateUsdPerKg is required for air customer overrides',
       })
     }
-    if (
-      value.mode === TransportMode.SEA &&
-      value.flatRateUsdPerCbm === undefined
-    ) {
+    if (value.mode === TransportMode.SEA && value.rateUsdPerKg === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['flatRateUsdPerCbm'],
-        message: 'flatRateUsdPerCbm is required for sea customer overrides',
+        path: ['rateUsdPerKg'],
+        message: 'rateUsdPerKg is required for sea customer overrides',
       })
     }
     if (
@@ -346,7 +340,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
     schema: {
       tags: ['Settings - Logistics'],
       summary:
-        'Update logistics settings (admin+; office address updates require superadmin)',
+        'Update logistics settings (staff+; office address updates require superadmin)',
       security: [{ bearerAuth: [] }],
       body: logisticsPatchSchema,
       response: {
@@ -404,7 +398,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Templates'],
-      summary: 'List notification templates (admin+)',
+      summary: 'List notification templates (staff+)',
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         templateKey: z.string().trim().min(1).optional(),
@@ -431,7 +425,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Templates'],
-      summary: 'Update notification template by id (admin+)',
+      summary: 'Update notification template by id (staff+)',
       security: [{ bearerAuth: [] }],
       params: z.object({
         id: z.string().uuid(),
@@ -483,7 +477,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Pricing'],
-      summary: 'Upsert/delete pricing rules and customer overrides (admin+)',
+      summary: 'Upsert/delete pricing rules and customer overrides (staff+)',
       security: [{ bearerAuth: [] }],
       body: z
         .object({
@@ -559,7 +553,7 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Settings - Restricted Goods'],
-      summary: 'Upsert/delete restricted goods catalog entries (admin+)',
+      summary: 'Upsert/delete restricted goods catalog entries (staff+)',
       security: [{ bearerAuth: [] }],
       body: z
         .object({

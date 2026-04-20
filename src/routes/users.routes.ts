@@ -17,6 +17,7 @@ const userResponseSchema = z.object({
   // Contact
   phone: z.string().nullable().describe('Primary contact number'),
   whatsappNumber: z.string().nullable().describe('WhatsApp-enabled number (if different from phone)'),
+  shippingMark: z.string().nullable().describe('Shipping mark used for package labeling'),
   // Address (optional at signup; required before placing an order)
   addressStreet: z.string().nullable().describe('Street address (encrypted at rest)'),
   addressCity: z.string().nullable().describe('City'),
@@ -24,7 +25,7 @@ const userResponseSchema = z.object({
   addressCountry: z.string().nullable().describe('Country'),
   addressPostalCode: z.string().nullable().describe('Postal / ZIP code'),
   // Account
-  role: z.nativeEnum(UserRole).describe('Account role: user | staff | admin | superadmin'),
+  role: z.nativeEnum(UserRole).describe('Account role: user | supplier | staff | superadmin'),
   isActive: z.boolean().describe('Whether the account is active'),
   consentMarketing: z.boolean().describe('Marketing email consent'),
   notifyEmailAlerts: z.boolean().describe('Whether transactional email alerts are enabled'),
@@ -60,6 +61,17 @@ const notificationPreferencesSchema = z.object({
   notifySmsAlerts: z.boolean().describe('Enable/disable SMS/WhatsApp alerts'),
   notifyInAppAlerts: z.boolean().describe('Enable/disable in-app alerts'),
   consentMarketing: z.boolean().describe('Enable/disable marketing emails'),
+})
+
+const supplierListItemSchema = z.object({
+  id: z.string().uuid(),
+  displayName: z.string(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  businessName: z.string().nullable(),
+  email: z.string().email(),
+  phone: z.string().nullable(),
+  isActive: z.boolean(),
 })
 
 export async function usersRoutes(fastify: FastifyInstance): Promise<void> {
@@ -114,6 +126,10 @@ Rules:
 
 Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Address fields are optional at signup but **required before placing an order**.
 
+\`shippingMark\` is optional and add-only in self-service:
+- You can add it if currently empty.
+- Once set, updates are blocked here and require support-ticket + superadmin approval.
+
 **Example request body:**
 \`\`\`json
 {
@@ -155,6 +171,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
         addressState: z.string().min(1).nullable().optional().describe('State / province'),
         addressCountry: z.string().min(1).nullable().optional().describe('Country'),
         addressPostalCode: z.string().min(1).nullable().optional().describe('Postal / ZIP code'),
+        shippingMark: z.string().min(1).nullable().optional().describe('Shipping mark (add-only in self-service profile)'),
         consentMarketing: z.boolean().optional().describe('Opt in/out of marketing emails'),
         notifyEmailAlerts: z.boolean().optional().describe('Enable/disable transactional email alerts'),
         notifySmsAlerts: z.boolean().optional().describe('Enable/disable SMS/WhatsApp alerts'),
@@ -252,6 +269,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
 
 **Query examples:**
 - All customers: \`?role=user\`
+- All suppliers: \`?role=supplier\`
 - All staff: \`?role=staff\`
 - Inactive accounts: \`?isActive=false\`
 - Paginate: \`?page=2&limit=50\``,
@@ -259,7 +277,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
       querystring: z.object({
         page: z.coerce.number().int().positive().optional().default(1).describe('Page number (default: 1)'),
         limit: z.coerce.number().int().min(1).max(100).optional().default(20).describe('Results per page (max 100, default: 20)'),
-        role: z.nativeEnum(UserRole).optional().describe('Filter by role: user | staff | admin | superadmin'),
+        role: z.nativeEnum(UserRole).optional().describe('Filter by role: user | supplier | staff | superadmin'),
         isActive: z
           .enum(['true', 'false'])
           .transform((v) => v === 'true')
@@ -284,6 +302,42 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
       },
     },
     handler: usersController.listUsers,
+  })
+
+  app.get('/suppliers', {
+    preHandler: [authenticate, requireAdminOrAbove],
+    schema: {
+      tags: ['Users — Admin'],
+      summary: 'List suppliers for shipment intake selection',
+      description:
+        'Returns suppliers (`role=supplier`) for FE selector pickers when creating or appending customer shipments.',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        page: z.coerce.number().int().positive().optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+        isActive: z
+          .enum(['true', 'false'])
+          .transform((v) => v === 'true')
+          .optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(supplierListItemSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.listSuppliers,
   })
 
   app.get('/:id', {
@@ -339,6 +393,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
         addressState: z.string().min(1).nullable().optional().describe('State / province'),
         addressCountry: z.string().min(1).nullable().optional().describe('Country'),
         addressPostalCode: z.string().min(1).nullable().optional().describe('Postal code'),
+        shippingMark: z.string().min(1).nullable().optional().describe('Shipping mark (superadmin can set/change)'),
         isActive: z.boolean().optional().describe('Activate or deactivate the account'),
         preferredLanguage: z
           .nativeEnum(PreferredLanguage)
@@ -363,8 +418,8 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
       description: `Changes the role assigned to a user.
 
 **Role permissions:**
-- **Admin** — can assign \`user\` or \`staff\` only
-- **Superadmin** — can assign any role including \`admin\` and \`superadmin\`
+- **Staff** — cannot assign \`superadmin\`
+- **Superadmin** — can assign any role (\`user\`, \`supplier\`, \`staff\`, \`superadmin\`)
 
 **Example:**
 \`\`\`json
@@ -372,7 +427,7 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
 \`\`\``,
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid().describe('User UUID') }),
-      body: z.object({ role: z.nativeEnum(UserRole).describe('New role: user | staff | admin | superadmin') }),
+      body: z.object({ role: z.nativeEnum(UserRole).describe('New role: user | supplier | staff | superadmin') }),
       response: {
         200: z.object({ success: z.literal(true), data: userResponseSchema }),
         401: z.object({ success: z.literal(false), message: z.string() }),

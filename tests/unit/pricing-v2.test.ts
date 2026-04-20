@@ -106,13 +106,35 @@ describe('pricing-v2 service', () => {
     expect(rate).toBeNull()
   })
 
-  it('picks the first valid sea flat rate from rules', () => {
-    const rate = pickSeaRateFromRules([
-      { flatRateUsdPerCbm: null },
-      { flatRateUsdPerCbm: '550.00' },
-      { flatRateUsdPerCbm: '600.00' },
+  it('picks sea per-kg rate from matching weight range', () => {
+    const rate = pickSeaRateFromRules(720, [
+      {
+        minWeightKg: '1',
+        maxWeightKg: '500',
+        rateUsdPerKg: '1.30',
+        flatRateUsdPerCbm: null,
+      },
+      {
+        minWeightKg: '501',
+        maxWeightKg: null,
+        rateUsdPerKg: '1.10',
+        flatRateUsdPerCbm: null,
+      },
     ])
 
-    expect(rate).toBe(550)
+    expect(rate).toBe(1.1)
+  })
+
+  it('falls back to converting legacy sea flat-CBM rules into per-kg', () => {
+    const rate = pickSeaRateFromRules(100, [
+      {
+        minWeightKg: null,
+        maxWeightKg: null,
+        rateUsdPerKg: null,
+        flatRateUsdPerCbm: '550.00',
+      },
+    ])
+
+    expect(rate).toBe(1)
   })
 })

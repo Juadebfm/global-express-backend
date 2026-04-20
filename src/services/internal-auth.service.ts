@@ -12,7 +12,7 @@ import { UserRole } from '../types/enums'
 export interface CreateInternalUserInput {
   email: string
   password?: string
-  role: UserRole.STAFF | UserRole.ADMIN | UserRole.SUPERADMIN
+  role: UserRole.STAFF | UserRole.SUPER_ADMIN
   firstName: string
   lastName: string
 }
@@ -28,7 +28,7 @@ export interface InternalTokenPayload {
 
 export class InternalAuthService {
   /**
-   * Creates an internal user (staff / admin / superadmin).
+   * Creates an internal user (staff / superadmin).
    * No Clerk account — credentials are stored in our DB only.
    */
   /**

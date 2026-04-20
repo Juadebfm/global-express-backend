@@ -40,6 +40,7 @@ export const usersController = {
         addressState?: string | null
         addressCountry?: string | null
         addressPostalCode?: string | null
+        shippingMark?: string | null
         consentMarketing?: boolean
         notifyEmailAlerts?: boolean
         notifySmsAlerts?: boolean
@@ -49,7 +50,38 @@ export const usersController = {
     }>,
     reply: FastifyReply,
   ) {
-    const updated = await usersService.updateUser(request.user.id, request.body)
+    const patch = { ...request.body }
+    const hasShippingMarkPatch = Object.prototype.hasOwnProperty.call(patch, 'shippingMark')
+
+    if (hasShippingMarkPatch) {
+      const currentUser = await usersService.getUserById(request.user.id)
+      if (!currentUser) {
+        return reply.code(404).send({ success: false, message: 'User not found' })
+      }
+
+      const existingShippingMark = currentUser.shippingMark?.trim() ?? ''
+      const requestedShippingMark =
+        typeof patch.shippingMark === 'string' ? patch.shippingMark.trim() : patch.shippingMark
+
+      // Self-service rule: shipping mark is add-only.
+      if (existingShippingMark) {
+        if (requestedShippingMark !== existingShippingMark) {
+          return reply.code(403).send({
+            success: false,
+            message:
+              'Shipping mark cannot be changed from profile update. Please raise a support ticket for super admin approval.',
+          })
+        }
+        delete patch.shippingMark
+      } else if (!requestedShippingMark) {
+        // Empty/null updates are ignored when mark is not yet set.
+        delete patch.shippingMark
+      } else {
+        patch.shippingMark = requestedShippingMark
+      }
+    }
+
+    const updated = await usersService.updateUser(request.user.id, patch)
 
     if (!updated) {
       return reply.code(404).send({ success: false, message: 'User not found' })
@@ -133,6 +165,21 @@ export const usersController = {
     return reply.send(successResponse(result))
   },
 
+  async listSuppliers(
+    request: FastifyRequest<{
+      Querystring: { page?: string; limit?: string; isActive?: boolean }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await usersService.listSuppliers({
+      page: Number(request.query.page) || 1,
+      limit: Number(request.query.limit) || 50,
+      isActive: request.query.isActive,
+    })
+
+    return reply.send(successResponse(result))
+  },
+
   async getUserById(
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
@@ -160,13 +207,28 @@ export const usersController = {
         addressState?: string | null
         addressCountry?: string | null
         addressPostalCode?: string | null
+        shippingMark?: string | null
         isActive?: boolean
         preferredLanguage?: PreferredLanguage
       }
     }>,
     reply: FastifyReply,
   ) {
-    const updated = await usersService.updateUser(request.params.id, request.body)
+    const patch = { ...request.body }
+    const hasShippingMarkPatch = Object.prototype.hasOwnProperty.call(patch, 'shippingMark')
+
+    if (hasShippingMarkPatch && request.user.role !== UserRole.SUPER_ADMIN) {
+      return reply.code(403).send({
+        success: false,
+        message: 'Forbidden — only superadmin can set or change shipping mark',
+      })
+    }
+
+    if (hasShippingMarkPatch && typeof patch.shippingMark === 'string') {
+      patch.shippingMark = patch.shippingMark.trim()
+    }
+
+    const updated = await usersService.updateUser(request.params.id, patch)
 
     if (!updated) {
       return reply.code(404).send({ success: false, message: 'User not found' })
@@ -193,14 +255,14 @@ export const usersController = {
     const requesterRole = request.user.role
     const newRole = request.body.role
 
-    // Admins can only assign staff or user — only superadmin can assign admin/superadmin
+    // Staff can assign user/supplier/staff — only superadmin can assign superadmin
     if (
-      requesterRole === UserRole.ADMIN &&
-      (newRole === UserRole.ADMIN || newRole === UserRole.SUPERADMIN)
+      requesterRole === UserRole.STAFF &&
+      newRole === UserRole.SUPER_ADMIN
     ) {
       return reply.code(403).send({
         success: false,
-        message: 'Forbidden — admins can only assign staff or user roles',
+        message: 'Forbidden — staff cannot assign superadmin role',
       })
     }
 

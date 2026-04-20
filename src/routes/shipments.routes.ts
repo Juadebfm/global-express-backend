@@ -3,7 +3,8 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { shipmentsController } from '../controllers/shipments.controller'
 import { authenticate } from '../middleware/authenticate'
-import { ShipmentStatusV2, ShipmentType, OrderDirection } from '../types/enums'
+import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
+import { ShipmentStatusV2, ShipmentType, OrderDirection, TransportMode } from '../types/enums'
 
 const shipmentSchema = z.object({
   id: z.string().uuid(),
@@ -29,6 +30,19 @@ const shipmentSchema = z.object({
   createdBy: z.string().uuid(),
   createdAt: z.string(),
   updatedAt: z.string(),
+})
+
+const goodsInputSchema = z.object({
+  supplierId: z.string().uuid(),
+  description: z.string().optional(),
+  itemType: z.string().optional(),
+  quantity: z.number().int().positive().optional(),
+  lengthCm: z.number().positive().optional(),
+  widthCm: z.number().positive().optional(),
+  heightCm: z.number().positive().optional(),
+  weightKg: z.number().positive().optional(),
+  cbm: z.number().positive().optional(),
+  itemCostUsd: z.number().positive().optional(),
 })
 
 export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
@@ -68,5 +82,65 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     handler: shipmentsController.list,
+  })
+
+  app.post('/intake', {
+    preHandler: [authenticate, requireAdminOrAbove],
+    schema: {
+      tags: ['Shipments — Staff'],
+      summary: 'Intake goods and append to open customer shipment',
+      description:
+        'Appends goods to the current open customer shipment for mode+batch, or creates one if none exists.',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        customerId: z.string().uuid(),
+        mode: z.nativeEnum(TransportMode),
+        goods: z.array(goodsInputSchema).min(1),
+      }),
+      response: {
+        201: z.object({
+          success: z.literal(true),
+          data: z.any(),
+        }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: shipmentsController.intakeGoods,
+  })
+
+  app.get('/internal-track/:masterTrackingNumber', {
+    preHandler: [authenticate, requireAdminOrAbove],
+    schema: {
+      tags: ['Shipments — Staff'],
+      summary: 'Internal tracking by master dispatch tracking number',
+      security: [{ bearerAuth: [] }],
+      params: z.object({
+        masterTrackingNumber: z.string().min(1),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.any() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: shipmentsController.internalTrackByMasterTracking,
+  })
+
+  app.post('/batches/:batchId/approve-cutoff', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Shipments — Staff'],
+      summary: 'Approve pending cutoff and close dispatch batch (superadmin)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({
+        batchId: z.string().uuid(),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.any() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: shipmentsController.approveCutoff,
   })
 }

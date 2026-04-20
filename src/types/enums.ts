@@ -4,10 +4,10 @@ export enum OrderDirection {
 }
 
 export enum UserRole {
-  SUPERADMIN = 'superadmin',
-  ADMIN = 'admin',
+  SUPER_ADMIN = 'superadmin',
   STAFF = 'staff',
   USER = 'user',
+  SUPPLIER = 'supplier',
 }
 
 export enum OrderStatus {
@@ -74,6 +74,19 @@ export enum PaymentType {
   ONLINE = 'online',
   TRANSFER = 'transfer',
   CASH = 'cash',
+}
+
+export enum DispatchBatchStatus {
+  OPEN = 'open',
+  CUTOFF_PENDING_APPROVAL = 'cutoff_pending_approval',
+  CLOSED = 'closed',
+}
+
+export enum InvoiceStatus {
+  DRAFT = 'draft',
+  FINALIZED = 'finalized',
+  PAID = 'paid',
+  CANCELLED = 'cancelled',
 }
 
 export enum PricingSource {

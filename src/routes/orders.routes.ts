@@ -48,6 +48,8 @@ const orderResponseSchema = z.object({
 
 const warehouseVerifyPackageSchema = z
   .object({
+    supplierId: z.string().uuid().optional().describe('Supplier UUID for this goods line'),
+    arrivalAt: z.string().datetime().optional().describe('Warehouse arrival timestamp (ISO 8601)'),
     description: z.string().optional().describe('Package description'),
     itemType: z.string().optional().describe('Item type/category'),
     quantity: z.number().int().positive().optional().describe('Package/item quantity (default: 1)'),
@@ -56,6 +58,7 @@ const warehouseVerifyPackageSchema = z
     heightCm: z.number().positive().optional().describe('Height in centimeters'),
     weightKg: z.number().positive().optional().describe('Actual weight in kilograms'),
     cbm: z.number().positive().optional().describe('Volume in cubic meters (exact, no rounding)'),
+    itemCostUsd: z.number().positive().optional().describe('Item-level cost in USD (staff/internal detail)'),
     specialPackagingType: z.string().optional().describe('Special packaging type key (e.g. "liquid", "fragile") — must match a type configured in app settings'),
     isRestricted: z.boolean().optional().describe('Whether package contains a restricted item'),
     restrictedReason: z.string().optional().describe('Restricted item reason'),
@@ -118,7 +121,7 @@ const paginatedOrdersSchema = z.object({
 })
 
 const myShipmentSchema = z.object({
-  type: z.enum(['solo', 'bulk_item']).describe('Whether this is a solo order or part of a bulk shipment'),
+  type: z.enum(['solo']).describe('Customer shipment type'),
   id: z.string().uuid(),
   trackingNumber: z.string(),
   origin: z.string(),
@@ -135,6 +138,9 @@ const myShipmentSchema = z.object({
   shipmentType: z.string().nullable(),
   departureDate: z.string().nullable(),
   eta: z.string().nullable(),
+  invoiceStatus: z.string().nullable().optional(),
+  invoiceTotalUsd: z.string().nullable().optional(),
+  invoiceTotalNgn: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -148,9 +154,7 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
     schema: {
       tags: ['Orders — Public'],
       summary: 'Track a shipment by tracking number (public)',
-      description: `Look up the current status of any shipment by tracking number. No authentication required.
-
-Works for both solo orders and bulk shipment items.
+      description: `Look up the current status of a customer shipment by tracking number. No authentication required.
 
 **Example:** \`GET /api/v1/orders/track/GE-2024-AB12\``,
       params: z.object({ trackingNumber: z.string().min(1).describe('Tracking number (e.g. GE-2024-AB12)') }),
@@ -166,6 +170,30 @@ Works for both solo orders and bulk shipment items.
             estimatedDelivery: z.string().nullable().describe('Estimated delivery date (null until implemented)'),
             lastUpdate: z.string().describe('Human-readable last update timestamp e.g. "Feb 21, 2026 · 09:14 AM"'),
             lastLocation: z.string().describe('Derived from shipment status: origin, "In Transit", or destination'),
+            paymentStatus: z.enum(['pending', 'completed']).describe('Payment status for this shipment invoice'),
+            shipmentCost: z.object({
+              usd: z.string().nullable(),
+              ngn: z.string().nullable(),
+              invoiceStatus: z.string().nullable(),
+            }),
+            vendorCount: z.number().int().nonnegative(),
+            goodsBreakdown: z.array(z.object({
+              id: z.string().uuid(),
+              description: z.string().nullable(),
+              itemType: z.string().nullable(),
+              quantity: z.number().int(),
+              weightKg: z.string().nullable(),
+              cbm: z.string().nullable(),
+              dimensionsCm: z.object({
+                length: z.string().nullable(),
+                width: z.string().nullable(),
+                height: z.string().nullable(),
+              }),
+              itemCostUsd: z.string().nullable(),
+              arrivalAt: z.string().nullable(),
+              supplierId: z.string().uuid().nullable(),
+              supplierName: z.string().nullable(),
+            })),
             timeline: z.array(z.object({
               status: z.string().nullable(),
               statusLabel: z.string().nullable(),
@@ -185,8 +213,8 @@ Works for both solo orders and bulk shipment items.
     preHandler: [authenticate],
     schema: {
       tags: ['Orders'],
-      summary: 'My shipments (unified — solo orders + bulk items)',
-      description: 'Returns all packages belonging to the authenticated user, regardless of whether they are solo orders or part of a bulk shipment. Sorted by most recent first.',
+      summary: 'My shipments',
+      description: 'Returns all shipments belonging to the authenticated user, sorted by most recent first.',
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         page: z.coerce.number().int().positive().optional().default(1).describe('Page number'),
@@ -280,8 +308,8 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
       summary: 'Estimate shipping cost',
       description: `Returns a ballpark shipping cost estimate based on shipment type and weight/volume.
 
-- **Air**: provide \`weightKg\` — price is calculated per-kg using tiered rates.
-- **Ocean (sea)**: provide \`cbm\` — price is calculated per cubic meter.
+- **Air**: provide \`weightKg\`. If volumetric data is available in downstream flows, billable air weight is the greater of actual and volumetric.
+- **Ocean (sea)**: provide \`cbm\`. The system converts to chargeable weight using \`cbm * 550\`, then applies sea pricing rates.
 
 The estimate uses the same pricing engine as warehouse verification, including any customer-specific overrides. Final pricing is determined after the package is received and verified at the Korea warehouse.
 
@@ -298,7 +326,7 @@ The estimate uses the same pricing engine as warehouse verification, including a
       body: z.object({
         shipmentType: z.nativeEnum(ShipmentType).describe('Transport mode: air | ocean'),
         weightKg: z.number().positive().optional().describe('Estimated weight in kg (required for air)'),
-        cbm: z.number().positive().optional().describe('Estimated volume in cubic meters (required for ocean)'),
+        cbm: z.number().positive().optional().describe('Estimated volume in cubic meters (required for ocean; converted to chargeable kg using cbm*550)'),
       }),
       response: {
         200: z.object({
@@ -309,7 +337,7 @@ The estimate uses the same pricing engine as warehouse verification, including a
             cbm: z.number().nullable(),
             estimatedCostUsd: z.number().describe('Estimated shipping cost in USD'),
             pricingSource: z.nativeEnum(PricingSource).describe('Which pricing tier was used'),
-            departureFrequency: z.string().describe('How often shipments depart: "Weekly" (air) or "Monthly" (ocean)'),
+            departureFrequency: z.string().describe('Dispatch cadence note (event-driven dispatch model)'),
             estimatedTransitDays: z.number().describe('Estimated transit time in days (air ≈ 7, ocean ≈ 90)'),
             disclaimer: z.string(),
           }),
@@ -499,7 +527,7 @@ This endpoint stores:
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Orders'],
-      summary: 'Soft-delete an order (admin+)',
+      summary: 'Soft-delete an order (staff+)',
       description: 'Soft-deletes the order record. The order is retained in the database with `deletedAt` set and will no longer appear in listings. Admin role required.',
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid().describe('Order UUID') }),

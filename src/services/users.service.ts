@@ -13,6 +13,7 @@ export interface CreateUserInput {
   lastName?: string | null
   businessName?: string | null
   phone?: string
+  shippingMark?: string | null
   role?: UserRole
   preferredLanguage?: PreferredLanguage
 }
@@ -28,6 +29,7 @@ export interface UpdateUserInput {
   addressState?: string | null
   addressCountry?: string | null
   addressPostalCode?: string | null
+  shippingMark?: string | null
   isActive?: boolean
   consentMarketing?: boolean
   notifyEmailAlerts?: boolean
@@ -93,6 +95,17 @@ export interface ProfileCompletenessResult {
   missingFields: ProfileCompletenessMissingField[]
 }
 
+export interface SupplierListItem {
+  id: string
+  displayName: string
+  firstName: string | null
+  lastName: string | null
+  businessName: string | null
+  email: string
+  phone: string | null
+  isActive: boolean
+}
+
 export class UsersService {
   async createUser(input: CreateUserInput) {
     const [user] = await db
@@ -104,6 +117,7 @@ export class UsersService {
         lastName: input.lastName ? encrypt(input.lastName) : null,
         businessName: input.businessName ? encrypt(input.businessName) : null,
         phone: input.phone ? encrypt(input.phone) : null,
+        shippingMark: input.shippingMark ? encrypt(input.shippingMark) : null,
         role: input.role ?? UserRole.USER,
         preferredLanguage: input.preferredLanguage ?? PreferredLanguage.EN,
       })
@@ -159,6 +173,9 @@ export class UsersService {
     if (input.addressState !== undefined) patch.addressState = input.addressState
     if (input.addressCountry !== undefined) patch.addressCountry = input.addressCountry
     if (input.addressPostalCode !== undefined) patch.addressPostalCode = input.addressPostalCode
+    if (input.shippingMark !== undefined) {
+      patch.shippingMark = input.shippingMark ? encrypt(input.shippingMark) : null
+    }
     if (input.isActive !== undefined) patch.isActive = input.isActive
     if (input.consentMarketing !== undefined) patch.consentMarketing = input.consentMarketing
     if (input.notifyEmailAlerts !== undefined) patch.notifyEmailAlerts = input.notifyEmailAlerts
@@ -267,6 +284,55 @@ export class UsersService {
       total,
       params,
     )
+  }
+
+  async listSuppliers(params: PaginationParams & { isActive?: boolean }) {
+    const offset = getPaginationOffset(params.page, params.limit)
+
+    const baseWhere = and(
+      isNull(users.deletedAt),
+      eq(users.role, UserRole.SUPPLIER),
+      params.isActive !== undefined ? eq(users.isActive, params.isActive) : undefined,
+    )
+
+    const [data, countResult] = await Promise.all([
+      db
+        .select()
+        .from(users)
+        .where(baseWhere)
+        .orderBy(users.createdAt)
+        .limit(params.limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(users)
+        .where(baseWhere),
+    ])
+
+    const normalized: SupplierListItem[] = data.map((u) => {
+      const firstName = u.firstName ? decrypt(u.firstName) : null
+      const lastName = u.lastName ? decrypt(u.lastName) : null
+      const businessName = u.businessName ? decrypt(u.businessName) : null
+      const displayName =
+        (firstName && lastName && `${firstName} ${lastName}`) ||
+        firstName ||
+        businessName ||
+        'Supplier'
+
+      return {
+        id: u.id,
+        displayName,
+        firstName,
+        lastName,
+        businessName,
+        email: decrypt(u.email),
+        phone: u.phone ? decrypt(u.phone) : null,
+        isActive: u.isActive,
+      }
+    })
+
+    const total = countResult[0]?.count ?? 0
+    return buildPaginatedResult(normalized, total, params)
   }
 
   /**
@@ -389,6 +455,7 @@ export class UsersService {
       businessName: user.businessName ? decrypt(user.businessName) : null,
       phone: user.phone ? decrypt(user.phone) : null,
       whatsappNumber: user.whatsappNumber ? decrypt(user.whatsappNumber) : null,
+      shippingMark: user.shippingMark ? decrypt(user.shippingMark) : null,
       addressStreet: user.addressStreet ? decrypt(user.addressStreet) : null,
       // city/state/country/postalCode are stored plain
       notifyEmailAlerts: user.notifyEmailAlerts,

@@ -40,7 +40,7 @@ export const settingsController = {
       const hasOfficeUpdate =
         request.body.koreaOffice !== undefined || request.body.lagosOffice !== undefined
 
-      if (hasOfficeUpdate && request.user.role !== UserRole.SUPERADMIN) {
+      if (hasOfficeUpdate && request.user.role !== UserRole.SUPER_ADMIN) {
         return reply.code(403).send({
           success: false,
           message: 'Only superadmin can update office address settings',

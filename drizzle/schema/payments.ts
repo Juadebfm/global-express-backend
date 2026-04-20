@@ -10,6 +10,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { orders } from './orders'
 import { users } from './users'
+import { invoices } from './invoices'
 
 export const paymentStatusEnum = pgEnum('payment_status', [
   'pending',
@@ -27,6 +28,7 @@ export const payments = pgTable(
     orderId: uuid('order_id')
       .notNull()
       .references(() => orders.id),
+    invoiceId: uuid('invoice_id').references(() => invoices.id),
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id),
@@ -50,6 +52,7 @@ export const payments = pgTable(
   },
   (table) => [
     index('payments_order_id_idx').on(table.orderId),
+    index('payments_invoice_id_idx').on(table.invoiceId),
     index('payments_user_id_idx').on(table.userId),
     index('payments_status_idx').on(table.status),
     index('payments_type_idx').on(table.paymentType),

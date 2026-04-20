@@ -98,7 +98,7 @@ export const reportsController = {
     const sortBy =
       (request.query.sortBy as 'orderCount' | 'totalWeight' | 'revenue') ?? 'orderCount'
     const limit = Math.min(Math.max(Number(request.query.limit) || 10, 5), 50)
-    const isSuperAdmin = request.user.role === UserRole.SUPERADMIN
+    const isSuperAdmin = request.user.role === UserRole.SUPER_ADMIN
 
     const data = await reportsService.getTopCustomers({
       from,
@@ -170,7 +170,7 @@ export const reportsController = {
       return reply.code(400).send({ success: false, message: 'Invalid date format' })
     }
 
-    const isSuperAdmin = request.user.role === UserRole.SUPERADMIN
+    const isSuperAdmin = request.user.role === UserRole.SUPER_ADMIN
     const data = await reportsService.getShipmentComparison({ from, to, isSuperAdmin })
     return reply.send(successResponse(data))
   },

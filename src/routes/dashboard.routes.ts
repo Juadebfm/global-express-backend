@@ -15,7 +15,7 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ─── GET /dashboard/stats ─────────────────────────────────────────────────
   // KPI counts by status + financial summary + period-over-period % change.
-  // Role-gated: customers see their own data; admin/staff/superadmin see global.
+  // Role-gated: customers see their own data; staff/superadmin see global.
 
   app.get('/stats', {
     preHandler: [authenticate],
@@ -28,7 +28,7 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
 
 **Superadmin** sees global counts and the financial field \`revenueMtd\` (all-time revenue from successful payments).
 
-**Admin / Staff** see global order counts but do **not** receive revenue figures.
+**Staff** see global order counts but do **not** receive revenue figures.
 
 **Change fields** (e.g. \`totalOrdersChange\`) compare the last 30 days against the prior 30 days.
 Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\` when there is no prior-period baseline.
@@ -41,7 +41,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
 - \`deliveredTotal\` — all-time delivered count
 - \`cancelled\` — terminal state
 - \`unmappedOrders\` — orders not yet backfilled to V2 statuses
-- \`revenueMtd\` — admin/staff only (global revenue)
+- \`revenueMtd\` — superadmin only (global revenue)
 - \`totalSpent\` — customer only (their own payments)`,
       security: [{ bearerAuth: [] }],
       response: {
@@ -89,7 +89,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
 **Query params:**
 - \`year\` — defaults to current year
 
-**Role gating**: customers see their own orders; admin/staff see all.`,
+**Role gating**: customers see their own orders; staff/superadmin see all.`,
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         year: z.coerce.number().int().min(2020).max(2100).optional().describe('Year (defaults to current year)'),
@@ -128,7 +128,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
 
 **shipmentType** is the transport mode for that destination group: \`air\` | \`ocean\` (or null if not set).
 
-**Role gating**: customers see their own orders; admin/staff see all.`,
+**Role gating**: customers see their own orders; staff/superadmin see all.`,
       security: [{ bearerAuth: [] }],
       response: {
         200: z.object({

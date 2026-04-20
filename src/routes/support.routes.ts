@@ -23,7 +23,7 @@ const ticketSchema = z.object({
   category: ticketCategoryEnum,
   status: ticketStatusEnum,
   subject: z.string(),
-  assignedTo: z.string().uuid().nullable().describe('Staff/admin assigned to this ticket'),
+  assignedTo: z.string().uuid().nullable().describe('Staff/superadmin assigned to this ticket'),
   closedAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -35,7 +35,7 @@ const messageSchema = z.object({
   authorId: z.string().uuid(),
   authorName: z.string().nullable().describe('Decrypted display name of the author'),
   body: z.string(),
-  isInternal: z.boolean().describe('Internal notes are only visible to staff/admin'),
+  isInternal: z.boolean().describe('Internal notes are only visible to staff/superadmin'),
   createdAt: z.string(),
 })
 
@@ -127,7 +127,7 @@ Once created, all connected staff receive a \`support:new_ticket\` WebSocket eve
       description: `Returns the ticket and all messages in the conversation.
 
 **Customers** cannot access tickets they do not own.
-**Internal notes** (\`isInternal: true\`) are hidden from customers — only staff/admin see them.
+**Internal notes** (\`isInternal: true\`) are hidden from customers — only staff/superadmin see them.
 
 **WebSocket room:** After fetching the ticket, the client should send \`{ type: "support:join", ticketId }\` to subscribe to real-time messages.`,
       security: [{ bearerAuth: [] }],
@@ -193,16 +193,16 @@ If the customer is offline (not in the ticket room), they receive an in-app noti
 
 **Status transitions:**
 - Staff can set: \`open\`, \`in_progress\`, \`resolved\`
-- Admin+ can also set: \`closed\` (permanent — customer cannot re-open a closed ticket)
+- Staff+ can also set: \`closed\` (permanent — customer cannot re-open a closed ticket)
 
-**Assignment:** admin+ only. Pass \`assignedTo: null\` to unassign.
+**Assignment:** staff+ only. Pass \`assignedTo: null\` to unassign.
 
 When resolved, the customer receives an in-app notification.`,
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid() }),
       body: z.object({
         status: ticketStatusEnum.optional(),
-        assignedTo: z.string().uuid().nullable().optional().describe('Assign to a staff/admin user, or null to unassign'),
+        assignedTo: z.string().uuid().nullable().optional().describe('Assign to a staff/superadmin user, or null to unassign'),
       }),
       response: {
         200: z.object({ success: z.literal(true), data: ticketSchema }),

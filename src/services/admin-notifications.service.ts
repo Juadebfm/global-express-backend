@@ -39,13 +39,13 @@ export class AdminNotificationsService {
         metadata: input.metadata ?? null,
       })
 
-      // 2. Broadcast via WebSocket to all connected admin+ users
+      // 2. Broadcast via WebSocket to all connected staff+ users
       const adminUsers = await db
         .select({ id: users.id, email: users.email, role: users.role })
         .from(users)
         .where(
           and(
-            inArray(users.role, [UserRole.SUPERADMIN, UserRole.ADMIN]),
+            inArray(users.role, [UserRole.SUPER_ADMIN, UserRole.STAFF]),
             eq(users.isActive, true),
             isNull(users.deletedAt),
           ),
@@ -68,7 +68,7 @@ export class AdminNotificationsService {
         }
       }
 
-      // 3. Send browser push notifications to all admin+ users
+      // 3. Send browser push notifications to all staff+ users
       webPushService.sendToAdmins({
         title: input.title,
         body: input.body,
@@ -79,7 +79,7 @@ export class AdminNotificationsService {
 
       // 4. Email all active superadmins
       const superadminEmails = adminUsers
-        .filter((u) => u.role === UserRole.SUPERADMIN)
+        .filter((u) => u.role === UserRole.SUPER_ADMIN)
         .map((sa) => decrypt(sa.email))
 
       await Promise.allSettled(

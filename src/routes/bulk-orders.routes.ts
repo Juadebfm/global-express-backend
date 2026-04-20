@@ -231,7 +231,7 @@ The bulk tracking number is visible to staff only. Customers track their package
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
-      summary: 'Remove a customer item from a bulk order (admin+)',
+      summary: 'Remove a customer item from a bulk order (staff+)',
       description: 'Soft-deletes a customer item from a bulk shipment. The item record is retained in the database. Admin role required.',
       security: [{ bearerAuth: [] }],
       params: z.object({
@@ -252,7 +252,7 @@ The bulk tracking number is visible to staff only. Customers track their package
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {
       tags: ['Bulk Orders — Staff'],
-      summary: 'Soft-delete a bulk order (admin+)',
+      summary: 'Soft-delete a bulk order (staff+)',
       description: 'Soft-deletes the bulk shipment record. The bulk order and its items are retained in the database with `deletedAt` set. Admin role required.',
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid().describe('Bulk order UUID') }),
