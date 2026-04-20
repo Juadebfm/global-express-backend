@@ -9,6 +9,7 @@ describe('shipment-v2 status mapping', () => {
   it('maps shipment type to transport mode', () => {
     expect(resolveTransportModeFromShipmentType('air')).toBe(TransportMode.AIR)
     expect(resolveTransportModeFromShipmentType('ocean')).toBe(TransportMode.SEA)
+    expect(resolveTransportModeFromShipmentType('d2d')).toBeNull()
     expect(resolveTransportModeFromShipmentType('road')).toBeNull()
     expect(resolveTransportModeFromShipmentType(null)).toBeNull()
   })

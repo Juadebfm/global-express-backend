@@ -139,21 +139,12 @@ Goods arrive at Korea warehouse. Staff inspects, weighs, measures, checks restri
 }
 ```
 
-**Optional manual price override:**
-```json
-{
-  "packages": [ ... ],
-  "manualFinalChargeUsd": 250.00,
-  "manualAdjustmentReason": "Loyal customer discount"
-}
-```
-
 **What the backend does:**
 1. Validates packages, auto-calculates CBM from dimensions
 2. Looks up special packaging surcharges from settings
 3. Calculates freight (air: USD/kg tiered; sea: USD/CBM)
 4. Checks for customer-specific pricing overrides
-5. Sets `finalChargeUsd` = freight + surcharges
+5. Sets `finalChargeUsd` = freight + surcharges (system-generated; no manual override)
 6. Updates status to `WAREHOUSE_VERIFIED_PRICED`
 7. Stores packages in `order_packages`
 

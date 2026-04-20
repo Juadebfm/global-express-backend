@@ -5,7 +5,7 @@ import { STATUS_LABELS } from '../../src/domain/shipment-v2/status-labels'
 describe('STATUS_LABELS — completeness', () => {
   it('has a non-empty label for every ShipmentStatusV2 value', () => {
     const allStatuses = Object.values(ShipmentStatusV2)
-    expect(allStatuses).toHaveLength(22)
+    expect(allStatuses).toHaveLength(26)
     for (const status of allStatuses) {
       const label = STATUS_LABELS[status]
       expect(label, `${status} should have a STATUS_LABEL`).toBeTruthy()

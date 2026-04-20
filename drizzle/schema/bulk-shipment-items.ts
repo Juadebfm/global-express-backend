@@ -31,7 +31,6 @@ export const bulkShipmentItems = pgTable(
     calculatedChargeUsd: numeric('calculated_charge_usd', { precision: 12, scale: 2 }),
     finalChargeUsd: numeric('final_charge_usd', { precision: 12, scale: 2 }),
     pricingSource: pricingSourceEnum('pricing_source'),
-    priceAdjustmentReason: text('price_adjustment_reason'),
     paymentCollectionStatus: paymentCollectionStatusEnum('payment_collection_status')
       .notNull()
       .default('UNPAID'),

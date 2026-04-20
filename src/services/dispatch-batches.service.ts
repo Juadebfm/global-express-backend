@@ -7,10 +7,18 @@ import {
   orderPackages,
   orders,
   payments,
+  shipmentMeasurements,
   users,
 } from '../../drizzle/schema'
 import { decrypt, encrypt } from '../utils/encryption'
-import { ShipmentStatusV2, TransportMode, UserRole } from '../types/enums'
+import { pricingV2Service, SEA_CBM_TO_KG_FACTOR } from './pricing-v2.service'
+import {
+  ShipmentPayer,
+  ShipmentStatusV2,
+  ShipmentType,
+  TransportMode,
+  UserRole,
+} from '../types/enums'
 import { settingsFxRateService } from './settings-fx-rate.service'
 
 const FINALIZABLE_INVOICE_STATUSES: Array<'draft' | 'finalized'> = ['draft', 'finalized']
@@ -22,6 +30,9 @@ const DEPARTED_STATUSES = new Set<ShipmentStatusV2>([
 export interface IntakeGoodsInput {
   customerId: string
   mode: TransportMode
+  shipmentType?: ShipmentType
+  shipmentPayer?: ShipmentPayer
+  billingSupplierId?: string
   createdBy: string
   goods: Array<{
     supplierId: string
@@ -41,13 +52,22 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
 
-function inferShipmentType(mode: TransportMode): 'air' | 'ocean' {
-  return mode === TransportMode.AIR ? 'air' : 'ocean'
+function inferShipmentType(mode: TransportMode, requestedType?: ShipmentType): ShipmentType {
+  if (requestedType === ShipmentType.D2D) return ShipmentType.D2D
+  if (requestedType === ShipmentType.AIR) return ShipmentType.AIR
+  if (requestedType === ShipmentType.OCEAN) return ShipmentType.OCEAN
+  return mode === TransportMode.AIR ? ShipmentType.AIR : ShipmentType.OCEAN
 }
 
 function toNumericString(value: number | null | undefined, decimals = 2): string | null {
   if (value === null || value === undefined || Number.isNaN(value)) return null
   return value.toFixed(decimals)
+}
+
+function toNumber(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 function isDepartedStatus(status: ShipmentStatusV2): boolean {
@@ -157,7 +177,34 @@ export class DispatchBatchesService {
     orderId: string
     actorId: string
     totalUsd?: number
+    shipmentPayer?: ShipmentPayer
+    billToUserId?: string | null
+    billToSupplierId?: string | null
   }) {
+    const [orderMeta] = await db
+      .select({
+        senderId: orders.senderId,
+        shipmentPayer: orders.shipmentPayer,
+        billingSupplierId: orders.billingSupplierId,
+      })
+      .from(orders)
+      .where(eq(orders.id, params.orderId))
+      .limit(1)
+
+    const resolvedShipmentPayer = params.shipmentPayer ?? orderMeta?.shipmentPayer ?? ShipmentPayer.USER
+    const resolvedBillToUserId =
+      params.billToUserId !== undefined
+        ? params.billToUserId
+        : resolvedShipmentPayer === ShipmentPayer.USER
+          ? (orderMeta?.senderId ?? null)
+          : null
+    const resolvedBillToSupplierId =
+      params.billToSupplierId !== undefined
+        ? params.billToSupplierId
+        : resolvedShipmentPayer === ShipmentPayer.SUPPLIER
+          ? (orderMeta?.billingSupplierId ?? null)
+          : null
+
     const [existing] = await db
       .select()
       .from(invoices)
@@ -181,6 +228,9 @@ export class DispatchBatchesService {
           orderId: params.orderId,
           invoiceNumber: generateInvoiceNumber(params.orderId),
           status: 'draft',
+          shipmentPayer: resolvedShipmentPayer,
+          billToUserId: resolvedBillToUserId,
+          billToSupplierId: resolvedBillToSupplierId,
           totalUsd: totalUsd.toFixed(2),
           fxRateNgnPerUsd: fxRate.toFixed(4),
           totalNgn: totalNgn.toFixed(2),
@@ -198,6 +248,9 @@ export class DispatchBatchesService {
           totalUsd: totalUsd.toFixed(2),
           fxRateNgnPerUsd: fxRate.toFixed(4),
           totalNgn: totalNgn.toFixed(2),
+          shipmentPayer: resolvedShipmentPayer,
+          billToUserId: resolvedBillToUserId,
+          billToSupplierId: resolvedBillToSupplierId,
           updatedBy: params.actorId,
           updatedAt: new Date(),
         })
@@ -259,6 +312,9 @@ export class DispatchBatchesService {
       throw new Error('At least one goods item is required.')
     }
 
+    const shipmentPayer = input.shipmentPayer ?? ShipmentPayer.USER
+    const shipmentType = inferShipmentType(input.mode, input.shipmentType)
+
     const uniqueSupplierIds = [...new Set(input.goods.map((g) => g.supplierId))]
     const supplierRows = await db
       .select({ id: users.id, role: users.role })
@@ -269,6 +325,37 @@ export class DispatchBatchesService {
     const hasInvalidSupplier = uniqueSupplierIds.some((id) => supplierRoleMap.get(id) !== UserRole.SUPPLIER)
     if (hasInvalidSupplier) {
       throw new Error('One or more supplier IDs are invalid or not SUPPLIER accounts.')
+    }
+
+    let billingSupplierId: string | null = null
+    if (shipmentPayer === ShipmentPayer.SUPPLIER) {
+      if (uniqueSupplierIds.length !== 1) {
+        throw new Error('Supplier-payer shipment must contain goods from exactly one supplier.')
+      }
+      billingSupplierId = input.billingSupplierId ?? uniqueSupplierIds[0] ?? null
+      if (!billingSupplierId) {
+        throw new Error('billingSupplierId is required when shipmentPayer is SUPPLIER.')
+      }
+      if (!supplierRoleMap.has(billingSupplierId)) {
+        throw new Error('billingSupplierId must be a valid SUPPLIER account.')
+      }
+      if (billingSupplierId !== uniqueSupplierIds[0]) {
+        throw new Error('billingSupplierId must match the supplier on all shipment goods.')
+      }
+    }
+
+    if (shipmentType === ShipmentType.D2D) {
+      const invalidD2DMeasures = input.goods.some((item) => {
+        const weight = item.weightKg ?? 0
+        const hasDimensions = Boolean(item.lengthCm && item.widthCm && item.heightCm)
+        const derivedCbm = hasDimensions
+          ? ((item.lengthCm! * item.widthCm! * item.heightCm!) / 1_000_000)
+          : (item.cbm ?? 0)
+        return weight <= 0 || derivedCbm <= 0
+      })
+      if (invalidD2DMeasures) {
+        throw new Error('D2D intake requires both positive weight and volume (cbm/dimensions) for each goods line.')
+      }
     }
 
     const [customer] = await db
@@ -297,6 +384,11 @@ export class DispatchBatchesService {
           eq(orders.senderId, input.customerId),
           eq(orders.dispatchBatchId, batch.id),
           eq(orders.transportMode, input.mode),
+          eq(orders.shipmentType, shipmentType),
+          eq(orders.shipmentPayer, shipmentPayer),
+          shipmentPayer === ShipmentPayer.SUPPLIER
+            ? eq(orders.billingSupplierId, billingSupplierId as string)
+            : isNull(orders.billingSupplierId),
           isNull(orders.deletedAt),
         ),
       )
@@ -326,7 +418,9 @@ export class DispatchBatchesService {
             destination: 'Lagos, Nigeria',
             orderDirection: 'outbound',
             description: 'Aggregated customer shipment',
-            shipmentType: inferShipmentType(input.mode),
+            shipmentType,
+            shipmentPayer,
+            billingSupplierId,
             transportMode: input.mode,
             statusV2: ShipmentStatusV2.AWAITING_WAREHOUSE_RECEIPT,
             customerStatusV2: ShipmentStatusV2.AWAITING_WAREHOUSE_RECEIPT,
@@ -361,10 +455,47 @@ export class DispatchBatchesService {
       .select({
         packageCount: sql<number>`count(*)::int`,
         totalWeight: sql<string>`coalesce(sum(${orderPackages.weightKg}), 0)::text`,
+        totalCbm: sql<string>`coalesce(sum(${orderPackages.cbm}), 0)::text`,
         totalCost: sql<string>`coalesce(sum(${orderPackages.itemCostUsd}), 0)::text`,
       })
       .from(orderPackages)
       .where(eq(orderPackages.orderId, shipment.id))
+
+    const packageMeasures = await db
+      .select({
+        weightKg: orderPackages.weightKg,
+        cbm: orderPackages.cbm,
+      })
+      .from(orderPackages)
+      .where(eq(orderPackages.orderId, shipment.id))
+
+    const totalCbm = toNumber(totals?.totalCbm)
+    const totalWeight = toNumber(totals?.totalWeight)
+
+    const airChargeableWeightKg = round2(
+      packageMeasures.reduce((sum, row) => {
+        const weightKg = toNumber(row.weightKg)
+        const cbm = toNumber(row.cbm)
+        const volumetricKg = cbm > 0 ? (cbm * 1_000_000) / 6000 : 0
+        return sum + Math.max(weightKg, volumetricKg)
+      }, 0),
+    )
+
+    const seaChargeableWeightKg = round2(totalCbm * SEA_CBM_TO_KG_FACTOR)
+    const rateOwnerId =
+      shipmentPayer === ShipmentPayer.SUPPLIER
+        ? (billingSupplierId as string)
+        : input.customerId
+
+    const pricing = await pricingV2Service.calculatePricing({
+      customerId: rateOwnerId,
+      mode: input.mode,
+      weightKg:
+        input.mode === TransportMode.AIR
+          ? (airChargeableWeightKg > 0 ? airChargeableWeightKg : totalWeight)
+          : seaChargeableWeightKg,
+      cbm: input.mode === TransportMode.SEA ? totalCbm : undefined,
+    })
 
     const [updatedShipment] = await db
       .update(orders)
@@ -379,7 +510,10 @@ export class DispatchBatchesService {
     const invoice = await this.ensureDraftInvoiceForOrder({
       orderId: shipment.id,
       actorId: input.createdBy,
-      totalUsd: Number(totals?.totalCost ?? 0),
+      totalUsd: pricing.amountUsd,
+      shipmentPayer,
+      billToUserId: shipmentPayer === ShipmentPayer.USER ? input.customerId : null,
+      billToSupplierId: shipmentPayer === ShipmentPayer.SUPPLIER ? billingSupplierId : null,
     })
 
     return {
@@ -460,11 +594,25 @@ export class DispatchBatchesService {
           .where(inArray(orderPackages.orderId, orderIds))
       : []
 
+    const measurements = orderIds.length
+      ? await db
+          .select()
+          .from(shipmentMeasurements)
+          .where(inArray(shipmentMeasurements.orderId, orderIds))
+      : []
+
     const goodsByOrder = new Map<string, typeof goods>()
     for (const g of goods) {
       const list = goodsByOrder.get(g.orderId ?? '') ?? []
       list.push(g)
       goodsByOrder.set(g.orderId ?? '', list)
+    }
+
+    const measurementsByOrder = new Map<string, typeof measurements>()
+    for (const measurement of measurements) {
+      const list = measurementsByOrder.get(measurement.orderId) ?? []
+      list.push(measurement)
+      measurementsByOrder.set(measurement.orderId, list)
     }
 
     const shipments = shipmentRows.map((row) => ({
@@ -493,6 +641,15 @@ export class DispatchBatchesService {
           lastName: g.supplierLastName,
           businessName: g.supplierBusinessName,
         }),
+      })),
+      measurements: (measurementsByOrder.get(row.orderId) ?? []).map((m) => ({
+        checkpoint: m.checkpoint,
+        measuredWeightKg: m.measuredWeightKg,
+        measuredCbm: m.measuredCbm,
+        deltaFromSkWeightKg: m.deltaFromSkWeightKg,
+        deltaFromSkCbm: m.deltaFromSkCbm,
+        measuredAt: m.measuredAt.toISOString(),
+        notes: m.notes,
       })),
     }))
 

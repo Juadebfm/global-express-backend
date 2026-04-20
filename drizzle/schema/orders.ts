@@ -30,6 +30,10 @@ export const shipmentStatusV2Enum = pgEnum('shipment_status_v2', [
   'IN_TRANSIT_TO_LAGOS_OFFICE',
   'READY_FOR_PICKUP',
   'PICKED_UP_COMPLETED',
+  'LOCAL_COURIER_ASSIGNED',
+  'IN_TRANSIT_TO_DESTINATION_CITY',
+  'OUT_FOR_DELIVERY_DESTINATION_CITY',
+  'DELIVERED_TO_RECIPIENT',
   'ON_HOLD',
   'CANCELLED',
   'RESTRICTED_ITEM_REJECTED',
@@ -38,9 +42,11 @@ export const shipmentStatusV2Enum = pgEnum('shipment_status_v2', [
 
 export const orderDirectionEnum = pgEnum('order_direction', ['outbound', 'inbound'])
 
-export const shipmentTypeEnum = pgEnum('shipment_type', ['air', 'ocean'])
+export const shipmentTypeEnum = pgEnum('shipment_type', ['air', 'ocean', 'd2d'])
 
 export const transportModeEnum = pgEnum('transport_mode', ['air', 'sea'])
+
+export const shipmentPayerEnum = pgEnum('shipment_payer', ['USER', 'SUPPLIER'])
 
 
 export const paymentCollectionStatusEnum = pgEnum('payment_collection_status', [
@@ -52,7 +58,6 @@ export const paymentCollectionStatusEnum = pgEnum('payment_collection_status', [
 export const pricingSourceEnum = pgEnum('pricing_source', [
   'DEFAULT_RATE',
   'CUSTOMER_OVERRIDE',
-  'MANUAL_ADJUSTMENT',
   'MIGRATED_UNVERIFIED',
 ])
 
@@ -76,6 +81,8 @@ export const orders = pgTable(
     declaredValue: numeric('declared_value', { precision: 12, scale: 2 }),
     description: text('description'),
     shipmentType: shipmentTypeEnum('shipment_type'),
+    shipmentPayer: shipmentPayerEnum('shipment_payer').notNull().default('USER'),
+    billingSupplierId: uuid('billing_supplier_id').references(() => users.id),
     departureDate: timestamp('departure_date'),
     eta: timestamp('eta'),
     transportMode: transportModeEnum('transport_mode'),
@@ -88,7 +95,6 @@ export const orders = pgTable(
     finalChargeUsd: numeric('final_charge_usd', { precision: 12, scale: 2 }),
     pricingSource: pricingSourceEnum('pricing_source'),
     specialPackagingSurchargeUsd: numeric('special_packaging_surcharge_usd', { precision: 10, scale: 2 }),
-    priceAdjustmentReason: text('price_adjustment_reason'),
     paymentCollectionStatus: paymentCollectionStatusEnum('payment_collection_status')
       .notNull()
       .default('UNPAID'),
@@ -109,6 +115,8 @@ export const orders = pgTable(
     index('orders_sender_id_idx').on(table.senderId),
     index('orders_status_v2_idx').on(table.statusV2),
     index('orders_transport_mode_idx').on(table.transportMode),
+    index('orders_shipment_payer_idx').on(table.shipmentPayer),
+    index('orders_billing_supplier_id_idx').on(table.billingSupplierId),
     index('orders_dispatch_batch_id_idx').on(table.dispatchBatchId),
     index('orders_tracking_number_idx').on(table.trackingNumber),
     index('orders_created_at_idx').on(table.createdAt),

@@ -1,9 +1,18 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { shipmentsService } from '../services/shipments.service'
 import { dispatchBatchesService } from '../services/dispatch-batches.service'
+import { d2dOperationsService } from '../services/d2d-operations.service'
 import { successResponse } from '../utils/response'
 import { createAuditLog } from '../utils/audit'
-import { UserRole, ShipmentStatusV2, TransportMode } from '../types/enums'
+import {
+  InvoiceAttachmentType,
+  MeasurementCheckpoint,
+  ShipmentPayer,
+  ShipmentStatusV2,
+  ShipmentType,
+  TransportMode,
+  UserRole,
+} from '../types/enums'
 
 export const shipmentsController = {
   async list(
@@ -18,15 +27,16 @@ export const shipmentsController = {
     reply: FastifyReply,
   ) {
     const userRole = request.user.role as UserRole
-    const isCustomer = userRole === UserRole.USER || userRole === UserRole.SUPPLIER
 
     const result = await shipmentsService.list({
       page: Number(request.query.page) || 1,
       limit: Number(request.query.limit) || 20,
       userId: request.user.id,
-      isCustomer,
+      viewerRole: userRole,
       statusV2: request.query.statusV2 as ShipmentStatusV2 | undefined,
-      senderId: !isCustomer ? request.query.senderId : undefined,
+      senderId: userRole === UserRole.USER || userRole === UserRole.SUPPLIER
+        ? undefined
+        : request.query.senderId,
     })
 
     return reply.send(successResponse(result))
@@ -37,6 +47,9 @@ export const shipmentsController = {
       Body: {
         customerId: string
         mode: TransportMode
+        shipmentType?: ShipmentType
+        shipmentPayer?: ShipmentPayer
+        billingSupplierId?: string
         goods: Array<{
           supplierId: string
           description?: string
@@ -57,6 +70,9 @@ export const shipmentsController = {
       const result = await dispatchBatchesService.intakeGoods({
         customerId: request.body.customerId,
         mode: request.body.mode,
+        shipmentType: request.body.shipmentType,
+        shipmentPayer: request.body.shipmentPayer,
+        billingSupplierId: request.body.billingSupplierId,
         createdBy: request.user.id,
         goods: request.body.goods,
       })
@@ -70,6 +86,8 @@ export const shipmentsController = {
         metadata: {
           batchId: result.batch.id,
           mode: request.body.mode,
+          shipmentType: request.body.shipmentType,
+          shipmentPayer: request.body.shipmentPayer,
           goodsCount: result.appendedGoodsCount,
         },
       })
@@ -119,5 +137,199 @@ export const shipmentsController = {
     })
 
     return reply.send(successResponse(updated))
+  },
+
+  async upsertMeasurement(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: {
+        checkpoint: MeasurementCheckpoint
+        measuredWeightKg: number
+        measuredCbm: number
+        notes?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const saved = await d2dOperationsService.upsertMeasurement({
+        orderId: request.params.id,
+        checkpoint: request.body.checkpoint,
+        measuredWeightKg: request.body.measuredWeightKg,
+        measuredCbm: request.body.measuredCbm,
+        notes: request.body.notes,
+        measuredBy: request.user.id,
+      })
+      return reply.send(successResponse(saved))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to record measurement.'
+      return reply.code(400).send({ success: false, message })
+    }
+  },
+
+  async listMeasurements(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const rows = await d2dOperationsService.listMeasurements(request.params.id)
+      return reply.send(successResponse(rows))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to fetch measurements.'
+      return reply.code(400).send({ success: false, message })
+    }
+  },
+
+  async presignTaskInvoiceAttachment(
+    request: FastifyRequest<{
+      Params: { invoiceId: string }
+      Body: {
+        contentType: string
+        fileSizeBytes: number
+        originalFileName?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const payload = await d2dOperationsService.generateTaskInvoiceAttachmentPresign({
+        invoiceId: request.params.invoiceId,
+        contentType: request.body.contentType,
+        fileSizeBytes: request.body.fileSizeBytes,
+        originalFileName: request.body.originalFileName,
+        actorRole: request.user.role as UserRole,
+        actorId: request.user.id,
+      })
+      return reply.send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to generate attachment upload URL.'
+      return reply.code(400).send({ success: false, message })
+    }
+  },
+
+  async confirmTaskInvoiceAttachment(
+    request: FastifyRequest<{
+      Params: { invoiceId: string }
+      Body: {
+        r2Key: string
+        contentType: string
+        fileSizeBytes: number
+        originalFileName: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const payload = await d2dOperationsService.confirmTaskInvoiceAttachment({
+        invoiceId: request.params.invoiceId,
+        r2Key: request.body.r2Key,
+        contentType: request.body.contentType,
+        fileSizeBytes: request.body.fileSizeBytes,
+        originalFileName: request.body.originalFileName,
+        actorRole: request.user.role as UserRole,
+        actorId: request.user.id,
+      })
+      return reply.code(201).send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to confirm invoice attachment upload.'
+      return reply.code(400).send({ success: false, message })
+    }
+  },
+
+  async listTaskInvoiceAttachments(
+    request: FastifyRequest<{ Params: { invoiceId: string } }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const payload = await d2dOperationsService.listTaskInvoiceAttachments({
+        invoiceId: request.params.invoiceId,
+        actorRole: request.user.role as UserRole,
+        actorId: request.user.id,
+      })
+      return reply.send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to fetch task invoice attachments.'
+      const statusCode = message === 'Forbidden' ? 403 : 400
+      return reply.code(statusCode).send({ success: false, message })
+    }
+  },
+
+  async presignRegulatedDocument(
+    request: FastifyRequest<{
+      Params: { invoiceId: string }
+      Body: {
+        contentType: string
+        fileSizeBytes: number
+        originalFileName?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const payload = await d2dOperationsService.generateInvoiceAttachmentPresign({
+        invoiceId: request.params.invoiceId,
+        attachmentType: InvoiceAttachmentType.REGULATED_DOCUMENT,
+        contentType: request.body.contentType,
+        fileSizeBytes: request.body.fileSizeBytes,
+        originalFileName: request.body.originalFileName,
+        actorRole: request.user.role as UserRole,
+        actorId: request.user.id,
+      })
+      return reply.send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to generate document upload URL.'
+      const statusCode = message === 'Forbidden' ? 403 : 400
+      return reply.code(statusCode).send({ success: false, message })
+    }
+  },
+
+  async confirmRegulatedDocument(
+    request: FastifyRequest<{
+      Params: { invoiceId: string }
+      Body: {
+        r2Key: string
+        contentType: string
+        fileSizeBytes: number
+        originalFileName: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const payload = await d2dOperationsService.confirmInvoiceAttachment({
+        invoiceId: request.params.invoiceId,
+        attachmentType: InvoiceAttachmentType.REGULATED_DOCUMENT,
+        r2Key: request.body.r2Key,
+        contentType: request.body.contentType,
+        fileSizeBytes: request.body.fileSizeBytes,
+        originalFileName: request.body.originalFileName,
+        actorRole: request.user.role as UserRole,
+        actorId: request.user.id,
+      })
+      return reply.code(201).send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to confirm regulated document upload.'
+      const statusCode = message === 'Forbidden' ? 403 : 400
+      return reply.code(statusCode).send({ success: false, message })
+    }
+  },
+
+  async listRegulatedDocuments(
+    request: FastifyRequest<{ Params: { invoiceId: string } }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const payload = await d2dOperationsService.listInvoiceAttachments({
+        invoiceId: request.params.invoiceId,
+        attachmentType: InvoiceAttachmentType.REGULATED_DOCUMENT,
+        actorRole: request.user.role as UserRole,
+        actorId: request.user.id,
+      })
+      return reply.send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to fetch regulated documents.'
+      const statusCode = message === 'Forbidden' ? 403 : 400
+      return reply.code(statusCode).send({ success: false, message })
+    }
   },
 }

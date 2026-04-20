@@ -280,6 +280,97 @@ This document captures all requested business-logic changes before implementatio
 - Open Questions:
   - None (resolved: Option B cutoff policy confirmed).
 
+### Change 7
+
+- Status: `Scope Frozen — ready for implementation`
+- Request:
+  - Introduce `D2D` (Door-to-Door) as a new shipment type with its own operational flow, pricing/payer rules, verification checkpoints, and external visibility behavior.
+- Business Context:
+  - D2D is primarily for expedited/sensitive goods (e.g., collagen, medicament, regulated, cosmetic, medical items).
+  - Suppliers are often the source of shipment details and may sometimes be the paying party instead of the end user.
+- Core Decisions Confirmed:
+  - Shipment type and lane model:
+    - Add `D2D` as a new `shipmentType`.
+    - D2D usually follows air movement, but remains a distinct product flow.
+  - User/supplier linkage:
+    - Shipment can be linked to both customer user and supplier.
+    - GEX operationally can handle multiple customers and multiple suppliers across arrangements.
+  - Payer model:
+    - Exactly one payer per shipment: either `USER` or `SUPPLIER`.
+    - If payer is `SUPPLIER`, shipment must be single-supplier (multiple suppliers are not allowed on that shipment).
+  - Verification checkpoints:
+    - SK warehouse verification is required.
+    - At SK warehouse, both weight and volume must be captured.
+    - Airport measurements are recorded as provided by airport staff (may differ from warehouse values).
+    - Nigeria office performs final verification/check; this is not a process blocker.
+  - Measurement variance control:
+    - Record measurement differences across SK warehouse, airport, and Nigeria checkpoints for reconciliation/audit.
+    - Variance does not block movement/status updates and does not trigger post-payment customer re-pricing.
+  - Regulated-document handling:
+    - Allow document upload for regulated goods from either supplier portal or SK warehouse staff.
+  - Media capture:
+    - Goods images are required in warehouse intake flow for D2D.
+  - Invoicing and visibility:
+    - When supplier is payer, supplier-facing task invoice is required and should be uploadable by staff/superadmin.
+    - User-facing side should expose payment status only (not full supplier invoice details).
+    - Supplier should see only their own shipments/invoices and only limited linked-user details.
+    - Supplier-payer flow: supplier must provide the recipient user details; shipment is recorded as one shipment for that linked user.
+  - Status/timeline:
+    - D2D needs its own status flow; journey extends beyond Nigeria office to last-mile city delivery via local courier.
+  - D2D lane scope:
+    - D2D is not restricted to air-only in V1 (air and sea can be supported).
+  - Pricing controls:
+    - Use normal rate cards when user pays directly.
+    - Maintain separate supplier rate cards when supplier pays.
+    - Superadmin can configure supplier and user rates independently.
+    - User-payer consolidation: user is charged for the full set of goods received for that user at that intake point/cycle, including goods from same supplier at different times/values and from different suppliers.
+  - Data starting point:
+    - Treat this as fresh rollout baseline; remove any legacy/open setup artifacts if present.
+- Recommended Technical Direction (Efficiency):
+  - Reuse existing `invoices` foundation (most efficient) and extend it with payer/audience metadata, instead of creating a separate parallel invoice system.
+  - Add a dedicated invoice-attachment model for uploaded supplier task invoices (PDF/images), linked to invoice records.
+  - Keep payments invoice-centric (`invoiceId`) as already established.
+- Expected Affected Areas (high-level):
+  - Enums/types:
+    - Add `D2D` shipment type and D2D-specific status set.
+    - Add payer model enum (e.g., `USER`, `SUPPLIER`).
+  - Order/shipment domain:
+    - User+supplier linkage model.
+    - D2D checkpoint measurement history (SK, airport, Nigeria) and variance tracking.
+  - Pricing:
+    - Split rate selection by payer type for D2D (user-rate-card vs supplier-rate-card).
+  - Invoicing:
+    - Invoice audience/payer metadata + supplier task-invoice attachments.
+  - External/internal APIs:
+    - Supplier portal views, customer-limited views, internal staff/superadmin operations.
+  - Notifications:
+    - Internal reconciliation visibility for recorded measurement differences.
+  - Uploads:
+    - Regulated documents + goods images + supplier invoice files (optimized size handling).
+
+### Change 8
+
+- Status: `Implemented (local) — pending deploy`
+- Request:
+  - Remove manual-adjustment pricing inputs/labels end-to-end.
+  - Enforce superadmin-only permissions for pricing-rule changes.
+- Implemented Rules:
+  - Warehouse verification no longer accepts manual final-charge override fields.
+  - `finalChargeUsd` is always derived from calculated pricing + special packaging surcharge.
+  - Manual-adjustment pricing source/reason fields are removed from active API and app schema contracts.
+  - `PATCH /api/v1/settings/pricing` is now superadmin-only.
+- Files updated:
+  - `src/routes/orders.routes.ts`
+  - `src/controllers/orders.controller.ts`
+  - `src/services/orders.service.ts`
+  - `src/routes/settings.routes.ts`
+  - `src/types/enums.ts`
+  - `drizzle/schema/orders.ts`
+  - `drizzle/schema/bulk-shipment-items.ts`
+  - `drizzle/migrations/2026-04-20_remove_manual_adjustment_pricing.sql`
+  - `docs/frontend-api-manual.md`
+  - `docs/business-process-refactor-blueprint.md`
+
 ## Decisions Log
 
 - 2026-04-19: Captured Change 1 scope and formulas from stakeholder request; implementation deferred pending full change list and open-question resolution.
@@ -332,6 +423,25 @@ This document captures all requested business-logic changes before implementatio
   - Staff-triggered movement transitions batch to `CUTOFF_PENDING_APPROVAL`.
   - Superadmin approval closes batch.
   - Superadmin-triggered dispatch can close directly.
+- 2026-04-20: Captured Change 7 D2D decisions:
+  - New `shipmentType = D2D` with separate flow and status journey.
+  - Single payer per shipment (`USER` or `SUPPLIER`), with user+supplier linkage supported.
+  - SK warehouse requires both weight and volume capture; airport and Nigeria checkpoints recorded for reconciliation/final check.
+  - Measurement differences are recorded for reconciliation; they do not block operations and do not force post-payment re-pricing.
+  - Supplier task invoices can be uploaded by staff/superadmin; user side sees payment status only.
+  - Separate rate-card controls required for user-paid vs supplier-paid D2D shipments.
+  - Preferred implementation approach: extend existing invoice model rather than introducing a parallel invoice subsystem.
+- 2026-04-20: Refined Change 7 confirmations:
+  - D2D V1 is not air-only.
+  - Upload constraints confirmed: PDF max 5MB, image uploads accepted up to 12MB with compression before storage, max 10 files per upload group.
+- 2026-04-20: Finalized Change 7 payer/consolidation rules:
+  - Supplier-payer shipments must be single-supplier; multi-supplier attachment is not allowed.
+  - Supplier-payer shipments are recorded against one linked user provided by the supplier.
+  - User-payer shipments are consolidated and billed for all goods received for that user at that intake point/cycle, even across suppliers and timing differences.
+- 2026-04-20: Implemented Change 8 locally:
+  - Removed warehouse manual pricing override inputs and manual-adjustment reason flow.
+  - Final charge now always uses computed pricing + configured surcharges.
+  - Pricing rules mutation endpoint (`PATCH /settings/pricing`) changed to superadmin-only.
 
 ## Implementation Plan (To Be Filled After Scope Freeze)
 
@@ -341,4 +451,6 @@ This document captures all requested business-logic changes before implementatio
 - Change 4: Implemented (local), validated.
 - Change 5: Configured (Clerk) + FE follow-up required.
 - Change 6: Scope frozen; implement event-driven cutoff with Option B approval gate.
+- Change 7: Scope frozen; ready for implementation.
+- Change 8: Implemented (local), validated.
 - Deployment pending.

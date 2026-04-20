@@ -5,6 +5,7 @@ import {
   packageImages,
   orderPackages,
   invoices,
+  shipmentMeasurements,
   users,
 } from '../../drizzle/schema'
 import { appSettings } from '../../drizzle/schema/app-settings'
@@ -30,16 +31,21 @@ import {
 } from '../domain/shipment-v2/status-transitions'
 import type { PaginationParams } from '../types'
 import {
-  PricingSource,
+  ShipmentPayer,
   ShipmentStatusV2,
+  ShipmentType,
   TransportMode,
   UserRole,
 } from '../types/enums'
 
-/** Compute ETA from departure date + shipment type transit days */
-function computeEta(departureDate: Date | null, shipmentType: string | null): string | null {
+/** Compute ETA from departure date + shipment lane transit days */
+function computeEta(
+  departureDate: Date | null,
+  shipmentType: string | null,
+  transportMode?: string | null,
+): string | null {
   if (!departureDate) return null
-  const transitDays = shipmentType === 'ocean' ? 90 : 7 // air default = 7 days
+  const transitDays = shipmentType === 'ocean' || transportMode === TransportMode.SEA ? 90 : 7
   const eta = new Date(departureDate)
   eta.setDate(eta.getDate() + transitDays)
   return eta.toISOString()
@@ -53,6 +59,9 @@ const MILESTONE_STATUSES = new Set<ShipmentStatusV2>([
   ShipmentStatusV2.FLIGHT_LANDED_LAGOS,
   ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT,
   ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS,
+  ShipmentStatusV2.LOCAL_COURIER_ASSIGNED,
+  ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY,
+  ShipmentStatusV2.DELIVERED_TO_RECIPIENT,
   ShipmentStatusV2.READY_FOR_PICKUP,
   ShipmentStatusV2.ON_HOLD,
   ShipmentStatusV2.CANCELLED,
@@ -66,6 +75,9 @@ const V2_MILESTONE_TITLES: Partial<Record<ShipmentStatusV2, string>> = {
   [ShipmentStatusV2.FLIGHT_LANDED_LAGOS]: 'Landed in Lagos',
   [ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT]: 'Arrived at Lagos Port',
   [ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS]: 'Customs Cleared',
+  [ShipmentStatusV2.LOCAL_COURIER_ASSIGNED]: 'Local Courier Assigned',
+  [ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY]: 'Out for Delivery',
+  [ShipmentStatusV2.DELIVERED_TO_RECIPIENT]: 'Delivered to Recipient',
   [ShipmentStatusV2.READY_FOR_PICKUP]: 'Ready for Pickup',
   [ShipmentStatusV2.ON_HOLD]: 'Shipment On Hold',
   [ShipmentStatusV2.CANCELLED]: 'Shipment Cancelled',
@@ -79,6 +91,9 @@ const V2_MILESTONE_BODIES: Partial<Record<ShipmentStatusV2, (tracking: string) =
   [ShipmentStatusV2.FLIGHT_LANDED_LAGOS]: (t) => `Your shipment ${t} has landed in Lagos.`,
   [ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT]: (t) => `Your shipment ${t} has arrived at Lagos port.`,
   [ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS]: (t) => `Your shipment ${t} has cleared customs in Lagos.`,
+  [ShipmentStatusV2.LOCAL_COURIER_ASSIGNED]: (t) => `Your shipment ${t} has been handed over to a local courier.`,
+  [ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY]: (t) => `Your shipment ${t} is out for delivery in your destination city.`,
+  [ShipmentStatusV2.DELIVERED_TO_RECIPIENT]: (t) => `Your shipment ${t} has been delivered.`,
   [ShipmentStatusV2.READY_FOR_PICKUP]: (t) => `Your package ${t} is ready for pickup at our Lagos office.`,
   [ShipmentStatusV2.ON_HOLD]: (t) => `Your shipment ${t} has been placed on hold. Please contact us for more details.`,
   [ShipmentStatusV2.CANCELLED]: (t) => `Your shipment ${t} has been cancelled.`,
@@ -99,7 +114,9 @@ export interface CreateOrderInput {
   weight?: string
   declaredValue?: string
   description?: string
-  shipmentType?: 'air' | 'ocean'
+  shipmentType?: 'air' | 'ocean' | 'd2d'
+  shipmentPayer?: ShipmentPayer
+  billingSupplierId?: string | null
   departureDate?: Date | null
   eta?: Date | null
   isPreorder?: boolean
@@ -145,8 +162,6 @@ export interface VerifyOrderAtWarehouseInput {
   transportMode?: TransportMode
   departureDate?: Date
   packages: WarehouseVerifyPackageInput[]
-  manualFinalChargeUsd?: number
-  manualAdjustmentReason?: string
 }
 
 function roundTo(n: number, decimals: number): number {
@@ -210,6 +225,8 @@ export class OrdersService {
         declaredValue: input.declaredValue ? String(parseFloat(input.declaredValue.replace(/[^0-9.]/g, '')) || 0) : null,
         description: input.description ?? null,
         shipmentType: input.shipmentType ?? null,
+        shipmentPayer: input.shipmentPayer ?? ShipmentPayer.USER,
+        billingSupplierId: input.billingSupplierId ?? null,
         transportMode: inferredTransportMode,
         dispatchBatchId,
         isPreorder: input.isPreorder ?? false,
@@ -294,7 +311,12 @@ export class OrdersService {
 
     // 3. Enforce sequential transition rules
     if (mode) {
-      if (!canTransitionSequentially(mode, existing.statusV2 as ShipmentStatusV2 | null, input.statusV2)) {
+      if (!canTransitionSequentially(
+        mode,
+        existing.statusV2 as ShipmentStatusV2 | null,
+        input.statusV2,
+        existing.shipmentType as ShipmentType | null,
+      )) {
         throw new Error(
           `Invalid status transition: cannot move from "${existing.statusV2 ?? 'none'}" to "${input.statusV2}" for ${mode} shipments.`,
         )
@@ -307,7 +329,12 @@ export class OrdersService {
         )
       }
       // Validate sequential order within the common flow (use AIR as placeholder — both flows share COMMON_FLOW)
-      if (!isExceptionStatus(input.statusV2) && !canTransitionSequentially(TransportMode.AIR, existing.statusV2 as ShipmentStatusV2 | null, input.statusV2)) {
+      if (!isExceptionStatus(input.statusV2) && !canTransitionSequentially(
+        TransportMode.AIR,
+        existing.statusV2 as ShipmentStatusV2 | null,
+        input.statusV2,
+        existing.shipmentType as ShipmentType | null,
+      )) {
         throw new Error(
           `Invalid status transition: cannot move from "${existing.statusV2 ?? 'none'}" to "${input.statusV2}".`,
         )
@@ -578,6 +605,23 @@ export class OrdersService {
       }
     })
 
+    if (existing.shipmentType === ShipmentType.D2D) {
+      const hasInvalidD2DMeasures = normalizedPackages.some(
+        (pkg) => (pkg.weightKg ?? 0) <= 0 || (pkg.cbm ?? 0) <= 0,
+      )
+      if (hasInvalidD2DMeasures) {
+        throw new Error('D2D warehouse verification requires both positive weightKg and cbm for each package.')
+      }
+
+      const [imageCountRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(packageImages)
+        .where(eq(packageImages.orderId, id))
+      if ((imageCountRow?.count ?? 0) < 1) {
+        throw new Error('D2D warehouse verification requires at least one uploaded goods image.')
+      }
+    }
+
     const invalidQuantity = normalizedPackages.some(
       (pkg) => !Number.isInteger(pkg.quantity) || pkg.quantity <= 0,
     )
@@ -647,22 +691,13 @@ export class OrdersService {
       2,
     )
 
-    const hasManualFinalCharge = input.manualFinalChargeUsd !== undefined
-    if (hasManualFinalCharge && !input.manualAdjustmentReason?.trim()) {
-      throw new Error('manualAdjustmentReason is required when manualFinalChargeUsd is provided.')
-    }
-
-    const finalChargeUsd = hasManualFinalCharge
-      ? input.manualFinalChargeUsd!
-      : pricing.amountUsd + totalSpecialPackagingSurcharge
+    const finalChargeUsd = pricing.amountUsd + totalSpecialPackagingSurcharge
 
     if (finalChargeUsd <= 0) {
       throw new Error('Final charge must be greater than zero.')
     }
 
-    const pricingSource = hasManualFinalCharge
-      ? PricingSource.MANUAL_ADJUSTMENT
-      : pricing.pricingSource
+    const pricingSource = pricing.pricingSource
     const statusV2 = ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED
 
     const eta = input.departureDate
@@ -685,7 +720,6 @@ export class OrdersService {
           specialPackagingSurchargeUsd: totalSpecialPackagingSurcharge > 0 ? totalSpecialPackagingSurcharge.toString() : null,
           finalChargeUsd: finalChargeUsd.toString(),
           pricingSource,
-          priceAdjustmentReason: input.manualAdjustmentReason?.trim() ?? null,
           ...(input.departureDate !== undefined && { departureDate: input.departureDate }),
           ...(eta !== null && { eta }),
           updatedAt: new Date(),
@@ -719,6 +753,40 @@ export class OrdersService {
           updatedBy: input.verifiedBy,
         })),
       )
+
+      const checkpointWeightKg = roundTo(
+        normalizedPackages.reduce((sum, pkg) => sum + (pkg.weightKg ?? 0), 0),
+        3,
+      )
+      const checkpointCbm = roundTo(
+        normalizedPackages.reduce((sum, pkg) => sum + (pkg.cbm ?? 0), 0),
+        6,
+      )
+
+      await tx
+        .insert(shipmentMeasurements)
+        .values({
+          orderId: id,
+          checkpoint: 'SK_WAREHOUSE',
+          measuredWeightKg: checkpointWeightKg.toFixed(3),
+          measuredCbm: checkpointCbm.toFixed(6),
+          deltaFromSkWeightKg: '0.000',
+          deltaFromSkCbm: '0.000000',
+          measuredBy: input.verifiedBy,
+          measuredAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [shipmentMeasurements.orderId, shipmentMeasurements.checkpoint],
+          set: {
+            measuredWeightKg: checkpointWeightKg.toFixed(3),
+            measuredCbm: checkpointCbm.toFixed(6),
+            deltaFromSkWeightKg: '0.000',
+            deltaFromSkCbm: '0.000000',
+            measuredBy: input.verifiedBy,
+            measuredAt: new Date(),
+            updatedAt: new Date(),
+          },
+        })
     })
 
     await dispatchBatchesService.ensureDraftInvoiceForOrder({
@@ -799,6 +867,7 @@ export class OrdersService {
         declaredValue: orders.declaredValue,
         description: orders.description,
         shipmentType: orders.shipmentType,
+        transportMode: orders.transportMode,
         departureDate: orders.departureDate,
         eta: orders.eta,
         createdAt: orders.createdAt,
@@ -813,7 +882,7 @@ export class OrdersService {
       .orderBy(desc(orders.createdAt))
 
     const normalized = rows.map((o) => {
-      const eta = computeEta(o.departureDate, o.shipmentType)
+      const eta = computeEta(o.departureDate, o.shipmentType, o.transportMode)
       return {
         type: 'solo' as const,
         id: o.id,

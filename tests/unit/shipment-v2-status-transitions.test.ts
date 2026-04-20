@@ -4,7 +4,7 @@ import {
   getInitialStatusForMode,
   isExceptionStatus,
 } from '../../src/domain/shipment-v2/status-transitions'
-import { ShipmentStatusV2, TransportMode } from '../../src/types/enums'
+import { ShipmentStatusV2, ShipmentType, TransportMode } from '../../src/types/enums'
 
 describe('shipment-v2 status transitions', () => {
   it('exposes correct initial statuses', () => {
@@ -61,5 +61,25 @@ describe('shipment-v2 status transitions', () => {
         ShipmentStatusV2.CANCELLED,
       ),
     ).toBe(true)
+  })
+
+  it('supports D2D last-mile progression after Lagos office transit', () => {
+    expect(
+      canTransitionSequentially(
+        TransportMode.AIR,
+        ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE,
+        ShipmentStatusV2.LOCAL_COURIER_ASSIGNED,
+        ShipmentType.D2D,
+      ),
+    ).toBe(true)
+
+    expect(
+      canTransitionSequentially(
+        TransportMode.AIR,
+        ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE,
+        ShipmentStatusV2.READY_FOR_PICKUP,
+        ShipmentType.D2D,
+      ),
+    ).toBe(false)
   })
 })

@@ -7,13 +7,24 @@ import { notificationsService } from '../services/notifications.service'
 import { pricingV2Service } from '../services/pricing-v2.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
-import { ShipmentStatusV2, TransportMode, UserRole } from '../types/enums'
+import { ShipmentPayer, ShipmentStatusV2, TransportMode, UserRole } from '../types/enums'
 import { STATUS_LABELS } from '../domain/shipment-v2/status-labels'
 
 const SEA_CBM_TO_KG_FACTOR = 550
 
 function isCustomerRole(role: UserRole): boolean {
   return role === UserRole.USER || role === UserRole.SUPPLIER
+}
+
+function maskOrderForExternalViewer<T extends Record<string, unknown>>(
+  order: T,
+  role: UserRole,
+): T {
+  if (!isCustomerRole(role)) return order
+  return {
+    ...order,
+    senderId: null,
+  }
 }
 
 function formatLastUpdate(date: Date | string): string {
@@ -93,7 +104,9 @@ export const ordersController = {
         weight?: string
         declaredValue?: string
         description?: string
-        shipmentType?: 'air' | 'ocean'
+        shipmentType?: 'air' | 'ocean' | 'd2d'
+        shipmentPayer?: ShipmentPayer
+        billingSupplierId?: string
         pickupRepName?: string
         pickupRepPhone?: string
       }
@@ -106,6 +119,16 @@ export const ordersController = {
     const senderId = isCustomerRole(userRole)
       ? request.user.id
       : (request.body.senderId ?? request.user.id)
+    const shipmentPayer = isCustomerRole(userRole)
+      ? ShipmentPayer.USER
+      : (request.body.shipmentPayer ?? ShipmentPayer.USER)
+
+    if (shipmentPayer === ShipmentPayer.SUPPLIER && !request.body.billingSupplierId) {
+      return reply.code(400).send({
+        success: false,
+        message: 'billingSupplierId is required when shipmentPayer is SUPPLIER.',
+      })
+    }
 
     // Customers must have a complete profile (name, phone, full address) before placing an order.
     // Staff creating on behalf of a customer bypass this check.
@@ -131,6 +154,10 @@ export const ordersController = {
       declaredValue: request.body.declaredValue,
       description: request.body.description,
       shipmentType: request.body.shipmentType,
+      shipmentPayer,
+      billingSupplierId: shipmentPayer === ShipmentPayer.SUPPLIER
+        ? request.body.billingSupplierId ?? null
+        : null,
       // Customers creating for themselves are pre-ordering (item not yet at warehouse)
       isPreorder: isCustomerRole(userRole),
       createdBy: request.user.id,
@@ -155,7 +182,7 @@ export const ordersController = {
       metadata: { orderId: order.id, trackingNumber: order.trackingNumber, senderId },
     })
 
-    return reply.code(201).send(successResponse(order))
+    return reply.code(201).send(successResponse(maskOrderForExternalViewer(order, userRole)))
   },
 
   async listOrders(
@@ -177,6 +204,14 @@ export const ordersController = {
       statusV2: request.query.statusV2 as ShipmentStatusV2 | undefined,
       senderId,
     })
+
+    if (isCustomerRole(userRole)) {
+      const masked = {
+        ...result,
+        data: result.data.map((order) => maskOrderForExternalViewer(order, userRole)),
+      }
+      return reply.send(successResponse(masked))
+    }
 
     return reply.send(successResponse(result))
   },
@@ -211,7 +246,7 @@ export const ordersController = {
       return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 
-    return reply.send(successResponse(order))
+    return reply.send(successResponse(maskOrderForExternalViewer(order, userRole)))
   },
 
   async trackByTrackingNumber(
@@ -335,8 +370,6 @@ export const ordersController = {
           restrictedOverrideApproved?: boolean
           restrictedOverrideReason?: string
         }>
-        manualFinalChargeUsd?: number
-        manualAdjustmentReason?: string
       }
     }>,
     reply: FastifyReply,
@@ -360,8 +393,6 @@ export const ordersController = {
           ...pkg,
           arrivalAt: pkg.arrivalAt ? new Date(pkg.arrivalAt) : undefined,
         })),
-        manualFinalChargeUsd: request.body.manualFinalChargeUsd,
-        manualAdjustmentReason: request.body.manualAdjustmentReason,
       })
 
       if (!updated) {
@@ -377,7 +408,6 @@ export const ordersController = {
         metadata: {
           transportMode: request.body.transportMode ?? updated.transportMode,
           packageCount: request.body.packages.length,
-          hasManualAdjustment: request.body.manualFinalChargeUsd !== undefined,
         },
       })
 

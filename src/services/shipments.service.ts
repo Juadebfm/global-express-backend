@@ -1,32 +1,54 @@
-import { eq, and, isNull, sql, desc } from 'drizzle-orm'
+import { eq, and, isNull, sql, desc, inArray, or } from 'drizzle-orm'
 import { db } from '../config/db'
-import { orders, users } from '../../drizzle/schema'
+import { invoices, orderPackages, orders, users } from '../../drizzle/schema'
 import { decrypt } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import type { PaginationParams } from '../types'
-import type { ShipmentStatusV2 } from '../types/enums'
+import { UserRole, type ShipmentStatusV2 } from '../types/enums'
 import { STATUS_LABELS } from '../domain/shipment-v2/status-labels'
 
 export class ShipmentsService {
   /**
    * Paginated shipments list with decrypted PII, statusLabel, senderName, and packageCount.
-   * - Customers: their own orders only.
-   * - Staff/Admin/Superadmin: all orders (optionally filtered by senderId or statusV2).
+   * - USER: own orders only.
+   * - SUPPLIER: orders where supplier is attached (or billed supplier on supplier-payer shipments).
+   * - STAFF/SUPER_ADMIN: all orders (optionally filtered by senderId or statusV2).
    */
   async list(params: PaginationParams & {
     userId: string
-    isCustomer: boolean
+    viewerRole: UserRole
     statusV2?: ShipmentStatusV2
     senderId?: string
     search?: string
   }) {
     const offset = getPaginationOffset(params.page, params.limit)
 
-    const senderFilter = params.isCustomer
-      ? eq(orders.senderId, params.userId)
-      : params.senderId
+    let senderFilter: any
+
+    if (params.viewerRole === UserRole.USER) {
+      senderFilter = eq(orders.senderId, params.userId)
+    } else if (params.viewerRole === UserRole.SUPPLIER) {
+      const packageOrderRows = await db
+        .select({ orderId: orderPackages.orderId })
+        .from(orderPackages)
+        .where(eq(orderPackages.supplierId, params.userId))
+
+      const packageOrderIds = packageOrderRows
+        .map((row) => row.orderId)
+        .filter((id): id is string => Boolean(id))
+
+      senderFilter =
+        packageOrderIds.length > 0
+          ? or(
+              inArray(orders.id, packageOrderIds),
+              eq(orders.billingSupplierId, params.userId),
+            )
+          : eq(orders.billingSupplierId, params.userId)
+    } else {
+      senderFilter = params.senderId
         ? eq(orders.senderId, params.senderId)
         : undefined
+    }
 
     const statusFilter = params.statusV2 ? eq(orders.statusV2, params.statusV2) : undefined
 
@@ -38,6 +60,7 @@ export class ShipmentsService {
           // Order fields
           id: orders.id,
           trackingNumber: orders.trackingNumber,
+          invoiceId: invoices.id,
           senderId: orders.senderId,
           recipientName: orders.recipientName,
           recipientAddress: orders.recipientAddress,
@@ -64,6 +87,7 @@ export class ShipmentsService {
         })
         .from(orders)
         .leftJoin(users, eq(users.id, orders.senderId))
+        .leftJoin(invoices, eq(invoices.orderId, orders.id))
         .where(baseWhere)
         .orderBy(desc(orders.createdAt))
         .limit(params.limit)
@@ -75,6 +99,9 @@ export class ShipmentsService {
     ])
 
     const total = countResult[0]?.count ?? 0
+
+    const isExternalViewer =
+      params.viewerRole === UserRole.USER || params.viewerRole === UserRole.SUPPLIER
 
     const data = rows.map((row) => {
       const firstName = row.senderFirstName ? decrypt(row.senderFirstName) : null
@@ -89,7 +116,8 @@ export class ShipmentsService {
       return {
         id: row.id,
         trackingNumber: row.trackingNumber,
-        senderId: row.senderId,
+        invoiceId: row.invoiceId,
+        senderId: isExternalViewer ? null : row.senderId,
         senderName,
         recipientName: decrypt(row.recipientName),
         recipientAddress: decrypt(row.recipientAddress),

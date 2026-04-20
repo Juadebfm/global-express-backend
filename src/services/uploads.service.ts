@@ -27,6 +27,33 @@ export interface PresignedUrlResult {
 }
 
 export class UploadsService {
+  private async generateScopedPresignedUrl(params: {
+    scope: 'orders' | 'bulk-items' | 'invoices'
+    scopeId: string
+    contentType: string
+    originalFileName?: string
+  }): Promise<PresignedUrlResult> {
+    const extFromContentType = params.contentType.split('/')[1] ?? 'bin'
+    const normalizedExt = extFromContentType.toLowerCase()
+    const safeName = params.originalFileName
+      ? params.originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_')
+      : `${randomUUID()}.${normalizedExt}`
+    const fileName = safeName.endsWith(`.${normalizedExt}`) ? safeName : `${safeName}.${normalizedExt}`
+    const r2Key = `${params.scope}/${params.scopeId}/${randomUUID()}-${fileName}`
+    const expiresInSeconds = 300 // 5 minutes
+
+    const command = new PutObjectCommand({
+      Bucket: env.R2_BUCKET_NAME,
+      Key: r2Key,
+      ContentType: params.contentType,
+    })
+
+    const uploadUrl = await getSignedUrl(r2, command, { expiresIn: expiresInSeconds })
+    const publicUrl = `${env.R2_PUBLIC_URL}/${r2Key}`
+
+    return { uploadUrl, r2Key, publicUrl, expiresInSeconds }
+  }
+
   /**
    * Generates a presigned PUT URL so the client can upload directly to R2.
    * Pass either orderId (solo order) or bulkItemId (bulk shipment item).
@@ -37,21 +64,34 @@ export class UploadsService {
     contentType: string
   }): Promise<PresignedUrlResult> {
     const { orderId, bulkItemId, contentType } = params
-    const fileExtension = contentType.split('/')[1] ?? 'bin'
-    const folder = orderId ? `orders/${orderId}` : `bulk-items/${bulkItemId}`
-    const r2Key = `${folder}/${randomUUID()}.${fileExtension}`
-    const expiresInSeconds = 300 // 5 minutes
-
-    const command = new PutObjectCommand({
-      Bucket: env.R2_BUCKET_NAME,
-      Key: r2Key,
-      ContentType: contentType,
+    if (orderId) {
+      return this.generateScopedPresignedUrl({
+        scope: 'orders',
+        scopeId: orderId,
+        contentType,
+      })
+    }
+    if (!bulkItemId) {
+      throw new Error('Either orderId or bulkItemId is required.')
+    }
+    return this.generateScopedPresignedUrl({
+      scope: 'bulk-items',
+      scopeId: bulkItemId,
+      contentType,
     })
+  }
 
-    const uploadUrl = await getSignedUrl(r2, command, { expiresIn: expiresInSeconds })
-    const publicUrl = `${env.R2_PUBLIC_URL}/${r2Key}`
-
-    return { uploadUrl, r2Key, publicUrl, expiresInSeconds }
+  async generateInvoiceAttachmentPresignedUrl(params: {
+    invoiceId: string
+    contentType: string
+    originalFileName?: string
+  }): Promise<PresignedUrlResult> {
+    return this.generateScopedPresignedUrl({
+      scope: 'invoices',
+      scopeId: params.invoiceId,
+      contentType: params.contentType,
+      originalFileName: params.originalFileName,
+    })
   }
 
   /**

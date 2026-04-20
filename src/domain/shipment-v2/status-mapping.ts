@@ -5,7 +5,7 @@ import {
 } from '../../types/enums'
 
 export function resolveTransportModeFromShipmentType(
-  shipmentType: 'air' | 'ocean' | null | undefined,
+  shipmentType: 'air' | 'ocean' | 'd2d' | null | undefined,
 ): TransportMode | null {
   if (shipmentType === 'air') return TransportMode.AIR
   if (shipmentType === 'ocean') return TransportMode.SEA
@@ -44,9 +44,13 @@ export function mapV2StatusToLegacy(v2Status: ShipmentStatusV2): OrderStatus {
 
     case ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE:
     case ShipmentStatusV2.READY_FOR_PICKUP:
+    case ShipmentStatusV2.LOCAL_COURIER_ASSIGNED:
+    case ShipmentStatusV2.IN_TRANSIT_TO_DESTINATION_CITY:
+    case ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY:
       return OrderStatus.OUT_FOR_DELIVERY
 
     case ShipmentStatusV2.PICKED_UP_COMPLETED:
+    case ShipmentStatusV2.DELIVERED_TO_RECIPIENT:
       return OrderStatus.DELIVERED
 
     case ShipmentStatusV2.ON_HOLD:

@@ -804,7 +804,7 @@ Verifies the physical shipment at the warehouse. Records actual package dimensio
 
 **Auth:** Staff+ (authenticated)
 
-**Important constraint:** Only `admin` or `superadmin` can set `restrictedOverrideApproved: true`. If staff tries to approve a restricted-item override, the request returns `403`.
+**Important constraint:** Only `superadmin` can set `restrictedOverrideApproved: true`. If staff tries to approve a restricted-item override, the request returns `403`.
 
 **Body:**
 
@@ -826,9 +826,7 @@ Verifies the physical shipment at the warehouse. Records actual package dimensio
       "restrictedOverrideApproved": false,
       "restrictedOverrideReason": null
     }
-  ],
-  "manualFinalChargeUsd": 45.0,
-  "manualAdjustmentReason": "Special rate agreed with customer"
+  ]
 }
 ```
 
@@ -836,7 +834,7 @@ Verifies the physical shipment at the warehouse. Records actual package dimensio
 
 `packages` is an array and must have at least one item. Package fields are all optional individually but `weightKg` or `cbm` should be provided for pricing to work correctly.
 
-`manualFinalChargeUsd` and `manualAdjustmentReason` are optional — only needed when overriding the calculated rate.
+`finalChargeUsd` is system-generated from configured pricing rates plus applicable surcharges. Manual price overrides are not supported.
 
 **Response:** Updated order object with `calculatedChargeUsd`, `finalChargeUsd`, `pricingSource`, and package data attached.
 

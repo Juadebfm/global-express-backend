@@ -4,12 +4,19 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
-import { OrderDirection, ShipmentType, TransportMode, ShipmentStatusV2, PricingSource } from '../types/enums'
+import {
+  OrderDirection,
+  PricingSource,
+  ShipmentPayer,
+  ShipmentStatusV2,
+  ShipmentType,
+  TransportMode,
+} from '../types/enums'
 
 const orderResponseSchema = z.object({
   id: z.string().uuid().describe('Order UUID'),
   trackingNumber: z.string().describe('Public tracking number (e.g. GE-2024-XXXX)'),
-  senderId: z.string().uuid().describe('UUID of the customer who owns this order'),
+  senderId: z.string().uuid().nullable().describe('UUID of the customer who owns this order (hidden for external viewers)'),
   recipientName: z.string().describe('Recipient full name'),
   recipientAddress: z.string().describe('Recipient delivery address'),
   recipientPhone: z.string().describe('Recipient phone number'),
@@ -20,7 +27,9 @@ const orderResponseSchema = z.object({
   weight: z.string().nullable().describe('Package weight (e.g. "2.5kg")'),
   declaredValue: z.string().nullable().describe('Declared monetary value (e.g. "15000")'),
   description: z.string().nullable().describe('Package description / contents'),
-  shipmentType: z.nativeEnum(ShipmentType).nullable().describe('Transport mode: air | ocean'),
+  shipmentType: z.nativeEnum(ShipmentType).nullable().describe('Shipment type: air | ocean | d2d'),
+  shipmentPayer: z.nativeEnum(ShipmentPayer).describe('Who pays for this shipment: USER or SUPPLIER'),
+  billingSupplierId: z.string().uuid().nullable().describe('Supplier responsible for payment when shipmentPayer=SUPPLIER'),
   transportMode: z.nativeEnum(TransportMode).nullable().describe('Normalized transport mode for V2 flow: air | sea'),
   isPreorder: z.boolean().describe('Whether the order was created as a pre-order'),
   departureDate: z.string().nullable().describe('Departure date (ISO 8601)'),
@@ -33,7 +42,6 @@ const orderResponseSchema = z.object({
   specialPackagingSurchargeUsd: z.string().nullable().describe('Total special packaging surcharge in USD'),
   finalChargeUsd: z.string().nullable().describe('Final charge shown to customer in USD (freight + surcharges)'),
   pricingSource: z.string().nullable().describe('Pricing source used for final charge'),
-  priceAdjustmentReason: z.string().nullable().describe('Reason for manual adjustment when applied'),
   paymentCollectionStatus: z
     .enum(['UNPAID', 'PAYMENT_IN_PROGRESS', 'PAID_IN_FULL'])
     .describe('Payment collection state for pickup validation'),
@@ -75,40 +83,21 @@ const warehouseVerifyPackageSchema = z
     }
   })
 
-const warehouseVerifyBodySchema = z
-  .object({
-    transportMode: z
-      .nativeEnum(TransportMode)
-      .optional()
-      .describe('Explicit transport mode override: air | sea'),
-    packages: z
-      .array(warehouseVerifyPackageSchema)
-      .min(1)
-      .describe('Verified package details from warehouse intake'),
-    manualFinalChargeUsd: z
-      .number()
-      .positive()
-      .optional()
-      .describe('Optional manually adjusted final charge in USD'),
-    departureDate: z
-      .string()
-      .datetime()
-      .optional()
-      .describe('Scheduled departure date (ISO 8601) — used to compute customer ETA'),
-    manualAdjustmentReason: z
-      .string()
-      .optional()
-      .describe('Required when manualFinalChargeUsd is provided'),
-  })
-  .superRefine((value, ctx) => {
-    if (value.manualFinalChargeUsd !== undefined && !value.manualAdjustmentReason?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['manualAdjustmentReason'],
-        message: 'manualAdjustmentReason is required when manualFinalChargeUsd is provided',
-      })
-    }
-  })
+const warehouseVerifyBodySchema = z.object({
+  transportMode: z
+    .nativeEnum(TransportMode)
+    .optional()
+    .describe('Explicit transport mode override: air | sea'),
+  packages: z
+    .array(warehouseVerifyPackageSchema)
+    .min(1)
+    .describe('Verified package details from warehouse intake'),
+  departureDate: z
+    .string()
+    .datetime()
+    .optional()
+    .describe('Scheduled departure date (ISO 8601) — used to compute customer ETA'),
+})
 
 const paginatedOrdersSchema = z.object({
   data: z.array(orderResponseSchema),
@@ -278,20 +267,32 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
 }
 \`\`\``,
       security: [{ bearerAuth: [] }],
-      body: z.object({
-        senderId: z.string().uuid().optional().describe('Customer UUID — staff only, to create on behalf of a customer'),
-        recipientName: z.string().min(1).describe('Full name of the recipient'),
-        recipientAddress: z.string().optional().describe('Delivery address — defaults to Global Express Lagos office (58B Awoniyi Elemo Street, Ajao Estate, Lagos)'),
-        recipientPhone: z.string().min(1).describe('Recipient contact phone number'),
-        recipientEmail: z.string().email().optional().describe('Recipient email (optional, for delivery notifications)'),
-        orderDirection: z.nativeEnum(OrderDirection).optional().default(OrderDirection.OUTBOUND).describe('outbound = we ship TO customer; inbound = customer ships TO us'),
-        weight: z.string().optional().describe('Package weight with unit (e.g. "2.5kg")'),
-        declaredValue: z.string().optional().describe('Declared monetary value in local currency (e.g. "15000")'),
-        description: z.string().optional().describe('Package contents / description'),
-        shipmentType: z.nativeEnum(ShipmentType).optional().describe('Transport mode: air | ocean'),
-        pickupRepName: z.string().min(1).optional().describe('Pickup representative name (if someone else will collect)'),
-        pickupRepPhone: z.string().min(1).optional().describe('Pickup representative phone number'),
-      }),
+      body: z
+        .object({
+          senderId: z.string().uuid().optional().describe('Customer UUID — staff only, to create on behalf of a customer'),
+          recipientName: z.string().min(1).describe('Full name of the recipient'),
+          recipientAddress: z.string().optional().describe('Delivery address — defaults to Global Express Lagos office (58B Awoniyi Elemo Street, Ajao Estate, Lagos)'),
+          recipientPhone: z.string().min(1).describe('Recipient contact phone number'),
+          recipientEmail: z.string().email().optional().describe('Recipient email (optional, for delivery notifications)'),
+          orderDirection: z.nativeEnum(OrderDirection).optional().default(OrderDirection.OUTBOUND).describe('outbound = we ship TO customer; inbound = customer ships TO us'),
+          weight: z.string().optional().describe('Package weight with unit (e.g. "2.5kg")'),
+          declaredValue: z.string().optional().describe('Declared monetary value in local currency (e.g. "15000")'),
+          description: z.string().optional().describe('Package contents / description'),
+          shipmentType: z.enum(['air', 'ocean', 'd2d']).optional().describe('Shipment type: air | ocean | d2d'),
+          shipmentPayer: z.nativeEnum(ShipmentPayer).optional().describe('Payer model for this shipment (staff+ use-case)'),
+          billingSupplierId: z.string().uuid().optional().describe('Required when shipmentPayer is SUPPLIER'),
+          pickupRepName: z.string().min(1).optional().describe('Pickup representative name (if someone else will collect)'),
+          pickupRepPhone: z.string().min(1).optional().describe('Pickup representative phone number'),
+        })
+        .superRefine((value, ctx) => {
+          if (value.shipmentPayer === ShipmentPayer.SUPPLIER && !value.billingSupplierId) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['billingSupplierId'],
+              message: 'billingSupplierId is required when shipmentPayer is SUPPLIER',
+            })
+          }
+        }),
       response: {
         201: z.object({ success: z.literal(true), data: orderResponseSchema }),
         401: z.object({ success: z.literal(false), message: z.string() }),
@@ -324,7 +325,7 @@ The estimate uses the same pricing engine as warehouse verification, including a
 \`\`\``,
       security: [{ bearerAuth: [] }],
       body: z.object({
-        shipmentType: z.nativeEnum(ShipmentType).describe('Transport mode: air | ocean'),
+        shipmentType: z.enum(['air', 'ocean']).describe('Transport mode: air | ocean'),
         weightKg: z.number().positive().optional().describe('Estimated weight in kg (required for air)'),
         cbm: z.number().positive().optional().describe('Estimated volume in cubic meters (required for ocean; converted to chargeable kg using cbm*550)'),
       }),

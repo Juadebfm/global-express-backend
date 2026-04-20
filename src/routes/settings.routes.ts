@@ -474,10 +474,10 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.patch('/pricing', {
-    preHandler: [authenticate, requireAdminOrAbove],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Settings - Pricing'],
-      summary: 'Upsert/delete pricing rules and customer overrides (staff+)',
+      summary: 'Upsert/delete pricing rules and customer overrides (superadmin)',
       security: [{ bearerAuth: [] }],
       body: z
         .object({

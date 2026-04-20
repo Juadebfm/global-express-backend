@@ -44,7 +44,7 @@ Sea: flat **$550 USD/CBM**. Transit target: ~3 months after boarding.
 
 - Per-customer overrides replace default pricing for that customer.
 - Overrides are mode-specific (`air` and/or `sea`) with optional validity window (`startAt`, `endAt`).
-- Editable by `admin` and `superadmin` only.
+- Editable by `superadmin` only.
 - Every create/update/delete must generate an audit log entry.
 
 ### 4. Pre-order and Warehouse Verification
@@ -58,8 +58,8 @@ Sea: flat **$550 USD/CBM**. Transit target: ~3 months after boarding.
   3. Capture package details (description, dimensions, type, weight/CBM).
   4. Select customer (or create stub + send Clerk invite).
   5. Auto-calculate freight via pricing engine.
-  6. Optionally apply manual adjustment with mandatory reason.
-- Customer sees only the final adjusted price — no breakdown of internal calculation.
+  6. System computes final charge from active rate cards and any applicable surcharges.
+- Customer sees only the final charge — no breakdown of internal calculation.
 
 ### 5. Status Workflow
 
@@ -190,9 +190,8 @@ The sections below document what is **confirmed live in the codebase** as of the
 | `priceCalculatedAt` | `timestamp` | set at warehouse verification |
 | `priceCalculatedBy` | `uuid` FK → users | actor who ran the calculation |
 | `calculatedChargeUsd` | `numeric(12,2)` | raw computed freight amount |
-| `finalChargeUsd` | `numeric(12,2)` | after manual adjustment |
-| `pricingSource` | `pricing_source` enum | `DEFAULT_RATE \| CUSTOMER_OVERRIDE \| MANUAL_ADJUSTMENT \| MIGRATED_UNVERIFIED` |
-| `priceAdjustmentReason` | `text` | required when source is `MANUAL_ADJUSTMENT` |
+| `finalChargeUsd` | `numeric(12,2)` | computed final charge (freight + surcharges) |
+| `pricingSource` | `pricing_source` enum | `DEFAULT_RATE \| CUSTOMER_OVERRIDE \| MIGRATED_UNVERIFIED` |
 | `paymentCollectionStatus` | `payment_collection_status` enum | `UNPAID \| PAYMENT_IN_PROGRESS \| PAID_IN_FULL`, default `UNPAID` |
 | `flaggedForAdminReview` | `boolean` | default `false` — set by backfill script when `transportMode` is missing and status cannot be deterministically mapped |
 
@@ -317,7 +316,7 @@ Each item is either confirmed done `[x]` or pending `[ ]`. Work in phase order.
 - [x] `orders.transportMode` column.
 - [x] `orders.isPreorder` column.
 - [x] `orders.statusV2` + `orders.customerStatusV2` columns.
-- [x] `orders.priceCalculatedAt`, `priceCalculatedBy`, `calculatedChargeUsd`, `finalChargeUsd`, `pricingSource`, `priceAdjustmentReason` columns.
+- [x] `orders.priceCalculatedAt`, `priceCalculatedBy`, `calculatedChargeUsd`, `finalChargeUsd`, `pricingSource` columns.
 - [x] `orders.paymentCollectionStatus` column (`UNPAID | PAYMENT_IN_PROGRESS | PAID_IN_FULL`).
 - [x] `order_status_events` table.
 - [x] `order_packages` table (full field set including restricted override fields).
@@ -335,8 +334,8 @@ Each item is either confirmed done `[x]` or pending `[ ]`. Work in phase order.
 ### Phase 2 — Pricing Engine and Warehouse Verification
 
 - [x] `POST /api/v1/orders/:id/warehouse-verify` — captures package details, computes freight, stores packages.
-- [x] Pricing engine (`pricing-v2.service.ts`) — air tiers, sea flat rate, customer override lookup, manual adjustment.
-- [x] `GET/PATCH /api/v1/settings/pricing` — default rules and per-customer overrides editable.
+- [x] Pricing engine (`pricing-v2.service.ts`) — air tiers, sea flat rate, and customer override lookup.
+- [x] `GET/PATCH /api/v1/settings/pricing` — pricing visible to staff+, mutations restricted to superadmin.
 - [x] `GET/PATCH /api/v1/settings/restricted-goods` — catalog editable by admin+.
 - [x] `GET/PATCH /api/v1/settings/logistics` — offices and lane config.
 - [x] `GET/PATCH /api/v1/settings/fx-rate` — live/manual mode toggle and manual rate value.
