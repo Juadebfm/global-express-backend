@@ -546,7 +546,7 @@ Soft-deletes any user account.
 
 ### `GET /api/v1/orders/track/:trackingNumber`
 
-Public shipment tracking. No authentication required. This is the endpoint for the public-facing tracking page. Checks solo orders first, then bulk shipment items.
+Public shipment tracking. No authentication required. This is the endpoint for the public-facing tracking page.
 
 **Auth:** Public
 
@@ -676,7 +676,7 @@ Lists orders with pagination and optional filters.
 
 ### `GET /api/v1/orders/my-shipments`
 
-Returns the authenticated user's unified shipment feed — both solo orders and individual bulk shipment items in a single list, each with its own tracking number.
+Returns the authenticated user's shipment feed of their orders, each with its own tracking number.
 
 **Auth:** Any authenticated
 
@@ -685,7 +685,7 @@ Returns the authenticated user's unified shipment feed — both solo orders and 
 - `page` — default `1`
 - `limit` — default `20`
 
-**Response:** Same pagination shape as list orders, but each item may be a solo order or a bulk item. Each item has a `trackingNumber`, `statusV2`, `statusLabel`, `origin`, `destination`.
+**Response:** Same pagination shape as list orders. Each item has a `trackingNumber`, `statusV2`, `statusLabel`, `origin`, `destination`.
 
 ---
 
@@ -1000,136 +1000,6 @@ Records a cash or bank transfer payment for an order. Use this when a customer p
 `paymentType` accepts `"transfer"` or `"cash"`. `proofReference` and `note` are optional but recommended.
 
 **Response (201):** Full payment object with `recordedBy` set to the staff member's UUID.
-
----
-
-## Bulk Orders Routes
-
-All bulk order routes require **Staff+** auth and are typically **IP-whitelisted**. Bulk orders are internal-facing operations — customers do not interact with these directly. A bulk order groups multiple individual shipment items under a single container/flight, each with their own tracking number.
-
----
-
-### `POST /api/v1/bulk-orders/`
-
-Creates a new bulk shipment with items.
-
-**Auth:** Staff+ | IP-whitelisted
-
-**Body:**
-
-```json
-{
-  "origin": "Seoul, South Korea",
-  "destination": "Lagos, Nigeria",
-  "notes": "March batch — air freight",
-  "items": [
-    {
-      "trackingNumber": "GEX-20260301-CUST01",
-      "senderId": "uuid-of-customer",
-      "recipientName": "Adeola Johnson",
-      "recipientAddress": "5 Victoria Island",
-      "recipientPhone": "+2348098765432",
-      "origin": "Seoul, South Korea",
-      "destination": "Lagos, Nigeria",
-      "weight": "3.5",
-      "description": "Electronics"
-    }
-  ]
-}
-```
-
-Items can be provided at creation time or added later via the add-item endpoint.
-
-**Response (201):**
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid",
-    "trackingNumber": "BULK-20260301-001",
-    "origin": "Seoul, South Korea",
-    "destination": "Lagos, Nigeria",
-    "statusV2": "WAREHOUSE_RECEIVED",
-    "items": [ ...bulk item objects... ],
-    "createdBy": "uuid",
-    "createdAt": "..."
-  }
-}
-```
-
----
-
-### `GET /api/v1/bulk-orders/`
-
-Lists all bulk orders.
-
-**Auth:** Staff+ | IP-whitelisted
-
-**Query params:** `page`, `limit`
-
----
-
-### `GET /api/v1/bulk-orders/:id`
-
-Returns a bulk order with all its items.
-
-**Auth:** Staff+ | IP-whitelisted
-
----
-
-### `PATCH /api/v1/bulk-orders/:id/status`
-
-Updates the status of a bulk order. This propagates the status to all items in the bulk order automatically.
-
-**Auth:** Staff+ | IP-whitelisted
-
-**Body:**
-
-```json
-{
-  "statusV2": "FLIGHT_DEPARTED"
-}
-```
-
-Same valid status values as the solo order status update.
-
----
-
-### `POST /api/v1/bulk-orders/:id/items`
-
-Adds a single item to an existing bulk order.
-
-**Auth:** Staff+ | IP-whitelisted
-
-**Body:** Same shape as a single item in the create bulk order `items` array.
-
-**Response (201):** The new bulk item object.
-
----
-
-### `DELETE /api/v1/bulk-orders/:id/items/:itemId` (Admin+)
-
-Removes an item from a bulk order.
-
-**Auth:** Admin+ | IP-whitelisted
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "data": { "message": "Item removed from bulk order" }
-}
-```
-
----
-
-### `DELETE /api/v1/bulk-orders/:id` (Admin+)
-
-Soft-deletes a bulk order.
-
-**Auth:** Admin+ | IP-whitelisted
 
 ---
 
@@ -2458,4 +2328,4 @@ When set to `resolved`, the customer receives an in-app notification.
 
 ## IP Whitelisting
 
-Several admin and settings endpoints require the request to come from a whitelisted IP address in addition to valid authentication. If you get a `403` on an admin endpoint despite having the right role and token, check whether the calling machine's IP is whitelisted. This applies to: all `/settings/` routes, all `/reports/` routes, all `/bulk-orders/` routes, and some `/internal/` routes.
+Several admin and settings endpoints require the request to come from a whitelisted IP address in addition to valid authentication. If you get a `403` on an admin endpoint despite having the right role and token, check whether the calling machine's IP is whitelisted. This applies to: all `/settings/` routes, all `/reports/` routes, and some `/internal/` routes.

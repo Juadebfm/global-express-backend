@@ -9,18 +9,14 @@ import {
   index,
 } from 'drizzle-orm/pg-core'
 import { orders } from './orders'
-import { bulkShipmentItems } from './bulk-shipment-items'
 import { users } from './users'
 
 export const orderPackages = pgTable(
   'order_packages',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    // One of orderId or bulkItemId must be set by application logic.
+    // Order-bound package records.
     orderId: uuid('order_id').references(() => orders.id, { onDelete: 'cascade' }),
-    bulkItemId: uuid('bulk_item_id').references(() => bulkShipmentItems.id, {
-      onDelete: 'cascade',
-    }),
     description: text('description'),
     itemType: text('item_type'),
     quantity: integer('quantity').notNull().default(1),
@@ -48,7 +44,6 @@ export const orderPackages = pgTable(
   },
   (table) => [
     index('order_packages_order_id_idx').on(table.orderId),
-    index('order_packages_bulk_item_id_idx').on(table.bulkItemId),
     index('order_packages_supplier_id_idx').on(table.supplierId),
     index('order_packages_arrival_at_idx').on(table.arrivalAt),
     index('order_packages_item_type_idx').on(table.itemType),

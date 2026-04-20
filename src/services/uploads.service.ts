@@ -28,7 +28,7 @@ export interface PresignedUrlResult {
 
 export class UploadsService {
   private async generateScopedPresignedUrl(params: {
-    scope: 'orders' | 'bulk-items' | 'invoices'
+    scope: 'orders' | 'invoices'
     scopeId: string
     contentType: string
     originalFileName?: string
@@ -56,27 +56,15 @@ export class UploadsService {
 
   /**
    * Generates a presigned PUT URL so the client can upload directly to R2.
-   * Pass either orderId (solo order) or bulkItemId (bulk shipment item).
    */
   async generatePresignedUrl(params: {
-    orderId?: string
-    bulkItemId?: string
+    orderId: string
     contentType: string
   }): Promise<PresignedUrlResult> {
-    const { orderId, bulkItemId, contentType } = params
-    if (orderId) {
-      return this.generateScopedPresignedUrl({
-        scope: 'orders',
-        scopeId: orderId,
-        contentType,
-      })
-    }
-    if (!bulkItemId) {
-      throw new Error('Either orderId or bulkItemId is required.')
-    }
+    const { orderId, contentType } = params
     return this.generateScopedPresignedUrl({
-      scope: 'bulk-items',
-      scopeId: bulkItemId,
+      scope: 'orders',
+      scopeId: orderId,
       contentType,
     })
   }
@@ -96,11 +84,9 @@ export class UploadsService {
 
   /**
    * Called by the client after a successful R2 upload to persist the image record.
-   * Pass either orderId or bulkItemId.
    */
   async confirmUpload(params: {
-    orderId?: string
-    bulkItemId?: string
+    orderId: string
     r2Key: string
     uploadedBy: string
   }) {
@@ -109,8 +95,7 @@ export class UploadsService {
     const [image] = await db
       .insert(packageImages)
       .values({
-        orderId: params.orderId ?? null,
-        bulkItemId: params.bulkItemId ?? null,
+        orderId: params.orderId,
         r2Key: params.r2Key,
         r2Url: publicUrl,
         uploadedBy: params.uploadedBy,
@@ -125,14 +110,6 @@ export class UploadsService {
       .select()
       .from(packageImages)
       .where(eq(packageImages.orderId, orderId))
-      .orderBy(packageImages.createdAt)
-  }
-
-  async getBulkItemImages(bulkItemId: string) {
-    return db
-      .select()
-      .from(packageImages)
-      .where(eq(packageImages.bulkItemId, bulkItemId))
       .orderBy(packageImages.createdAt)
   }
 

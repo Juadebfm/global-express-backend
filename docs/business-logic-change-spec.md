@@ -371,6 +371,31 @@ This document captures all requested business-logic changes before implementatio
   - `docs/frontend-api-manual.md`
   - `docs/business-process-refactor-blueprint.md`
 
+### Change 9
+
+- Status: `Implemented (local) — pending deploy`
+- Request:
+  - Fully retire bulk-order artifacts across API, app code, schema exports, and docs for all actors (`staff`, `user`, `supplier`, `superadmin`).
+- Implemented Rules:
+  - Removed dormant bulk-order route/controller/service modules from active codebase.
+  - Removed bulk schema artifacts from active Drizzle schema and package-image/package-package linkage models.
+  - Added cleanup migration to remove `bulk_*` tables and `bulk_item_id` references.
+  - Removed bulk-order API documentation sections and bulk endpoint mentions from manuals.
+- Files updated:
+  - `src/routes/bulk-orders.routes.ts` (deleted)
+  - `src/controllers/bulk-orders.controller.ts` (deleted)
+  - `src/services/bulk-orders.service.ts` (deleted)
+  - `drizzle/schema/bulk-shipments.ts` (deleted)
+  - `drizzle/schema/bulk-shipment-items.ts` (deleted)
+  - `drizzle/schema/index.ts`
+  - `drizzle/schema/package-images.ts`
+  - `drizzle/schema/order-packages.ts`
+  - `src/services/uploads.service.ts`
+  - `src/routes/orders.routes.ts`
+  - `drizzle/migrations/2026-04-20_remove_bulk_orders_artifacts.sql`
+  - `docs/frontend-api-manual.md`
+  - `docs/business-process-refactor-blueprint.md`
+
 ## Decisions Log
 
 - 2026-04-19: Captured Change 1 scope and formulas from stakeholder request; implementation deferred pending full change list and open-question resolution.
@@ -442,6 +467,10 @@ This document captures all requested business-logic changes before implementatio
   - Removed warehouse manual pricing override inputs and manual-adjustment reason flow.
   - Final charge now always uses computed pricing + configured surcharges.
   - Pricing rules mutation endpoint (`PATCH /settings/pricing`) changed to superadmin-only.
+- 2026-04-20: Implemented Change 9 locally:
+  - Retired bulk-order code modules and removed bulk schema exports.
+  - Added migration to drop `bulk_shipments`, `bulk_shipment_items`, and `bulk_item_id` references from related tables.
+  - Updated docs to remove `/bulk-orders` endpoint references.
 
 ## Implementation Plan (To Be Filled After Scope Freeze)
 
@@ -453,4 +482,5 @@ This document captures all requested business-logic changes before implementatio
 - Change 6: Scope frozen; implement event-driven cutoff with Option B approval gate.
 - Change 7: Scope frozen; ready for implementation.
 - Change 8: Implemented (local), validated.
+- Change 9: Implemented (local), validated.
 - Deployment pending.

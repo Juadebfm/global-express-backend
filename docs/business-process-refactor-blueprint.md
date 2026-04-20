@@ -208,8 +208,6 @@ Legacy `status` column (original enum: `pending \| picked_up \| in_transit \| ou
 | `restricted_goods` | Configurable catalog: `code`, `nameEn`, `nameKo`, `allowWithOverride`, `isActive` |
 | `app_settings` | Key-value JSONB store for logistics settings, FX rate config |
 | `notification_templates` | `templateKey + locale (en\|ko) + channel (email\|in_app)` → `subject + body` |
-| `bulk_shipments` | Includes `statusV2`, `transportMode`, full V2 pricing fields |
-| `bulk_shipment_items` | Includes `statusV2`, `customerStatusV2`, `transportMode`, `paymentCollectionStatus` |
 
 `users.preferredLanguage` — confirmed: `preferred_language` enum (`en | ko`), default `en`.
 
@@ -268,7 +266,6 @@ All endpoints below are confirmed implemented and deployed.
 | Update shipment status (staff+) | `PATCH /api/v1/orders/:id/status` |
 | Delete order (admin+) | `DELETE /api/v1/orders/:id` |
 | All shipments (staff+) | `GET /api/v1/shipments` |
-| Bulk shipment lifecycle | `POST /api/v1/bulk-orders`, `GET /api/v1/bulk-orders`, `GET /api/v1/bulk-orders/:id`, `PATCH /api/v1/bulk-orders/:id/status`, `POST /api/v1/bulk-orders/:id/items`, `DELETE /api/v1/bulk-orders/:id/items/:itemId`, `DELETE /api/v1/bulk-orders/:id` |
 | Upload images (staff+) | `POST /api/v1/uploads/presign`, `POST /api/v1/uploads/confirm` |
 | Delete image (admin+) | `DELETE /api/v1/uploads/images/:imageId` |
 | Payment records **(superadmin)** | `GET /api/v1/payments`, `GET /api/v1/payments/:id` |
@@ -327,7 +324,7 @@ Each item is either confirmed done `[x]` or pending `[ ]`. Work in phase order.
 - [x] `notification_templates` table (`templateKey + locale + channel → subject + body`).
 - [x] `users.preferredLanguage` column (`en | ko`, default `en`).
 - [x] Add `paymentType` column to `payments` table — `online | transfer | cash` (required for offline payment recording in Phase 4).
-- [x] Remove legacy `orders.status`, `bulk_shipments.status`, `bulk_shipment_items.status` columns and the `order_status` pg enum — dropped in Phase 6. Columns and indexes removed from both schema and DB.
+- [x] Remove legacy `orders.status` column and the `order_status` pg enum — dropped in Phase 6.
 
 ---
 
@@ -364,7 +361,6 @@ Each item is either confirmed done `[x]` or pending `[ ]`. Work in phase order.
 ### Phase 4 — Payment Release Controls
 
 - [x] `orders.paymentCollectionStatus` column exists with `UNPAID | PAYMENT_IN_PROGRESS | PAID_IN_FULL`.
-- [x] `bulk_shipment_items.paymentCollectionStatus` column exists.
 - [x] Add `paymentType` column to `payments` table (`online | transfer | cash`) — schema migration required.
 - [x] `POST /api/v1/payments/:orderId/record-offline` — record transfer or cash payment with proof metadata; set `paymentCollectionStatus = PAID_IN_FULL` on the order. (staff+)
 - [x] On successful Paystack `verify/:reference`, update `orders.paymentCollectionStatus` to `PAID_IN_FULL`.
@@ -389,11 +385,10 @@ Each item is either confirmed done `[x]` or pending `[ ]`. Work in phase order.
 - [x] Write backfill script: legacy `orders.status` → `orders.statusV2` using the deterministic mapping below. (`scripts/backfill-status-v2.ts`, run via `npm run backfill:status-v2`)
 - [x] Handle records with missing/unknown `transportMode` — place in admin review queue before final backfill. (`flaggedForAdminReview = true` set on orders with mode-dependent status and no `transportMode`)
 - [x] Mark existing orders with no trusted freight amount as `pricingSource = MIGRATED_UNVERIFIED`; flag for admin restatement. (backfill script sets `MIGRATED_UNVERIFIED` when `finalChargeUsd` is null)
-- [x] `flagged_for_admin_review` boolean column added to `orders` and `bulk_shipment_items` tables and applied to DB.
-- [x] Verify `bulk_shipment_items` unified dashboard list still works after V2 status migration. (dashboard and `getMyShipments` now read `statusV2` from both `orders` and `bulk_shipment_items`)
+- [x] `flagged_for_admin_review` boolean column added to `orders` and applied to DB.
 - [x] Complete regression tests and role/permission tests. (`tests/unit/backfill-logic.test.ts` — full legacy→V2 decision table; `tests/unit/status-labels.test.ts` — all 22 V2 values covered; 43 tests passing)
-- [x] Switch all reads (list, filter, dashboard, reports) to use `statusV2` as primary — retire legacy `status` reads. (dashboard, reports, shipments, orders, bulk-orders all updated)
-- [x] Drop legacy `orders.status`, `bulk_shipments.status`, `bulk_shipment_items.status` columns and `order_status` pg enum — completed. Ran backfill → resolved 32 flagged orders → dropped all legacy columns, indexes, and enum from both Drizzle schema and Neon DB.
+- [x] Switch all reads (list, filter, dashboard, reports) to use `statusV2` as primary — retire legacy `status` reads.
+- [x] Drop legacy `orders.status` column and `order_status` pg enum — completed.
 
 ---
 

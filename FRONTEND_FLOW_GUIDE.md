@@ -247,7 +247,7 @@ PREORDER_SUBMITTED → AWAITING_WAREHOUSE_RECEIPT → WAREHOUSE_RECEIVED
 
 #### My Shipments
 `GET /api/v1/orders/my-shipments?page=1&limit=20`
-Unified view — solo orders + bulk items combined, sorted newest first.
+Unified view of customer orders, sorted newest first.
 
 #### Order Detail
 `GET /api/v1/orders/:id`
@@ -445,20 +445,6 @@ Client list includes aggregated stats: total orders, total spent, last order dat
 1. `POST /uploads/presign` with `{ orderId, contentType }` → get `uploadUrl` + `r2Key`
 2. `PUT` the file to `uploadUrl` (direct to Cloudflare R2)
 3. `POST /uploads/confirm` with `{ orderId, r2Key }` → image saved
-
----
-
-## Bulk Orders
-
-| Action | Method | URL | Role |
-|---|---|---|---|
-| Create bulk shipment | `POST` | `/api/v1/bulk-orders` | Staff+ |
-| List bulk orders | `GET` | `/api/v1/bulk-orders` | Staff+ |
-| Get bulk order | `GET` | `/api/v1/bulk-orders/:id` | Staff+ |
-| Update bulk status | `PATCH` | `/api/v1/bulk-orders/:id/status` | Staff+ |
-| Add item | `POST` | `/api/v1/bulk-orders/:id/items` | Staff+ |
-| Remove item | `DELETE` | `/api/v1/bulk-orders/:id/items/:itemId` | Admin+ |
-| Delete bulk order | `DELETE` | `/api/v1/bulk-orders/:id` | Admin+ |
 
 ---
 

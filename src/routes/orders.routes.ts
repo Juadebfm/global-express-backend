@@ -557,7 +557,6 @@ This endpoint stores:
             z.object({
               id: z.string().uuid(),
               orderId: z.string().uuid().nullable(),
-              bulkItemId: z.string().uuid().nullable(),
               r2Key: z.string().describe('Cloudflare R2 object key'),
               r2Url: z.string().describe('Public image URL'),
               uploadedBy: z.string().uuid().describe('UUID of the staff who uploaded'),
