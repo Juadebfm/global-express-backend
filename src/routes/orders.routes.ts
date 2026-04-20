@@ -547,7 +547,7 @@ This endpoint stores:
     schema: {
       tags: ['Orders'],
       summary: 'Get package images for an order',
-      description: 'Returns all package images attached to the order, uploaded by staff during processing. Each image includes a public R2 URL.',
+      description: 'Returns all package images attached to the order, uploaded by staff during processing. Customers can only access their own orders.',
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid().describe('Order UUID') }),
       response: {
@@ -565,6 +565,7 @@ This endpoint stores:
           ),
         }),
         401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
         404: z.object({ success: z.literal(false), message: z.string() }),
       },
     },

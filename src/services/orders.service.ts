@@ -171,6 +171,10 @@ function roundTo(n: number, decimals: number): number {
 
 const AIR_VOLUMETRIC_DIVISOR = 6000
 
+function isExternalViewerRole(role: UserRole): boolean {
+  return role === UserRole.USER || role === UserRole.SUPPLIER
+}
+
 export class OrdersService {
   async createOrder(input: CreateOrderInput) {
     const trackingNumber = generateTrackingNumber()
@@ -986,6 +990,29 @@ export class OrdersService {
       .from(packageImages)
       .where(eq(packageImages.orderId, orderId))
       .orderBy(packageImages.createdAt)
+  }
+
+  async getOrderImagesForViewer(params: {
+    orderId: string
+    viewerId: string
+    viewerRole: UserRole
+  }) {
+    const [order] = await db
+      .select({ id: orders.id, senderId: orders.senderId })
+      .from(orders)
+      .where(and(eq(orders.id, params.orderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order) {
+      return { status: 'not_found' as const }
+    }
+
+    if (isExternalViewerRole(params.viewerRole) && order.senderId !== params.viewerId) {
+      return { status: 'forbidden' as const }
+    }
+
+    const images = await this.getOrderImages(params.orderId)
+    return { status: 'ok' as const, images }
   }
 
   async updatePickupRep(orderId: string, input: { pickupRepName: string; pickupRepPhone: string }) {

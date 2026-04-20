@@ -106,6 +106,7 @@ The \`r2Key\` must match the key returned by \`POST /api/v1/uploads/presign\`.
           data: z.array(imageResponseSchema),
         }),
         401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
         404: z.object({ success: z.literal(false), message: z.string() }),
       },
     },

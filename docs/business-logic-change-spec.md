@@ -396,6 +396,70 @@ This document captures all requested business-logic changes before implementatio
   - `docs/frontend-api-manual.md`
   - `docs/business-process-refactor-blueprint.md`
 
+### Change 10
+
+- Status: `Implemented (local) — pending deploy`
+- Request:
+  - Close ownership/authorization gaps for:
+    - image fetch endpoints (`/orders/:id/images`, `/uploads/orders/:orderId/images`)
+    - payment initialization target resolution (`orderId` / `invoiceId`) before creating payment intent.
+- Implemented Rules:
+  - Image fetch endpoints now:
+    - validate order existence (`404` if not found/deleted),
+    - enforce customer ownership for external roles (`USER`, `SUPPLIER`) with `403` on mismatch,
+    - preserve staff/superadmin access.
+  - Payment initialization now:
+    - resolves canonical payment target (order + invoice) first,
+    - rejects invalid `orderId`/`invoiceId` pair mismatch (`400`),
+    - rejects missing order/invoice (`404`),
+    - enforces requester ownership before Paystack intent creation (`403` when unauthorized).
+  - Route response schemas were updated to include new `400/403/404` outcomes where applicable.
+- Files updated:
+  - `src/controllers/orders.controller.ts`
+  - `src/controllers/uploads.controller.ts`
+  - `src/controllers/payments.controller.ts`
+  - `src/services/orders.service.ts`
+  - `src/services/uploads.service.ts`
+  - `src/services/payments.service.ts`
+  - `src/routes/orders.routes.ts`
+  - `src/routes/uploads.routes.ts`
+  - `src/routes/payments.routes.ts`
+- Validation:
+  - `npm run build` ✅
+  - `npm test` ✅ (46/46 tests passed)
+
+### Change 11
+
+- Status: `Draft — clarification in progress`
+- Request:
+  - Expand user-spectrum capabilities for authenticated dashboard, public tracking, D2D external intake, vendor handling, and receipt verification workflows.
+- Requested Areas:
+  - Authenticated dashboard:
+    - total spent,
+    - total deliveries completed (with monthly/frequency trend),
+    - total shipments,
+    - supplier/vendor usage history with full vendor details,
+    - ability to save/add new vendors and surface them in internal views.
+  - D2D intake (public + authenticated):
+    - public users can submit D2D goods details directly (without prior auth),
+    - user chooses whether to register on platform or remain external,
+    - authenticated users can do the same flow with expanded access.
+  - Tracking payloads (public + authenticated):
+    - shipment total cost,
+    - payment status,
+    - vendor count,
+    - total kg for that shipment,
+    - status timeline with updated date/time,
+    - reduce visible statuses shown to customers.
+  - Authenticated shipment/invoice breakdown:
+    - richer invoice and shipment financial/operational breakdown in dashboard.
+  - Payment receipt upload + internal verification:
+    - authenticated user can upload payment receipt,
+    - staff/superadmin get notified for verification,
+    - payment status updates to successful after verification.
+- Open Questions:
+  - To be resolved in next scope-freeze discussion.
+
 ## Decisions Log
 
 - 2026-04-19: Captured Change 1 scope and formulas from stakeholder request; implementation deferred pending full change list and open-question resolution.
@@ -471,6 +535,13 @@ This document captures all requested business-logic changes before implementatio
   - Retired bulk-order code modules and removed bulk schema exports.
   - Added migration to drop `bulk_shipments`, `bulk_shipment_items`, and `bulk_item_id` references from related tables.
   - Updated docs to remove `/bulk-orders` endpoint references.
+- 2026-04-20: Implemented Change 10 locally:
+  - Added ownership checks for image fetch endpoints in both controller and service layers.
+  - Added explicit ownership + target-consistency checks in payment initialization before Paystack intent creation.
+  - Updated route response schemas for new `403/404` (images) and `400/403/404` (payment initialize) outcomes.
+- 2026-04-20: Captured Change 11 draft scope:
+  - User-spectrum expansion for dashboard metrics, public/auth D2D intake, tracking payload redesign, vendor persistence/exposure, and receipt-based payment verification flow.
+  - Pending clarification and scope freeze before implementation.
 
 ## Implementation Plan (To Be Filled After Scope Freeze)
 
@@ -483,4 +554,6 @@ This document captures all requested business-logic changes before implementatio
 - Change 7: Scope frozen; ready for implementation.
 - Change 8: Implemented (local), validated.
 - Change 9: Implemented (local), validated.
+- Change 10: Implemented (local), validated.
+- Change 11: Draft captured; clarification required before implementation.
 - Deployment pending.

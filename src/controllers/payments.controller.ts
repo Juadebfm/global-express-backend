@@ -21,6 +21,7 @@ export const paymentsController = {
       orderId: request.body.orderId,
       invoiceId: request.body.invoiceId,
       userId: request.user.id,
+      requesterRole: request.user.role as UserRole,
       amount: request.body.amount,
       currency: request.body.currency,
       email: request.user.email,

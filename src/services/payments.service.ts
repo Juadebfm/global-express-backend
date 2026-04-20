@@ -17,6 +17,7 @@ export interface InitializePaymentInput {
   orderId?: string
   invoiceId?: string
   userId: string
+  requesterRole: UserRole
   amount: number // in smallest currency unit (kobo for NGN)
   currency?: string
   email: string
@@ -48,38 +49,33 @@ export interface PaystackVerifyResponse {
   }
 }
 
+interface ResolvedPaymentTarget {
+  orderId: string
+  senderId: string
+  billingSupplierId: string | null
+  invoiceId: string
+  billToUserId: string | null
+  billToSupplierId: string | null
+}
+
+function httpError(message: string, statusCode: number): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode })
+}
+
 export class PaymentsService {
   async initializePayment(input: InitializePaymentInput) {
-    const { userId, amount, email, callbackUrl, metadata } = input
+    const { userId, requesterRole, amount, email, callbackUrl, metadata } = input
     const currency = input.currency ?? 'NGN'
+    const target = await this.resolvePaymentTarget({
+      orderId: input.orderId,
+      invoiceId: input.invoiceId,
+    })
 
-    let resolvedOrderId = input.orderId
-    let resolvedInvoiceId = input.invoiceId
-
-    if (resolvedInvoiceId) {
-      const [invoice] = await db
-        .select({ id: invoices.id, orderId: invoices.orderId })
-        .from(invoices)
-        .where(eq(invoices.id, resolvedInvoiceId))
-        .limit(1)
-
-      if (!invoice) {
-        throw new Error('Invoice not found')
-      }
-      resolvedOrderId = invoice.orderId
-    }
-
-    if (!resolvedOrderId) {
-      throw new Error('orderId or invoiceId is required')
-    }
-
-    if (!resolvedInvoiceId) {
-      const invoice = await dispatchBatchesService.getInvoiceByOrderId(resolvedOrderId)
-      if (!invoice) {
-        throw new Error('Invoice not found for order')
-      }
-      resolvedInvoiceId = invoice.id
-    }
+    this.assertPaymentOwnership({
+      requesterId: userId,
+      requesterRole,
+      target,
+    })
 
     const response = await axios.post<PaystackInitializeResponse>(
       `${PAYSTACK_API}/transaction/initialize`,
@@ -108,8 +104,8 @@ export class PaymentsService {
     const [payment] = await db
       .insert(payments)
       .values({
-        orderId: resolvedOrderId,
-        invoiceId: resolvedInvoiceId ?? null,
+        orderId: target.orderId,
+        invoiceId: target.invoiceId,
         userId,
         amount: String(amount / 100), // store in major units
         currency,
@@ -122,6 +118,124 @@ export class PaymentsService {
       payment,
       authorizationUrl: authorization_url,
       reference,
+    }
+  }
+
+  private async resolvePaymentTarget(input: {
+    orderId?: string
+    invoiceId?: string
+  }): Promise<ResolvedPaymentTarget> {
+    if (!input.orderId && !input.invoiceId) {
+      throw httpError('orderId or invoiceId is required', 400)
+    }
+
+    let resolvedOrderId = input.orderId
+    let resolvedInvoiceId = input.invoiceId
+    let invoiceContext:
+      | {
+        id: string
+        orderId: string
+        billToUserId: string | null
+        billToSupplierId: string | null
+      }
+      | null = null
+
+    if (input.invoiceId) {
+      const [invoice] = await db
+        .select({
+          id: invoices.id,
+          orderId: invoices.orderId,
+          billToUserId: invoices.billToUserId,
+          billToSupplierId: invoices.billToSupplierId,
+        })
+        .from(invoices)
+        .where(eq(invoices.id, input.invoiceId))
+        .limit(1)
+
+      if (!invoice) {
+        throw httpError('Invoice not found', 404)
+      }
+
+      invoiceContext = invoice
+      resolvedOrderId = invoice.orderId
+      resolvedInvoiceId = invoice.id
+    }
+
+    if (!resolvedOrderId) {
+      throw httpError('orderId or invoiceId is required', 400)
+    }
+
+    if (input.orderId && input.invoiceId && input.orderId !== resolvedOrderId) {
+      throw httpError('Provided orderId does not match invoiceId', 400)
+    }
+
+    const [order] = await db
+      .select({
+        id: orders.id,
+        senderId: orders.senderId,
+        billingSupplierId: orders.billingSupplierId,
+      })
+      .from(orders)
+      .where(and(eq(orders.id, resolvedOrderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order) {
+      throw httpError('Order not found', 404)
+    }
+
+    if (!invoiceContext) {
+      const invoice = await dispatchBatchesService.getInvoiceByOrderId(order.id)
+      if (!invoice) {
+        throw httpError('Invoice not found for order', 404)
+      }
+
+      invoiceContext = {
+        id: invoice.id,
+        orderId: invoice.orderId,
+        billToUserId: invoice.billToUserId,
+        billToSupplierId: invoice.billToSupplierId,
+      }
+      resolvedInvoiceId = invoice.id
+    }
+
+    if (!resolvedInvoiceId || !invoiceContext) {
+      throw httpError('Invoice not found', 404)
+    }
+
+    return {
+      orderId: order.id,
+      senderId: order.senderId,
+      billingSupplierId: order.billingSupplierId,
+      invoiceId: resolvedInvoiceId,
+      billToUserId: invoiceContext.billToUserId,
+      billToSupplierId: invoiceContext.billToSupplierId,
+    }
+  }
+
+  private assertPaymentOwnership(params: {
+    requesterId: string
+    requesterRole: UserRole
+    target: ResolvedPaymentTarget
+  }) {
+    if (params.requesterRole === UserRole.USER) {
+      const ownsOrder = params.target.senderId === params.requesterId
+      const isInvoiceAddressee = params.target.billToUserId === params.requesterId
+
+      if (!ownsOrder && !isInvoiceAddressee) {
+        throw httpError('Forbidden', 403)
+      }
+      return
+    }
+
+    if (params.requesterRole === UserRole.SUPPLIER) {
+      const ownsOrder = params.target.senderId === params.requesterId
+      const isBilledSupplier =
+        params.target.billToSupplierId === params.requesterId ||
+        params.target.billingSupplierId === params.requesterId
+
+      if (!ownsOrder && !isBilledSupplier) {
+        throw httpError('Forbidden', 403)
+      }
     }
   }
 

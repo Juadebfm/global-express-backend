@@ -474,8 +474,21 @@ export const ordersController = {
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ) {
-    const images = await ordersService.getOrderImages(request.params.id)
-    return reply.send(successResponse(images))
+    const result = await ordersService.getOrderImagesForViewer({
+      orderId: request.params.id,
+      viewerId: request.user.id,
+      viewerRole: request.user.role as UserRole,
+    })
+
+    if (result.status === 'not_found') {
+      return reply.code(404).send({ success: false, message: 'Order not found' })
+    }
+
+    if (result.status === 'forbidden') {
+      return reply.code(403).send({ success: false, message: 'Forbidden' })
+    }
+
+    return reply.send(successResponse(result.images))
   },
 
   async estimateShippingCost(

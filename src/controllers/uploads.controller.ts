@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { uploadsService } from '../services/uploads.service'
 import { successResponse } from '../utils/response'
+import { UserRole } from '../types/enums'
 
 const ALLOWED_CONTENT_TYPES = new Set([
   'image/jpeg',
@@ -50,8 +51,21 @@ export const uploadsController = {
     request: FastifyRequest<{ Params: { orderId: string } }>,
     reply: FastifyReply,
   ) {
-    const images = await uploadsService.getOrderImages(request.params.orderId)
-    return reply.send(successResponse(images))
+    const result = await uploadsService.getOrderImagesForViewer({
+      orderId: request.params.orderId,
+      viewerId: request.user.id,
+      viewerRole: request.user.role as UserRole,
+    })
+
+    if (result.status === 'not_found') {
+      return reply.code(404).send({ success: false, message: 'Order not found' })
+    }
+
+    if (result.status === 'forbidden') {
+      return reply.code(403).send({ success: false, message: 'Forbidden' })
+    }
+
+    return reply.send(successResponse(result.images))
   },
 
   async deleteImage(
