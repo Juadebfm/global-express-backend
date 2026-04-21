@@ -72,7 +72,38 @@ const supplierListItemSchema = z.object({
   email: z.string().email(),
   phone: z.string().nullable(),
   isActive: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  linkedCustomersCount: z.number().int().nonnegative(),
+  lastLinkedAt: z.string().nullable(),
+  shipmentUsageCount: z.number().int().nonnegative(),
+  lastShipmentUsedAt: z.string().nullable(),
 })
+
+const mySupplierListItemSchema = supplierListItemSchema.extend({
+  source: z.enum(['saved', 'used', 'saved_and_used']),
+  savedAt: z.string().nullable(),
+  usageCount: z.number().int().nonnegative(),
+  lastUsedAt: z.string().nullable(),
+})
+
+const saveMySupplierBodySchema = z
+  .object({
+    supplierId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe('Existing supplier user ID. When provided, supplier profile fields are ignored.'),
+    email: z.string().email().optional().describe('Supplier email (used to find or create supplier).'),
+    firstName: z.string().min(1).nullable().optional().describe('Supplier first name'),
+    lastName: z.string().min(1).nullable().optional().describe('Supplier last name'),
+    businessName: z.string().min(1).nullable().optional().describe('Supplier business name'),
+    phone: z.string().min(5).nullable().optional().describe('Supplier contact phone'),
+  })
+  .refine((value) => Boolean(value.supplierId || value.email), {
+    message: 'Provide either supplierId or email',
+    path: ['supplierId'],
+  })
 
 export async function usersRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
@@ -227,6 +258,68 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
       },
     },
     handler: usersController.updateMyNotificationPreferences,
+  })
+
+  app.get('/me/suppliers', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'List my saved/used suppliers',
+      description:
+        'Returns suppliers linked to the authenticated user through saved vendor links and historical shipment usage.',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        page: z.coerce.number().int().positive().optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+        isActive: z
+          .enum(['true', 'false'])
+          .transform((v) => v === 'true')
+          .optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(mySupplierListItemSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.getMySuppliers,
+  })
+
+  app.post('/me/suppliers', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'Save a supplier/vendor to my account',
+      description:
+        'Links an existing supplier to the authenticated user or creates a new supplier record by email and links it immediately.',
+      security: [{ bearerAuth: [] }],
+      body: saveMySupplierBodySchema,
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            supplier: mySupplierListItemSchema,
+            createdSupplier: z.boolean(),
+            linkedNow: z.boolean(),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.saveMySupplier,
   })
 
   app.delete('/me', {

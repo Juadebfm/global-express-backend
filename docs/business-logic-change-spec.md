@@ -430,35 +430,163 @@ This document captures all requested business-logic changes before implementatio
 
 ### Change 11
 
-- Status: `Draft — clarification in progress`
+- Status: `Implemented (local) — pending deploy`
 - Request:
   - Expand user-spectrum capabilities for authenticated dashboard, public tracking, D2D external intake, vendor handling, and receipt verification workflows.
-- Requested Areas:
-  - Authenticated dashboard:
-    - total spent,
-    - total deliveries completed (with monthly/frequency trend),
-    - total shipments,
-    - supplier/vendor usage history with full vendor details,
-    - ability to save/add new vendors and surface them in internal views.
-  - D2D intake (public + authenticated):
-    - public users can submit D2D goods details directly (without prior auth),
-    - user chooses whether to register on platform or remain external,
-    - authenticated users can do the same flow with expanded access.
-  - Tracking payloads (public + authenticated):
-    - shipment total cost,
+- Clarified Decisions:
+  - Authenticated dashboard metrics:
+    - `totalSpent` counts only `successful` payments.
+    - Amount display supports USD and NGN toggle; conversion uses superadmin-configured FX rate with fallback official rate.
+    - `deliveryCompletedCount` includes both `PICKED_UP_COMPLETED` and `DELIVERED_TO_RECIPIENT`.
+    - Trend/frequency default window is last `3 months`.
+    - `totalShipments` excludes cancelled shipments.
+    - Separate `cancelledShipmentsCount` metric should be available for audit/reporting visibility.
+  - Vendors/suppliers:
+    - Vendors and suppliers are the same concept.
+    - User-added vendors/suppliers should appear immediately in internal views.
+  - D2D intake:
+    - Public (unauthenticated) users can submit D2D goods details and choose whether to register or remain external.
+    - Intake should create both support-facing flow and order-facing flow.
+    - Authenticated users can also use D2D intake with expanded account-linked access.
+  - Tracking payloads (public + authenticated customer views):
+    - Include shipment total cost, payment status, vendor count, total kg, and timeline with status update timestamps.
+    - Use final internal verified/derived shipment weight for the customer-visible total kg value.
+    - Continue to expose weight/volume (kg/cbm) details to users.
+    - Use one unified mapped customer-facing status set across public and authenticated customer tracking.
+    - Keep data visibility tiered:
+      - public endpoint exposes only approved public fields,
+      - authenticated customer endpoint exposes expanded customer details.
+  - Payment receipt upload + verification:
+    - Receipt upload should attach to `order` (single reference key).
+    - Payment verification authority is `SUPER_ADMIN` only.
+    - On verification, payment status updates to successful and should reflect to customer.
+  - Unauthenticated D2D submitter required fields:
+    - full name,
+    - email,
+    - phone,
+    - city/country,
+    - consent/acknowledgement.
+- Open Questions:
+  - None (scope frozen).
+
+### Change 11 Implementation Notes (Phase 1)
+
+- Dashboard metric upgrades:
+  - Added shipment-focused KPI split:
+    - `totalShipments` excludes cancelled shipments.
+    - `cancelledShipmentsCount` is exposed separately for audit visibility.
+  - Completed-delivery aggregation now includes both:
+    - `PICKED_UP_COMPLETED`
+    - `DELIVERED_TO_RECIPIENT`
+  - Added FX-normalized financial fields with dual-currency outputs for customer/superadmin views:
+    - customer: `totalSpentUsd`, `totalSpentNgn`, `fxRateNgnPerUsd`, `fxRateSource`
+    - superadmin: `revenueUsd`, `revenueNgn`, `fxRateNgnPerUsd`, `fxRateSource`
+  - FX source behavior:
+    - primary: superadmin-configured/manual or live effective rate
+    - fallback: official fallback rate (`1500`) when effective-rate fetch fails
+  - Trends endpoint moved to rolling-window model with default `months=3`.
+
+- Unified tracking payload changes:
+  - Introduced a shared customer-facing status mapping layer used by:
+    - public tracking endpoint (`/orders/track/:trackingNumber`)
+    - authenticated timeline endpoint (`/orders/:id/timeline`)
+  - Reduced customer-visible status cardinality while preserving timestamped timeline updates.
+  - Added required customer tracking metrics:
+    - shipment cost,
     - payment status,
     - vendor count,
-    - total kg for that shipment,
-    - status timeline with updated date/time,
-    - reduce visible statuses shown to customers.
-  - Authenticated shipment/invoice breakdown:
-    - richer invoice and shipment financial/operational breakdown in dashboard.
-  - Payment receipt upload + internal verification:
-    - authenticated user can upload payment receipt,
-    - staff/superadmin get notified for verification,
-    - payment status updates to successful after verification.
-- Open Questions:
-  - To be resolved in next scope-freeze discussion.
+    - cargo metrics (`totalWeightKg`, `totalCbm`, `packageCount`).
+  - Enforced detail-tier split:
+    - public tracking returns limited customer-safe fields,
+    - authenticated timeline returns expanded details (goods breakdown + invoice summary + mapped + internal status context).
+
+- Files updated (Phase 1):
+  - `src/domain/shipment-v2/customer-tracking-status.ts` (new)
+  - `src/services/dashboard.service.ts`
+  - `src/controllers/dashboard.controller.ts`
+  - `src/routes/dashboard.routes.ts`
+  - `src/controllers/orders.controller.ts`
+  - `src/routes/orders.routes.ts`
+
+- Validation (Phase 1):
+  - `npm run build` ✅
+  - `npm test` ✅ (46/46 tests passed)
+
+### Change 11 Implementation Notes (Phase 2)
+
+- Vendor/supplier save flow:
+  - Added authenticated self-service supplier management endpoints:
+    - `GET /users/me/suppliers`
+    - `POST /users/me/suppliers`
+  - Users can:
+    - save/link an existing supplier by `supplierId`, or
+    - save by supplier email (auto-find or auto-create supplier record with role `SUPPLIER`).
+  - Save flow is idempotent (re-saving updates relationship timestamp metadata, not duplicate links).
+  - Guardrails:
+    - users cannot save themselves as suppliers;
+    - cannot reuse an email that belongs to a non-supplier account.
+
+- Internal visibility upgrades:
+  - Added persistent `user_suppliers` mapping table for customer-to-supplier links.
+  - Internal supplier list now includes relationship and usage visibility fields:
+    - linked customer count,
+    - last linked timestamp,
+    - shipment usage count,
+    - last shipment usage timestamp.
+  - Newly saved suppliers become visible immediately through internal supplier list APIs.
+
+- Files updated (Phase 2):
+  - `drizzle/schema/user-suppliers.ts` (new)
+  - `drizzle/schema/index.ts`
+  - `drizzle/migrations/2026-04-21_user_suppliers.sql` (new)
+  - `src/services/users.service.ts`
+  - `src/controllers/users.controller.ts`
+  - `src/routes/users.routes.ts`
+
+- Validation (Phase 2):
+  - `npm run build` ✅
+  - `npm test` ✅ (46/46 tests passed)
+
+### Change 11 Implementation Notes (Phase 3)
+
+- Public D2D intake (order + support ticket):
+  - Added unauthenticated endpoint:
+    - `POST /public/d2d/intake`
+  - Intake flow now:
+    - captures required public details (`fullName`, `email`, `phone`, `city`, `country`, goods description, consent, register intent),
+    - resolves or creates a user stub,
+    - creates a D2D pre-order,
+    - creates a linked support ticket for internal follow-up.
+  - Internal visibility:
+    - support ticket is created immediately and broadcast to connected staff via existing support channel.
+
+- Receipt upload + verification flow:
+  - Added authenticated customer receipt upload flow:
+    - `POST /payments/receipts/presign`
+    - `POST /payments/receipts`
+  - Receipt submission behavior:
+    - creates pending transfer payment record linked to order/invoice,
+    - marks shipment payment collection state to `PAYMENT_IN_PROGRESS`,
+    - notifies internal staff/superadmin for review.
+  - Added superadmin verification endpoint:
+    - `PATCH /payments/receipts/:id/verify`
+  - Verification behavior:
+    - approve: payment -> `successful`, shipment payment state -> `PAID_IN_FULL`,
+    - reject: payment -> `failed`, shipment payment state recalculated (`PAID_IN_FULL` / `PAYMENT_IN_PROGRESS` / `UNPAID`),
+    - user receives payment-event notification on decision.
+
+- Files updated (Phase 3):
+  - `src/services/public-d2d-intake.service.ts` (new)
+  - `src/controllers/public.controller.ts`
+  - `src/routes/public.routes.ts`
+  - `src/services/uploads.service.ts`
+  - `src/services/payments.service.ts`
+  - `src/controllers/payments.controller.ts`
+  - `src/routes/payments.routes.ts`
+
+- Validation (Phase 3):
+  - `npm run build` ✅
+  - `npm test` ✅ (46/46 tests passed)
 
 ## Decisions Log
 
@@ -542,6 +670,30 @@ This document captures all requested business-logic changes before implementatio
 - 2026-04-20: Captured Change 11 draft scope:
   - User-spectrum expansion for dashboard metrics, public/auth D2D intake, tracking payload redesign, vendor persistence/exposure, and receipt-based payment verification flow.
   - Pending clarification and scope freeze before implementation.
+- 2026-04-21: Captured Change 11 decision updates from stakeholder answers:
+  - Total spent = successful-only; USD/NGN toggle with superadmin FX + fallback.
+  - Delivery-completed aggregate includes `PICKED_UP_COMPLETED` + `DELIVERED_TO_RECIPIENT`.
+  - Default metric trend window = last 3 months.
+  - Vendors are unified with suppliers and should sync immediately to internal visibility.
+  - D2D public intake should support external users and create both support + order handling flows.
+  - Tracking payload should include cost, payment state, vendor count, total kg, and timestamped timeline updates.
+  - Receipt upload linkage should be order-level, with verification restricted to superadmin.
+- 2026-04-21: Finalized remaining Change 11 confirmations:
+  - `totalShipments` excludes cancelled shipments; separate cancelled count required for audit.
+  - Unauthenticated D2D submitter minimum required fields confirmed (name, email, phone, city/country, consent).
+  - Customer-facing status mapping should be unified across public + authenticated customer tracking with tiered data visibility.
+- 2026-04-21: Implemented Change 11 Phase 1 locally:
+  - Dashboard KPI/trend updates shipped with rolling 3-month default trend window and dual-currency FX-normalized financial outputs.
+  - Unified reduced customer status mapping applied to both public and authenticated tracking responses.
+  - Public tracking payload narrowed to customer-safe fields; authenticated timeline enriched with expanded order/invoice breakdown.
+- 2026-04-21: Implemented Change 11 Phase 2 locally:
+  - Added persistent `user_suppliers` relationship model and migration.
+  - Added authenticated supplier save/list endpoints for users (`/users/me/suppliers`).
+  - Internal supplier listing now surfaces immediate link + usage visibility metadata.
+- 2026-04-21: Implemented Change 11 Phase 3 locally:
+  - Added unauthenticated public D2D intake endpoint that creates both D2D pre-order + linked support ticket.
+  - Added payment receipt upload flow for authenticated users with pending verification state.
+  - Added superadmin-only receipt verification endpoint to approve/reject and update shipment payment state.
 
 ## Implementation Plan (To Be Filled After Scope Freeze)
 
@@ -555,5 +707,5 @@ This document captures all requested business-logic changes before implementatio
 - Change 8: Implemented (local), validated.
 - Change 9: Implemented (local), validated.
 - Change 10: Implemented (local), validated.
-- Change 11: Draft captured; clarification required before implementation.
+- Change 11: Implemented (local), validated.
 - Deployment pending.

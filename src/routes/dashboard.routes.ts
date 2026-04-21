@@ -50,19 +50,35 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
           data: z.object({
             totalOrders: z.number(),
             totalOrdersChange: changeSchema,
+            totalShipments: z.number(),
+            totalShipmentsChange: changeSchema,
             activeShipments: z.number(),
             activeShipmentsChange: changeSchema,
             pendingOrders: z.number(),
             pendingOrdersChange: changeSchema,
             deliveredToday: z.number(),
+            deliveryCompletedCount: z.number(),
+            deliveryCompletedCountChange: changeSchema,
             deliveredTotal: z.number(),
             deliveredTotalChange: changeSchema,
             cancelled: z.number(),
+            cancelledShipmentsCount: z.number(),
+            cancelledShipmentsCountChange: changeSchema,
             unmappedOrders: z.number(),
             revenueMtd: z.string().optional().describe('Superadmin only — global platform revenue'),
             revenueMtdChange: changeSchema.optional().describe('Superadmin only'),
             totalSpent: z.string().optional().describe('Customer only — their own payment total'),
             totalSpentChange: changeSchema.optional().describe('Customer only'),
+            totalSpentUsd: z.string().optional().describe('Customer only — USD normalized spend'),
+            totalSpentNgn: z.string().optional().describe('Customer only — NGN normalized spend'),
+            totalSpentUsdChange: changeSchema.optional().describe('Customer only'),
+            totalSpentNgnChange: changeSchema.optional().describe('Customer only'),
+            revenueUsd: z.string().optional().describe('Superadmin only — USD normalized revenue'),
+            revenueNgn: z.string().optional().describe('Superadmin only — NGN normalized revenue'),
+            revenueUsdChange: changeSchema.optional().describe('Superadmin only'),
+            revenueNgnChange: changeSchema.optional().describe('Superadmin only'),
+            fxRateNgnPerUsd: z.string().optional().describe('Effective FX rate used for normalization'),
+            fxRateSource: z.enum(['configured_or_live', 'official_fallback']).optional(),
           }),
         }),
         401: z.object({ success: z.literal(false), message: z.string() }),
@@ -78,30 +94,37 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
     preHandler: [authenticate],
     schema: {
       tags: ['Dashboard'],
-      summary: 'Shipment trends — monthly weight by status (graph data)',
-      description: `Returns 12 data points (one per month) for the shipment trends chart.
+      summary: 'Shipment trends — rolling monthly frequency and weight',
+      description: `Returns rolling monthly trend points (default: last 3 months).
 
-- **Y axis**: total package weight in kg
-- **X axis**: month (1 = Jan … 12 = Dec)
-- **deliveredWeight**: sum of weight for orders with status \`delivered\` in that month
-- **activeWeight**: sum of weight for orders in non-terminal statuses (pending, picked_up, in_transit, out_for_delivery)
+- Includes:
+- \`totalShipmentCount\` (excluding cancelled)
+- \`cancelledShipmentCount\`
+- \`deliveryCompletedCount\` (\`PICKED_UP_COMPLETED\` + \`DELIVERED_TO_RECIPIENT\`)
+- \`deliveredWeight\`, \`activeWeight\`, and \`totalWeight\` in kg
 
 **Query params:**
-- \`year\` — defaults to current year
+- \`months\` — rolling window size (1–12), defaults to 3
 
 **Role gating**: customers see their own orders; staff/superadmin see all.`,
       security: [{ bearerAuth: [] }],
       querystring: z.object({
-        year: z.coerce.number().int().min(2020).max(2100).optional().describe('Year (defaults to current year)'),
+        months: z.coerce.number().int().min(1).max(12).optional().default(3).describe('Rolling month window (default: 3)'),
       }),
       response: {
         200: z.object({
           success: z.literal(true),
           data: z.array(
             z.object({
+              period: z.string().describe('Year-month bucket in YYYY-MM format'),
+              year: z.number().int(),
               month: z.number().describe('Month number (1–12)'),
-              deliveredWeight: z.string().describe('Total weight of delivered orders (kg)'),
+              totalShipmentCount: z.number().int(),
+              cancelledShipmentCount: z.number().int(),
+              deliveryCompletedCount: z.number().int(),
+              deliveredWeight: z.string().describe('Total weight of completed deliveries (kg)'),
               activeWeight: z.string().describe('Total weight of active orders (kg)'),
+              totalWeight: z.string().describe('Total weight of non-cancelled shipments (kg)'),
             }),
           ),
         }),
@@ -155,26 +178,48 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
   const statsSchema = z.object({
     totalOrders: z.number(),
     totalOrdersChange: changeSchema,
+    totalShipments: z.number(),
+    totalShipmentsChange: changeSchema,
     activeShipments: z.number(),
     activeShipmentsChange: changeSchema,
     pendingOrders: z.number(),
     pendingOrdersChange: changeSchema,
     deliveredToday: z.number(),
+    deliveryCompletedCount: z.number(),
+    deliveryCompletedCountChange: changeSchema,
     deliveredTotal: z.number(),
     deliveredTotalChange: changeSchema,
     cancelled: z.number(),
+    cancelledShipmentsCount: z.number(),
+    cancelledShipmentsCountChange: changeSchema,
     unmappedOrders: z.number(),
     revenueMtd: z.string().optional(),
     revenueMtdChange: changeSchema.optional(),
+    revenueUsd: z.string().optional(),
+    revenueNgn: z.string().optional(),
+    revenueUsdChange: changeSchema.optional(),
+    revenueNgnChange: changeSchema.optional(),
     totalSpent: z.string().optional(),
     totalSpentChange: changeSchema.optional(),
+    totalSpentUsd: z.string().optional(),
+    totalSpentNgn: z.string().optional(),
+    totalSpentUsdChange: changeSchema.optional(),
+    totalSpentNgnChange: changeSchema.optional(),
+    fxRateNgnPerUsd: z.string().optional(),
+    fxRateSource: z.enum(['configured_or_live', 'official_fallback']).optional(),
   })
 
   const trendsSchema = z.array(
     z.object({
+      period: z.string(),
+      year: z.number().int(),
       month: z.number(),
+      totalShipmentCount: z.number().int(),
+      cancelledShipmentCount: z.number().int(),
+      deliveryCompletedCount: z.number().int(),
       deliveredWeight: z.string(),
       activeWeight: z.string(),
+      totalWeight: z.string(),
     }),
   )
 
@@ -200,10 +245,10 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
 - Admin / Staff / Superadmin see global data
 
 **Query params:**
-- \`year\` — year for the trends graph (defaults to current year)`,
+- \`months\` — rolling month window size for trends (defaults to 3)`,
       security: [{ bearerAuth: [] }],
       querystring: z.object({
-        year: z.coerce.number().int().min(2020).max(2100).optional().describe('Year for trends graph (defaults to current year)'),
+        months: z.coerce.number().int().min(1).max(12).optional().default(3).describe('Rolling month window for trends (default: 3)'),
       }),
       response: {
         200: z.object({

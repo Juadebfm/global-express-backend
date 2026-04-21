@@ -31,6 +31,75 @@ export const paymentsController = {
     return reply.code(201).send(successResponse(result))
   },
 
+  async generateReceiptPresign(
+    request: FastifyRequest<{
+      Body: {
+        orderId?: string
+        invoiceId?: string
+        contentType: string
+        originalFileName?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const payload = await paymentsService.generateReceiptUploadUrl({
+      orderId: request.body.orderId,
+      invoiceId: request.body.invoiceId,
+      userId: request.user.id,
+      requesterRole: request.user.role as UserRole,
+      contentType: request.body.contentType,
+      originalFileName: request.body.originalFileName,
+    })
+
+    return reply.send(successResponse(payload))
+  },
+
+  async submitReceipt(
+    request: FastifyRequest<{
+      Body: {
+        orderId?: string
+        invoiceId?: string
+        amount: number
+        currency?: string
+        r2Key: string
+        referenceCode?: string
+        note?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const payment = await paymentsService.submitPaymentReceipt({
+      orderId: request.body.orderId,
+      invoiceId: request.body.invoiceId,
+      userId: request.user.id,
+      requesterRole: request.user.role as UserRole,
+      amount: request.body.amount,
+      currency: request.body.currency,
+      r2Key: request.body.r2Key,
+      referenceCode: request.body.referenceCode,
+      note: request.body.note,
+    })
+
+    return reply.code(201).send(successResponse(payment))
+  },
+
+  async verifySubmittedReceipt(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: { decision: 'approve' | 'reject'; note?: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const payment = await paymentsService.verifySubmittedReceipt({
+      paymentId: request.params.id,
+      verifiedBy: request.user.id,
+      decision: request.body.decision,
+      note: request.body.note,
+    })
+
+    return reply.send(successResponse(payment))
+  },
+
   async verifyPayment(
     request: FastifyRequest<{ Params: { reference: string } }>,
     reply: FastifyReply,

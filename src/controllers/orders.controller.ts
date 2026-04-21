@@ -9,6 +9,10 @@ import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import { ShipmentPayer, ShipmentStatusV2, TransportMode, UserRole } from '../types/enums'
 import { STATUS_LABELS } from '../domain/shipment-v2/status-labels'
+import {
+  getCustomerTrackingStatusLabel,
+  toCustomerTrackingStatus,
+} from '../domain/shipment-v2/customer-tracking-status'
 
 const SEA_CBM_TO_KG_FACTOR = 550
 
@@ -32,6 +36,68 @@ function formatLastUpdate(date: Date | string): string {
   const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   const timePart = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
   return `${datePart} · ${timePart}`
+}
+
+function toNumber(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function buildCargoMetrics(goods: Array<{ weightKg: string | null; cbm: string | null }>) {
+  const totalWeightKg = goods.reduce((sum, item) => sum + toNumber(item.weightKg), 0)
+  const totalCbm = goods.reduce((sum, item) => sum + toNumber(item.cbm), 0)
+
+  return {
+    packageCount: goods.length,
+    totalWeightKg: totalWeightKg.toFixed(3),
+    totalCbm: totalCbm.toFixed(6),
+  }
+}
+
+type TrackingTimelineEvent = {
+  id?: string
+  status: string | null
+  createdAt: Date
+}
+
+function mapTrackingTimeline(
+  events: TrackingTimelineEvent[],
+  includeInternalStatus: boolean,
+) {
+  const timeline: Array<{
+    id?: string
+    status: string | null
+    statusLabel: string | null
+    timestamp: string
+    internalStatus?: string | null
+    internalStatusLabel?: string | null
+  }> = []
+
+  for (const event of events) {
+    const mappedStatus = toCustomerTrackingStatus(event.status)
+    const previous = timeline.at(-1)
+
+    // Collapse repeated internal transitions into one customer-facing timeline status.
+    if (previous && previous.status === mappedStatus) {
+      continue
+    }
+
+    timeline.push({
+      ...(includeInternalStatus && event.id ? { id: event.id } : {}),
+      status: mappedStatus,
+      statusLabel: getCustomerTrackingStatusLabel(mappedStatus),
+      timestamp: event.createdAt.toISOString(),
+      ...(includeInternalStatus
+        ? {
+            internalStatus: event.status,
+            internalStatusLabel: event.status ? (STATUS_LABELS[event.status] ?? event.status) : null,
+          }
+        : {}),
+    })
+  }
+
+  return timeline
 }
 
 /** Derive last known location from the shipment status */
@@ -68,25 +134,32 @@ function buildTrackingResponse(params: {
   trackingNumber: string
   origin: string
   destination: string
-  status: string
+  internalStatus: string | null
   updatedAt: Date | string
-  timeline?: Array<{ status: string | null; createdAt: Date }>
+  timeline?: TrackingTimelineEvent[]
   details?: Record<string, unknown>
+  includeInternalStatus?: boolean
 }) {
+  const customerStatus = toCustomerTrackingStatus(params.internalStatus)
+
   return {
     trackingNumber: params.trackingNumber,
-    status: params.status,
-    statusLabel: STATUS_LABELS[params.status] ?? params.status,
+    status: customerStatus,
+    statusLabel: getCustomerTrackingStatusLabel(customerStatus),
     origin: params.origin,
     destination: params.destination,
     estimatedDelivery: null,
     lastUpdate: formatLastUpdate(params.updatedAt),
-    lastLocation: deriveLastLocation(params.status, params.origin, params.destination),
-    timeline: (params.timeline ?? []).map((e) => ({
-      status: e.status,
-      statusLabel: STATUS_LABELS[e.status ?? ''] ?? e.status,
-      timestamp: e.createdAt.toISOString(),
-    })),
+    lastLocation: deriveLastLocation(params.internalStatus ?? '', params.origin, params.destination),
+    timeline: mapTrackingTimeline(params.timeline ?? [], Boolean(params.includeInternalStatus)),
+    ...(params.includeInternalStatus
+      ? {
+          internalStatus: params.internalStatus,
+          internalStatusLabel: params.internalStatus
+            ? (STATUS_LABELS[params.internalStatus] ?? params.internalStatus)
+            : null,
+        }
+      : {}),
     ...(params.details ?? {}),
   }
 }
@@ -278,7 +351,7 @@ export const ordersController = {
           trackingNumber: order.trackingNumber,
           origin: order.origin,
           destination: order.destination,
-          status: order.statusV2 ?? '',
+          internalStatus: order.statusV2 ?? null,
           updatedAt: order.updatedAt,
           timeline: events,
           details: {
@@ -290,7 +363,7 @@ export const ordersController = {
               invoiceStatus: invoice?.status ?? null,
             },
             vendorCount: distinctVendors.size,
-            goodsBreakdown: goods,
+            cargoMetrics: buildCargoMetrics(goods),
           },
         })),
       )
@@ -571,21 +644,58 @@ export const ordersController = {
       return reply.code(403).send({ success: false, message: 'Forbidden' })
     }
 
-    const events = await orderStatusEventsService.getByOrderId(request.params.id)
+    const [events, goods, invoice] = await Promise.all([
+      orderStatusEventsService.getByOrderId(request.params.id),
+      ordersService.getOrderGoodsBreakdown(request.params.id),
+      dispatchBatchesService.getInvoiceByOrderId(request.params.id),
+    ])
 
-    const timeline = events.map((e) => ({
-      id: e.id,
-      status: e.status,
-      statusLabel: STATUS_LABELS[e.status ?? ''] ?? e.status,
-      timestamp: e.createdAt.toISOString(),
-    }))
+    const distinctVendors = new Set(
+      goods.map((g) => g.supplierId).filter((id): id is string => typeof id === 'string'),
+    )
+    const paymentStatus =
+      invoice
+        ? await dispatchBatchesService.getPaymentStatusForInvoice(invoice.id)
+        : order.paymentCollectionStatus === 'PAID_IN_FULL'
+          ? 'completed'
+          : 'pending'
 
     return reply.send(successResponse({
       orderId: order.id,
-      trackingNumber: order.trackingNumber,
-      currentStatus: order.statusV2,
-      currentStatusLabel: STATUS_LABELS[order.statusV2 ?? ''] ?? order.statusV2,
-      timeline,
+      ...buildTrackingResponse({
+        trackingNumber: order.trackingNumber,
+        origin: order.origin,
+        destination: order.destination,
+        internalStatus: order.statusV2 ?? null,
+        updatedAt: order.updatedAt,
+        timeline: events,
+        includeInternalStatus: true,
+        details: {
+          paymentStatus,
+          estimatedDelivery: order.eta ?? null,
+          shipmentCost: {
+            usd: invoice?.totalUsd ?? order.finalChargeUsd ?? order.calculatedChargeUsd ?? null,
+            ngn: invoice?.totalNgn ?? null,
+            invoiceStatus: invoice?.status ?? null,
+          },
+          vendorCount: distinctVendors.size,
+          cargoMetrics: buildCargoMetrics(goods),
+          goodsBreakdown: goods,
+          invoice: invoice
+            ? {
+                id: invoice.id,
+                invoiceNumber: invoice.invoiceNumber,
+                status: invoice.status,
+                shipmentPayer: invoice.shipmentPayer,
+                totalUsd: invoice.totalUsd,
+                totalNgn: invoice.totalNgn,
+                fxRateNgnPerUsd: invoice.fxRateNgnPerUsd,
+                finalizedAt: invoice.finalizedAt?.toISOString() ?? null,
+                paidAt: invoice.paidAt?.toISOString() ?? null,
+              }
+            : null,
+        },
+      }),
     }))
   },
 }

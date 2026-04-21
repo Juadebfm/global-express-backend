@@ -9,6 +9,7 @@ import { TransportMode } from '../types/enums'
 import { successResponse } from '../utils/response'
 import { db } from '../config/db'
 import { newsletterSubscribers } from '../../drizzle/schema'
+import { publicD2dIntakeService } from '../services/public-d2d-intake.service'
 
 const AIR_VOLUMETRIC_DIVISOR = 6000
 
@@ -128,5 +129,36 @@ export const publicController = {
         },
       }),
     )
+  },
+
+  async submitD2dIntake(
+    request: FastifyRequest<{
+      Body: {
+        fullName: string
+        email: string
+        phone: string
+        city: string
+        country: string
+        goodsDescription: string
+        wantsAccount: boolean
+        estimatedWeightKg?: number
+        estimatedCbm?: number
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await publicD2dIntakeService.submitIntake({
+      fullName: request.body.fullName,
+      email: request.body.email,
+      phone: request.body.phone,
+      city: request.body.city,
+      country: request.body.country,
+      goodsDescription: request.body.goodsDescription,
+      wantsAccount: request.body.wantsAccount,
+      estimatedWeightKg: request.body.estimatedWeightKg,
+      estimatedCbm: request.body.estimatedCbm,
+    })
+
+    return reply.code(201).send(successResponse(result))
   },
 }

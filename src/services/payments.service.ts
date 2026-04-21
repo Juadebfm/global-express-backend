@@ -3,15 +3,23 @@ import { eq, and, desc, sql, isNull } from 'drizzle-orm'
 import axios from 'axios'
 import { db } from '../config/db'
 import { payments, orders, invoices } from '../../drizzle/schema'
-import { notificationsService } from './notifications.service'
+import { notificationsService, notifyUser } from './notifications.service'
 import { dispatchBatchesService } from './dispatch-batches.service'
-import { UserRole } from '../types/enums'
+import { PaymentCollectionStatus, UserRole } from '../types/enums'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { env } from '../config/env'
 import type { PaginationParams } from '../types'
 import { PaymentStatus, PaymentType } from '../types/enums'
+import { uploadsService } from './uploads.service'
 
 const PAYSTACK_API = 'https://api.paystack.co'
+const ALLOWED_RECEIPT_CONTENT_TYPES = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+])
 
 export interface InitializePaymentInput {
   orderId?: string
@@ -47,6 +55,27 @@ export interface PaystackVerifyResponse {
     paid_at: string | null
     metadata: unknown
   }
+}
+
+export interface GeneratePaymentReceiptUploadUrlInput {
+  orderId?: string
+  invoiceId?: string
+  userId: string
+  requesterRole: UserRole
+  contentType: string
+  originalFileName?: string
+}
+
+export interface SubmitPaymentReceiptInput {
+  orderId?: string
+  invoiceId?: string
+  userId: string
+  requesterRole: UserRole
+  amount: number
+  currency?: string
+  r2Key: string
+  referenceCode?: string
+  note?: string
 }
 
 interface ResolvedPaymentTarget {
@@ -119,6 +148,211 @@ export class PaymentsService {
       authorizationUrl: authorization_url,
       reference,
     }
+  }
+
+  async generateReceiptUploadUrl(input: GeneratePaymentReceiptUploadUrlInput) {
+    if (!ALLOWED_RECEIPT_CONTENT_TYPES.has(input.contentType)) {
+      throw httpError(
+        `Unsupported content type. Allowed: ${[...ALLOWED_RECEIPT_CONTENT_TYPES].join(', ')}`,
+        400,
+      )
+    }
+
+    const target = await this.resolvePaymentTarget({
+      orderId: input.orderId,
+      invoiceId: input.invoiceId,
+    })
+
+    this.assertPaymentOwnership({
+      requesterId: input.userId,
+      requesterRole: input.requesterRole,
+      target,
+    })
+
+    return uploadsService.generatePaymentReceiptPresignedUrl({
+      orderId: target.orderId,
+      contentType: input.contentType,
+      originalFileName: input.originalFileName,
+    })
+  }
+
+  async submitPaymentReceipt(input: SubmitPaymentReceiptInput) {
+    if (input.amount <= 0) {
+      throw httpError('Payment amount must be greater than zero', 400)
+    }
+
+    const currency = (input.currency ?? 'NGN').toUpperCase()
+    const target = await this.resolvePaymentTarget({
+      orderId: input.orderId,
+      invoiceId: input.invoiceId,
+    })
+
+    this.assertPaymentOwnership({
+      requesterId: input.userId,
+      requesterRole: input.requesterRole,
+      target,
+    })
+
+    const expectedPrefix = `payments/${target.orderId}/`
+    if (!input.r2Key.startsWith(expectedPrefix)) {
+      throw httpError('Invalid receipt key for this order', 400)
+    }
+
+    const proofUrl = `${env.R2_PUBLIC_URL}/${input.r2Key}`
+
+    const [payment] = await db
+      .insert(payments)
+      .values({
+        orderId: target.orderId,
+        invoiceId: target.invoiceId,
+        userId: input.userId,
+        amount: input.amount.toFixed(2),
+        currency,
+        status: PaymentStatus.PENDING,
+        paymentType: PaymentType.TRANSFER,
+        proofReference: proofUrl,
+        note: input.note ?? null,
+        metadata: {
+          receiptR2Key: input.r2Key,
+          referenceCode: input.referenceCode ?? null,
+          submittedByRole: input.requesterRole,
+          submittedAt: new Date().toISOString(),
+        },
+      })
+      .returning()
+
+    await db
+      .update(orders)
+      .set({
+        paymentCollectionStatus: PaymentCollectionStatus.PAYMENT_IN_PROGRESS,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, target.orderId))
+
+    notificationsService.notifyRole({
+      targetRole: UserRole.STAFF,
+      type: 'payment_event',
+      title: 'Payment Receipt Submitted',
+      body: `Receipt submitted for order ${target.orderId}. Awaiting superadmin verification.`,
+      metadata: {
+        paymentId: payment.id,
+        orderId: target.orderId,
+        invoiceId: target.invoiceId,
+        submittedBy: input.userId,
+      },
+    })
+
+    return payment
+  }
+
+  async verifySubmittedReceipt(input: {
+    paymentId: string
+    verifiedBy: string
+    decision: 'approve' | 'reject'
+    note?: string
+  }) {
+    const [payment] = await db
+      .select()
+      .from(payments)
+      .where(eq(payments.id, input.paymentId))
+      .limit(1)
+
+    if (!payment) {
+      throw httpError('Payment not found', 404)
+    }
+
+    if (payment.status !== PaymentStatus.PENDING) {
+      throw httpError('Only pending receipt submissions can be verified', 409)
+    }
+
+    const isApproved = input.decision === 'approve'
+    const now = new Date()
+
+    const [updated] = await db
+      .update(payments)
+      .set({
+        status: isApproved ? PaymentStatus.SUCCESSFUL : PaymentStatus.FAILED,
+        recordedBy: input.verifiedBy,
+        paidAt: isApproved ? now : null,
+        note: input.note ?? payment.note ?? null,
+        updatedAt: now,
+      })
+      .where(eq(payments.id, payment.id))
+      .returning()
+
+    if (!updated) {
+      throw httpError('Payment not found', 404)
+    }
+
+    if (isApproved) {
+      await db
+        .update(orders)
+        .set({
+          paymentCollectionStatus: PaymentCollectionStatus.PAID_IN_FULL,
+          updatedAt: now,
+        })
+        .where(eq(orders.id, payment.orderId))
+
+      await dispatchBatchesService.markInvoicePaidByOrder({
+        orderId: payment.orderId,
+        actorId: input.verifiedBy,
+        paidAt: updated.paidAt,
+      })
+
+      notificationsService.notifyRole({
+        targetRole: UserRole.STAFF,
+        type: 'payment_received',
+        title: 'Payment Receipt Approved',
+        body: `Receipt approved for order ${payment.orderId}.`,
+        metadata: { paymentId: payment.id, orderId: payment.orderId },
+      })
+    } else {
+      const [counts] = await db
+        .select({
+          successful: sql<number>`count(*) filter (where ${payments.status} = 'successful')::int`,
+          pending: sql<number>`count(*) filter (where ${payments.status} = 'pending')::int`,
+        })
+        .from(payments)
+        .where(eq(payments.orderId, payment.orderId))
+
+      const nextStatus =
+        (counts?.successful ?? 0) > 0
+          ? PaymentCollectionStatus.PAID_IN_FULL
+          : (counts?.pending ?? 0) > 0
+            ? PaymentCollectionStatus.PAYMENT_IN_PROGRESS
+            : PaymentCollectionStatus.UNPAID
+
+      await db
+        .update(orders)
+        .set({ paymentCollectionStatus: nextStatus, updatedAt: now })
+        .where(eq(orders.id, payment.orderId))
+
+      notificationsService.notifyRole({
+        targetRole: UserRole.STAFF,
+        type: 'payment_failed',
+        title: 'Payment Receipt Rejected',
+        body: `Receipt rejected for order ${payment.orderId}.`,
+        metadata: { paymentId: payment.id, orderId: payment.orderId },
+      })
+    }
+
+    await notifyUser({
+      userId: payment.userId,
+      orderId: payment.orderId,
+      type: 'payment_event',
+      title: isApproved ? 'Payment Verified' : 'Payment Receipt Rejected',
+      subtitle: payment.orderId,
+      body: isApproved
+        ? 'Your submitted payment receipt has been verified successfully.'
+        : 'Your submitted payment receipt was rejected. Please submit a valid proof.',
+      createdBy: input.verifiedBy,
+      metadata: {
+        paymentId: payment.id,
+        decision: input.decision,
+      },
+    })
+
+    return updated
   }
 
   private async resolvePaymentTarget(input: {

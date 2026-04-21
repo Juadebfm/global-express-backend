@@ -149,6 +149,60 @@ export const usersController = {
     return reply.send(successResponse(preferences))
   },
 
+  async getMySuppliers(
+    request: FastifyRequest<{
+      Querystring: { page?: string; limit?: string; isActive?: boolean }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await usersService.listMySuppliers({
+      userId: request.user.id,
+      page: Number(request.query.page) || 1,
+      limit: Number(request.query.limit) || 50,
+      isActive: request.query.isActive,
+    })
+
+    return reply.send(successResponse(result))
+  },
+
+  async saveMySupplier(
+    request: FastifyRequest<{
+      Body: {
+        supplierId?: string
+        email?: string
+        firstName?: string | null
+        lastName?: string | null
+        businessName?: string | null
+        phone?: string | null
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await usersService.saveMySupplier({
+      userId: request.user.id,
+      supplierId: request.body.supplierId,
+      email: request.body.email,
+      firstName: request.body.firstName,
+      lastName: request.body.lastName,
+      businessName: request.body.businessName,
+      phone: request.body.phone,
+    })
+
+    if (result.status === 'not_found') {
+      return reply.code(404).send({ success: false, message: 'Supplier not found' })
+    }
+
+    if (result.status === 'forbidden') {
+      return reply.code(403).send({ success: false, message: result.message })
+    }
+
+    if (result.status === 'conflict') {
+      return reply.code(409).send({ success: false, message: result.message })
+    }
+
+    return reply.send(successResponse(result.data))
+  },
+
   async listUsers(
     request: FastifyRequest<{
       Querystring: PaginationParams & { role?: string; isActive?: boolean }

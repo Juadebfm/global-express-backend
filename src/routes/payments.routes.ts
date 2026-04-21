@@ -26,6 +26,13 @@ const paymentResponseSchema = z.object({
   updatedAt: z.string(),
 })
 
+const receiptUploadResponseSchema = z.object({
+  uploadUrl: z.string().url(),
+  r2Key: z.string(),
+  publicUrl: z.string().url(),
+  expiresInSeconds: z.number(),
+})
+
 export async function paymentsRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
@@ -81,6 +88,89 @@ After the customer pays and returns to your \`callbackUrl\`, call \`POST /api/v1
       },
     },
     handler: paymentsController.initializePayment,
+  })
+
+  app.post('/receipts/presign', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Payments'],
+      summary: 'Generate presigned upload URL for payment receipt',
+      description:
+        'Generates a short-lived presigned PUT URL for uploading a payment receipt file to R2. After upload, submit the receipt using POST /payments/receipts.',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        orderId: z.string().uuid().optional(),
+        invoiceId: z.string().uuid().optional(),
+        contentType: z
+          .enum(['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
+          .describe('Receipt file MIME type'),
+        originalFileName: z.string().optional(),
+      }).refine((v) => Boolean(v.orderId || v.invoiceId), {
+        message: 'Either orderId or invoiceId is required',
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: receiptUploadResponseSchema }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: paymentsController.generateReceiptPresign,
+  })
+
+  app.post('/receipts', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Payments'],
+      summary: 'Submit uploaded payment receipt for verification',
+      description:
+        'Creates a pending transfer payment record linked to an order/invoice and marks payment collection as in-progress pending superadmin verification.',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        orderId: z.string().uuid().optional(),
+        invoiceId: z.string().uuid().optional(),
+        amount: z.number().positive().describe('Amount paid in major currency units'),
+        currency: z.string().default('NGN').optional(),
+        r2Key: z.string().min(1).describe('R2 object key returned from /payments/receipts/presign'),
+        referenceCode: z.string().optional().describe('Optional bank transfer/reference code'),
+        note: z.string().optional().describe('Optional note from customer'),
+      }).refine((v) => Boolean(v.orderId || v.invoiceId), {
+        message: 'Either orderId or invoiceId is required',
+      }),
+      response: {
+        201: z.object({ success: z.literal(true), data: paymentResponseSchema }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: paymentsController.submitReceipt,
+  })
+
+  app.patch('/receipts/:id/verify', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Payments — SuperAdmin'],
+      summary: 'Verify a submitted payment receipt',
+      description:
+        'Superadmin approves or rejects a pending receipt submission. Approval marks payment successful and updates shipment payment collection state.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Payment UUID') }),
+      body: z.object({
+        decision: z.enum(['approve', 'reject']),
+        note: z.string().optional().describe('Optional reviewer note'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: paymentResponseSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: paymentsController.verifySubmittedReceipt,
   })
 
   app.post('/verify/:reference', {

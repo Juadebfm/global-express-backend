@@ -9,11 +9,11 @@ export const dashboardController = {
   },
 
   async getTrends(
-    request: FastifyRequest<{ Querystring: { year?: number } }>,
+    request: FastifyRequest<{ Querystring: { months?: number } }>,
     reply: FastifyReply,
   ) {
-    const year = request.query.year ?? new Date().getFullYear()
-    const data = await dashboardService.getTrends(request.user.id, request.user.role, year)
+    const months = request.query.months ?? 3
+    const data = await dashboardService.getTrends(request.user.id, request.user.role, months)
     return reply.send(successResponse(data))
   },
 
@@ -23,13 +23,13 @@ export const dashboardController = {
   },
 
   async getAll(
-    request: FastifyRequest<{ Querystring: { year?: number } }>,
+    request: FastifyRequest<{ Querystring: { months?: number } }>,
     reply: FastifyReply,
   ) {
-    const year = request.query.year ?? new Date().getFullYear()
+    const months = request.query.months ?? 3
     const [stats, trends, activeDeliveries] = await Promise.all([
       dashboardService.getStats(request.user.id, request.user.role),
-      dashboardService.getTrends(request.user.id, request.user.role, year),
+      dashboardService.getTrends(request.user.id, request.user.role, months),
       dashboardService.getActiveDeliveries(request.user.id, request.user.role),
     ])
     return reply.send(successResponse({ stats, trends, activeDeliveries }))

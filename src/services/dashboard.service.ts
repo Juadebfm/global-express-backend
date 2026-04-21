@@ -1,9 +1,17 @@
-import { sql, eq, isNull, and, gte, lt } from 'drizzle-orm'
+import { sql, eq, isNull, and, gte, lt, inArray } from 'drizzle-orm'
 import { db } from '../config/db'
 import { orders, payments } from '../../drizzle/schema'
+import { settingsFxRateService } from './settings-fx-rate.service'
 import { ShipmentStatusV2, UserRole } from '../types/enums'
 
-// In-motion: flight/vessel departed through ready-for-pickup
+const OFFICIAL_FX_FALLBACK_NGN_PER_USD = 1500
+
+const DELIVERY_COMPLETED_V2: ShipmentStatusV2[] = [
+  ShipmentStatusV2.PICKED_UP_COMPLETED,
+  ShipmentStatusV2.DELIVERED_TO_RECIPIENT,
+]
+
+// In-motion: departed through destination-side delivery leg.
 const IN_MOTION_V2: ShipmentStatusV2[] = [
   ShipmentStatusV2.FLIGHT_DEPARTED,
   ShipmentStatusV2.FLIGHT_LANDED_LAGOS,
@@ -11,10 +19,13 @@ const IN_MOTION_V2: ShipmentStatusV2[] = [
   ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT,
   ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS,
   ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE,
+  ShipmentStatusV2.LOCAL_COURIER_ASSIGNED,
+  ShipmentStatusV2.IN_TRANSIT_TO_DESTINATION_CITY,
+  ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY,
   ShipmentStatusV2.READY_FOR_PICKUP,
 ]
 
-// Pre-transit: not yet departed (includes on-hold / override-approved)
+// Pre-transit: not yet departed.
 const PRE_TRANSIT_V2: ShipmentStatusV2[] = [
   ShipmentStatusV2.PREORDER_SUBMITTED,
   ShipmentStatusV2.AWAITING_WAREHOUSE_RECEIPT,
@@ -30,13 +41,10 @@ const PRE_TRANSIT_V2: ShipmentStatusV2[] = [
   ShipmentStatusV2.RESTRICTED_ITEM_OVERRIDE_APPROVED,
 ]
 
-// All non-terminal statuses (used for active deliveries filter)
 const NON_TERMINAL_V2: ShipmentStatusV2[] = [...IN_MOTION_V2, ...PRE_TRANSIT_V2]
 
-/**
- * Computes a period-over-period % change.
- * Returns null when previous === 0 (no baseline — FE hides the badge).
- */
+type FxRateSource = 'configured_or_live' | 'official_fallback'
+
 function calcChange(
   current: number,
   previous: number,
@@ -46,32 +54,60 @@ function calcChange(
   return { value: Math.abs(pct), direction: pct >= 0 ? 'up' : 'down' }
 }
 
+function clampMonths(months: number): number {
+  if (!Number.isFinite(months)) return 3
+  return Math.max(1, Math.min(12, Math.trunc(months)))
+}
+
+function parseNumber(value: string | null | undefined): number {
+  if (!value) return 0
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function monthStartUtc(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
+}
+
+function dayStartUtc(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+}
+
+function addUtcMonths(date: Date, months: number): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1))
+}
+
+function periodKey(date: Date): string {
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  return `${date.getUTCFullYear()}-${month}`
+}
+
 export class DashboardService {
-  /**
-   * KPI stats — counts by V2 status + financial summary + period-over-period change.
-   *
-   * Staff/superadmin: global data across all orders.
-   * Customer (role=user/supplier): filtered to their own orders + their own payments.
-   *
-   * Change fields compare last 30 days vs the prior 30 days (days 31–60).
-   * Returns null when the prior period had 0 activity (no baseline to compare).
-   */
+  private async resolveFxRate(): Promise<{ rate: number; source: FxRateSource }> {
+    try {
+      const rate = await settingsFxRateService.getEffectiveRate()
+      return { rate, source: 'configured_or_live' }
+    } catch {
+      return { rate: OFFICIAL_FX_FALLBACK_NGN_PER_USD, source: 'official_fallback' }
+    }
+  }
+
   async getStats(userId: string, role: string) {
-    const isCustomer  = role === UserRole.USER || role === UserRole.SUPPLIER
+    const isCustomer = role === UserRole.USER || role === UserRole.SUPPLIER
     const isSuperAdmin = role === UserRole.SUPER_ADMIN
-    // Only fetch financial data for roles that will use it
     const needsFinancial = isCustomer || isSuperAdmin
+    const userFilter = isCustomer ? eq(orders.senderId, userId) : undefined
 
     const now = new Date()
     const now30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
     const now60 = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000)
-    // Raw sql templates need ISO strings — the postgres driver can't serialize Date objects in FILTER clauses
     const now30s = now30.toISOString()
     const now60s = now60.toISOString()
 
-    const userFilter = isCustomer ? eq(orders.senderId, userId) : undefined
+    const inMotionPgArr = `{${IN_MOTION_V2.join(',')}}`
+    const preTransitPgArr = `{${PRE_TRANSIT_V2.join(',')}}`
+    const deliveredPgArr = `{${DELIVERY_COMPLETED_V2.join(',')}}`
 
-    // ── All-time V2 status counts ──────────────────────────────────────────────
     const countQuery = db
       .select({
         statusV2: orders.statusV2,
@@ -81,183 +117,240 @@ export class DashboardService {
       .where(and(isNull(orders.deletedAt), userFilter))
       .groupBy(orders.statusV2)
 
-    // ── All-time financial total (customer: own spend; superadmin: platform revenue) ─
-    const financialQuery = needsFinancial
-      ? (isCustomer
-          ? db
-              .select({ total: sql<string>`coalesce(sum(amount), 0)::text` })
-              .from(payments)
-              .where(and(eq(payments.userId, userId), sql`status = 'successful'`))
-          : db
-              .select({ total: sql<string>`coalesce(sum(amount), 0)::text` })
-              .from(payments)
-              .where(sql`status = 'successful'`))
-      : null
-
-    // ── Delivered today (PICKED_UP_COMPLETED) ─────────────────────────────────
-    const todayStart = new Date()
-    todayStart.setHours(0, 0, 0, 0)
     const deliveredTodayQuery = db
       .select({ count: sql<number>`count(*)::int` })
       .from(orders)
       .where(
         and(
           isNull(orders.deletedAt),
-          eq(orders.statusV2, ShipmentStatusV2.PICKED_UP_COMPLETED),
-          gte(orders.updatedAt, todayStart),
+          inArray(orders.statusV2, DELIVERY_COMPLETED_V2),
+          gte(orders.updatedAt, dayStartUtc(now)),
           userFilter,
         ),
       )
 
-    // ── Period-over-period count changes (single query, conditional aggregation) ─
-    // Build Postgres array literals from static enum arrays.
-    // Safe: values are compile-time constants from ShipmentStatusV2 enum, never user input.
-    const inMotionPgArr = `{${IN_MOTION_V2.join(',')}}`
-    const preTransitPgArr = `{${PRE_TRANSIT_V2.join(',')}}`
-
     const changeQuery = db
       .select({
-        currentOrders:    sql<number>`count(*) filter (where created_at >= ${now30s}::timestamptz)::int`,
-        prevOrders:       sql<number>`count(*) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
-        currentActive:    sql<number>`count(*) filter (where status_v2 = ANY(${inMotionPgArr}::shipment_status_v2[]) and created_at >= ${now30s}::timestamptz)::int`,
-        prevActive:       sql<number>`count(*) filter (where status_v2 = ANY(${inMotionPgArr}::shipment_status_v2[]) and created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
-        currentPending:   sql<number>`count(*) filter (where status_v2 = ANY(${preTransitPgArr}::shipment_status_v2[]) and created_at >= ${now30s}::timestamptz)::int`,
-        prevPending:      sql<number>`count(*) filter (where status_v2 = ANY(${preTransitPgArr}::shipment_status_v2[]) and created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz)::int`,
-        currentDelivered: sql<number>`count(*) filter (where status_v2 = 'PICKED_UP_COMPLETED' and updated_at >= ${now30s}::timestamptz)::int`,
-        prevDelivered:    sql<number>`count(*) filter (where status_v2 = 'PICKED_UP_COMPLETED' and updated_at >= ${now60s}::timestamptz and updated_at < ${now30s}::timestamptz)::int`,
+        currentOrders: sql<number>`count(*) filter (where ${orders.createdAt} >= ${now30s}::timestamptz)::int`,
+        prevOrders: sql<number>`count(*) filter (where ${orders.createdAt} >= ${now60s}::timestamptz and ${orders.createdAt} < ${now30s}::timestamptz)::int`,
+        currentShipments: sql<number>`count(*) filter (where (${orders.statusV2} is null or ${orders.statusV2} <> 'CANCELLED') and ${orders.createdAt} >= ${now30s}::timestamptz)::int`,
+        prevShipments: sql<number>`count(*) filter (where (${orders.statusV2} is null or ${orders.statusV2} <> 'CANCELLED') and ${orders.createdAt} >= ${now60s}::timestamptz and ${orders.createdAt} < ${now30s}::timestamptz)::int`,
+        currentActive: sql<number>`count(*) filter (where ${orders.statusV2} = ANY(${inMotionPgArr}::shipment_status_v2[]) and ${orders.createdAt} >= ${now30s}::timestamptz)::int`,
+        prevActive: sql<number>`count(*) filter (where ${orders.statusV2} = ANY(${inMotionPgArr}::shipment_status_v2[]) and ${orders.createdAt} >= ${now60s}::timestamptz and ${orders.createdAt} < ${now30s}::timestamptz)::int`,
+        currentPending: sql<number>`count(*) filter (where ${orders.statusV2} = ANY(${preTransitPgArr}::shipment_status_v2[]) and ${orders.createdAt} >= ${now30s}::timestamptz)::int`,
+        prevPending: sql<number>`count(*) filter (where ${orders.statusV2} = ANY(${preTransitPgArr}::shipment_status_v2[]) and ${orders.createdAt} >= ${now60s}::timestamptz and ${orders.createdAt} < ${now30s}::timestamptz)::int`,
+        currentDelivered: sql<number>`count(*) filter (where ${orders.statusV2} = ANY(${deliveredPgArr}::shipment_status_v2[]) and ${orders.updatedAt} >= ${now30s}::timestamptz)::int`,
+        prevDelivered: sql<number>`count(*) filter (where ${orders.statusV2} = ANY(${deliveredPgArr}::shipment_status_v2[]) and ${orders.updatedAt} >= ${now60s}::timestamptz and ${orders.updatedAt} < ${now30s}::timestamptz)::int`,
+        currentCancelled: sql<number>`count(*) filter (where ${orders.statusV2} = 'CANCELLED' and ${orders.updatedAt} >= ${now30s}::timestamptz)::int`,
+        prevCancelled: sql<number>`count(*) filter (where ${orders.statusV2} = 'CANCELLED' and ${orders.updatedAt} >= ${now60s}::timestamptz and ${orders.updatedAt} < ${now30s}::timestamptz)::int`,
       })
       .from(orders)
       .where(and(isNull(orders.deletedAt), userFilter))
 
-    // ── Period-over-period financial change ────────────────────────────────────
-    const finChangeQuery = needsFinancial
-      ? (isCustomer
-          ? db
-              .select({
-                current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30s}::timestamptz), 0)::text`,
-                prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz), 0)::text`,
-              })
-              .from(payments)
-              .where(and(eq(payments.userId, userId), sql`status = 'successful'`))
-          : db
-              .select({
-                current: sql<string>`coalesce(sum(amount) filter (where created_at >= ${now30s}::timestamptz), 0)::text`,
-                prev:    sql<string>`coalesce(sum(amount) filter (where created_at >= ${now60s}::timestamptz and created_at < ${now30s}::timestamptz), 0)::text`,
-              })
-              .from(payments)
-              .where(sql`status = 'successful'`))
-      : null
-
-    const [statusRows, financialRow, [deliveredToday], [changeRow], finChangeRow] =
+    const [{ rate: fxRateNgnPerUsd, source: fxRateSource }, statusRows, [deliveredToday], [changeRow]] =
       await Promise.all([
+        needsFinancial
+          ? this.resolveFxRate()
+          : Promise.resolve({
+              rate: OFFICIAL_FX_FALLBACK_NGN_PER_USD,
+              source: 'official_fallback' as FxRateSource,
+            }),
         countQuery,
-        financialQuery ? financialQuery : Promise.resolve([]),
         deliveredTodayQuery,
         changeQuery,
-        finChangeQuery ? finChangeQuery : Promise.resolve([]),
       ])
-    const [financial] = financialRow as [{ total: string }?]
-    const [finChange] = finChangeRow as [{ current: string; prev: string }?]
 
-    // Map V2 status rows to named counts (null statusV2 = pre-backfill orders, counted separately)
+    const financialWhere = and(
+      sql`${payments.status} = 'successful'`,
+      isCustomer ? eq(payments.userId, userId) : undefined,
+    )
+
+    const financialQuery = needsFinancial
+      ? db
+          .select({
+            totalUsd: sql<string>`coalesce(sum(case when upper(${payments.currency}) = 'USD' then ${payments.amount} else ${payments.amount} / ${fxRateNgnPerUsd} end), 0)::text`,
+            totalNgn: sql<string>`coalesce(sum(case when upper(${payments.currency}) = 'USD' then ${payments.amount} * ${fxRateNgnPerUsd} else ${payments.amount} end), 0)::text`,
+          })
+          .from(payments)
+          .where(financialWhere)
+      : null
+
+    const finChangeQuery = needsFinancial
+      ? db
+          .select({
+            currentUsd: sql<string>`coalesce(sum(case when upper(${payments.currency}) = 'USD' then ${payments.amount} else ${payments.amount} / ${fxRateNgnPerUsd} end) filter (where ${payments.createdAt} >= ${now30s}::timestamptz), 0)::text`,
+            prevUsd: sql<string>`coalesce(sum(case when upper(${payments.currency}) = 'USD' then ${payments.amount} else ${payments.amount} / ${fxRateNgnPerUsd} end) filter (where ${payments.createdAt} >= ${now60s}::timestamptz and ${payments.createdAt} < ${now30s}::timestamptz), 0)::text`,
+            currentNgn: sql<string>`coalesce(sum(case when upper(${payments.currency}) = 'USD' then ${payments.amount} * ${fxRateNgnPerUsd} else ${payments.amount} end) filter (where ${payments.createdAt} >= ${now30s}::timestamptz), 0)::text`,
+            prevNgn: sql<string>`coalesce(sum(case when upper(${payments.currency}) = 'USD' then ${payments.amount} * ${fxRateNgnPerUsd} else ${payments.amount} end) filter (where ${payments.createdAt} >= ${now60s}::timestamptz and ${payments.createdAt} < ${now30s}::timestamptz), 0)::text`,
+          })
+          .from(payments)
+          .where(financialWhere)
+      : null
+
+    const [financialRow, finChangeRow] = await Promise.all([
+      financialQuery ? financialQuery : Promise.resolve([]),
+      finChangeQuery ? finChangeQuery : Promise.resolve([]),
+    ])
+
+    const [financial] = financialRow as [{ totalUsd: string; totalNgn: string }?]
+    const [finChange] = finChangeRow as [{ currentUsd: string; prevUsd: string; currentNgn: string; prevNgn: string }?]
+
     const countByStatus: Record<string, number> = {}
-    let unmappedCount = 0
-    for (const r of statusRows) {
-      if (r.statusV2 === null) {
-        unmappedCount += r.count
+    let unmappedOrders = 0
+
+    for (const row of statusRows) {
+      if (row.statusV2 === null) {
+        unmappedOrders += row.count
       } else {
-        countByStatus[r.statusV2] = r.count
+        countByStatus[row.statusV2] = row.count
       }
     }
 
-    const activeCount = IN_MOTION_V2.reduce((sum, s) => sum + (countByStatus[s] ?? 0), 0)
-    const pendingCount = PRE_TRANSIT_V2.reduce((sum, s) => sum + (countByStatus[s] ?? 0), 0)
+    const totalOrders = statusRows.reduce((sum, row) => sum + row.count, 0)
+    const cancelledShipmentsCount = countByStatus[ShipmentStatusV2.CANCELLED] ?? 0
+    const totalShipments = totalOrders - cancelledShipmentsCount
+    const activeShipments = IN_MOTION_V2.reduce((sum, status) => sum + (countByStatus[status] ?? 0), 0)
+    const pendingOrders = PRE_TRANSIT_V2.reduce((sum, status) => sum + (countByStatus[status] ?? 0), 0)
+    const deliveryCompletedCount = DELIVERY_COMPLETED_V2.reduce(
+      (sum, status) => sum + (countByStatus[status] ?? 0),
+      0,
+    )
 
-    const finCurrent = parseFloat(finChange?.current ?? '0')
-    const finPrev    = parseFloat(finChange?.prev    ?? '0')
+    const currentUsd = parseNumber(finChange?.currentUsd)
+    const prevUsd = parseNumber(finChange?.prevUsd)
+    const currentNgn = parseNumber(finChange?.currentNgn)
+    const prevNgn = parseNumber(finChange?.prevNgn)
 
     return {
-      totalOrders:          statusRows.reduce((sum, r) => sum + r.count, 0),
-      totalOrdersChange:    calcChange(changeRow?.currentOrders ?? 0, changeRow?.prevOrders ?? 0),
-      activeShipments:         activeCount,
-      activeShipmentsChange:   calcChange(changeRow?.currentActive ?? 0, changeRow?.prevActive ?? 0),
-      pendingOrders:         pendingCount,
-      pendingOrdersChange:   calcChange(changeRow?.currentPending ?? 0, changeRow?.prevPending ?? 0),
-      deliveredToday:        deliveredToday?.count ?? 0,
-      deliveredTotal:        countByStatus[ShipmentStatusV2.PICKED_UP_COMPLETED] ?? 0,
-      deliveredTotalChange:  calcChange(changeRow?.currentDelivered ?? 0, changeRow?.prevDelivered ?? 0),
-      cancelled: countByStatus[ShipmentStatusV2.CANCELLED] ?? 0,
-      // unmappedOrders: orders whose statusV2 is still null (not yet backfilled)
-      unmappedOrders: unmappedCount,
-      // superadmin sees revenueMtd; customer sees totalSpent; staff/admin see neither
+      totalOrders,
+      totalOrdersChange: calcChange(changeRow?.currentOrders ?? 0, changeRow?.prevOrders ?? 0),
+      totalShipments,
+      totalShipmentsChange: calcChange(
+        changeRow?.currentShipments ?? 0,
+        changeRow?.prevShipments ?? 0,
+      ),
+      activeShipments,
+      activeShipmentsChange: calcChange(changeRow?.currentActive ?? 0, changeRow?.prevActive ?? 0),
+      pendingOrders,
+      pendingOrdersChange: calcChange(changeRow?.currentPending ?? 0, changeRow?.prevPending ?? 0),
+      deliveredToday: deliveredToday?.count ?? 0,
+      deliveryCompletedCount,
+      deliveryCompletedCountChange: calcChange(
+        changeRow?.currentDelivered ?? 0,
+        changeRow?.prevDelivered ?? 0,
+      ),
+      // Backward-compatible aliases
+      deliveredTotal: deliveryCompletedCount,
+      deliveredTotalChange: calcChange(
+        changeRow?.currentDelivered ?? 0,
+        changeRow?.prevDelivered ?? 0,
+      ),
+      cancelled: cancelledShipmentsCount,
+      cancelledShipmentsCount,
+      cancelledShipmentsCountChange: calcChange(
+        changeRow?.currentCancelled ?? 0,
+        changeRow?.prevCancelled ?? 0,
+      ),
+      unmappedOrders,
       ...(isCustomer
         ? {
-            totalSpent:       financial?.total ?? '0',
-            totalSpentChange: calcChange(finCurrent, finPrev),
+            totalSpent: financial?.totalUsd ?? '0',
+            totalSpentUsd: financial?.totalUsd ?? '0',
+            totalSpentNgn: financial?.totalNgn ?? '0',
+            totalSpentChange: calcChange(currentUsd, prevUsd),
+            totalSpentUsdChange: calcChange(currentUsd, prevUsd),
+            totalSpentNgnChange: calcChange(currentNgn, prevNgn),
+            fxRateNgnPerUsd: fxRateNgnPerUsd.toFixed(4),
+            fxRateSource,
           }
         : isSuperAdmin
           ? {
-              revenueMtd:       financial?.total ?? '0',
-              revenueMtdChange: calcChange(finCurrent, finPrev),
+              revenueMtd: financial?.totalNgn ?? '0',
+              revenueMtdChange: calcChange(currentNgn, prevNgn),
+              revenueUsd: financial?.totalUsd ?? '0',
+              revenueNgn: financial?.totalNgn ?? '0',
+              revenueUsdChange: calcChange(currentUsd, prevUsd),
+              revenueNgnChange: calcChange(currentNgn, prevNgn),
+              fxRateNgnPerUsd: fxRateNgnPerUsd.toFixed(4),
+              fxRateSource,
             }
           : {}),
     }
   }
 
   /**
-   * Shipment trends — monthly weight totals split by delivered vs active.
-   * Y=weight (kg), X=month (1–12 for the given year).
-   *
-   * Returns all 12 months, defaulting to "0" for months with no data.
+   * Shipment frequency trend over a rolling month window.
+   * Default window is last 3 months (including current month).
    */
-  async getTrends(userId: string, role: string, year: number) {
+  async getTrends(userId: string, role: string, months: number) {
     const isCustomer = role === UserRole.USER || role === UserRole.SUPPLIER
-    const yearStart = new Date(`${year}-01-01T00:00:00Z`)
-    const yearEnd   = new Date(`${year + 1}-01-01T00:00:00Z`)
+    const rangeMonths = clampMonths(months)
+
+    const now = new Date()
+    const currentMonthStart = monthStartUtc(now)
+    const rangeStart = addUtcMonths(currentMonthStart, -(rangeMonths - 1))
+    const rangeEnd = addUtcMonths(currentMonthStart, 1)
+    const deliveredPgArr = `{${DELIVERY_COMPLETED_V2.join(',')}}`
+    const nonTerminalPgArr = `{${NON_TERMINAL_V2.join(',')}}`
 
     const rows = await db
       .select({
-        month: sql<number>`extract(month from created_at)::int`,
-        statusV2: orders.statusV2,
-        totalWeight: sql<string>`coalesce(sum(weight), 0)::text`,
+        period: sql<string>`to_char(date_trunc('month', ${orders.createdAt}), 'YYYY-MM')`,
+        year: sql<number>`extract(year from ${orders.createdAt})::int`,
+        month: sql<number>`extract(month from ${orders.createdAt})::int`,
+        totalShipmentCount: sql<number>`count(*) filter (where (${orders.statusV2} is null or ${orders.statusV2} <> 'CANCELLED') )::int`,
+        cancelledShipmentCount: sql<number>`count(*) filter (where ${orders.statusV2} = 'CANCELLED')::int`,
+        deliveryCompletedCount: sql<number>`count(*) filter (where ${orders.statusV2} = ANY(${deliveredPgArr}::shipment_status_v2[]))::int`,
+        deliveredWeight: sql<string>`coalesce(sum(${orders.weight}) filter (where ${orders.statusV2} = ANY(${deliveredPgArr}::shipment_status_v2[])), 0)::text`,
+        activeWeight: sql<string>`coalesce(sum(${orders.weight}) filter (where ${orders.statusV2} = ANY(${nonTerminalPgArr}::shipment_status_v2[])), 0)::text`,
+        totalWeight: sql<string>`coalesce(sum(${orders.weight}) filter (where (${orders.statusV2} is null or ${orders.statusV2} <> 'CANCELLED')), 0)::text`,
       })
       .from(orders)
       .where(
         and(
           isNull(orders.deletedAt),
-          gte(orders.createdAt, yearStart),
-          lt(orders.createdAt, yearEnd),
+          gte(orders.createdAt, rangeStart),
+          lt(orders.createdAt, rangeEnd),
           isCustomer ? eq(orders.senderId, userId) : undefined,
         ),
       )
-      .groupBy(sql`extract(month from created_at)`, orders.statusV2)
+      .groupBy(sql`date_trunc('month', ${orders.createdAt})`)
+      .orderBy(sql`date_trunc('month', ${orders.createdAt}) asc`)
 
-    // Build 12-month array
-    const result = Array.from({ length: 12 }, (_, i) => ({
-      month: i + 1,
-      deliveredWeight: '0',
-      activeWeight: '0',
-    }))
+    const byPeriod = new Map(rows.map((row) => [row.period, row]))
+    const result: Array<{
+      period: string
+      year: number
+      month: number
+      totalShipmentCount: number
+      cancelledShipmentCount: number
+      deliveryCompletedCount: number
+      deliveredWeight: string
+      activeWeight: string
+      totalWeight: string
+    }> = []
 
-    for (const row of rows) {
-      const idx = row.month - 1
-      if (row.statusV2 === ShipmentStatusV2.PICKED_UP_COMPLETED) {
-        result[idx].deliveredWeight = row.totalWeight
-      } else if (row.statusV2 && (NON_TERMINAL_V2 as string[]).includes(row.statusV2)) {
-        const prev = parseFloat(result[idx].activeWeight)
-        result[idx].activeWeight = (prev + parseFloat(row.totalWeight)).toFixed(2)
-      }
+    for (let i = 0; i < rangeMonths; i += 1) {
+      const bucketDate = addUtcMonths(rangeStart, i)
+      const key = periodKey(bucketDate)
+      const row = byPeriod.get(key)
+
+      result.push({
+        period: key,
+        year: bucketDate.getUTCFullYear(),
+        month: bucketDate.getUTCMonth() + 1,
+        totalShipmentCount: row?.totalShipmentCount ?? 0,
+        cancelledShipmentCount: row?.cancelledShipmentCount ?? 0,
+        deliveryCompletedCount: row?.deliveryCompletedCount ?? 0,
+        deliveredWeight: row?.deliveredWeight ?? '0',
+        activeWeight: row?.activeWeight ?? '0',
+        totalWeight: row?.totalWeight ?? '0',
+      })
     }
 
     return result
   }
 
-  /**
-   * Active deliveries — current non-terminal orders grouped by destination.
-   * Status: on_time (ETA >= now), delayed (ETA < now and not null), unknown (no ETA).
-   *
-   * Staff/superadmin: all orders. Customer/supplier: their own.
-   */
   async getActiveDeliveries(userId: string, role: string) {
     const isCustomer = role === UserRole.USER || role === UserRole.SUPPLIER
     const now = new Date()
@@ -268,14 +361,14 @@ export class DashboardService {
         destination: orders.destination,
         shipmentType: orders.shipmentType,
         count: sql<number>`count(*)::int`,
-        nextEta: sql<string | null>`min(eta)::text`,
-        minEta: sql<Date | null>`min(eta)`,
+        nextEta: sql<string | null>`min(${orders.eta})::text`,
+        minEta: sql<Date | null>`min(${orders.eta})`,
       })
       .from(orders)
       .where(
         and(
           isNull(orders.deletedAt),
-          sql`status_v2 = ANY(${nonTerminalPgArr}::shipment_status_v2[])`,
+          sql`${orders.statusV2} = ANY(${nonTerminalPgArr}::shipment_status_v2[])`,
           isCustomer ? eq(orders.senderId, userId) : undefined,
         ),
       )
