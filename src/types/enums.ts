@@ -120,3 +120,30 @@ export enum PreferredLanguage {
   EN = 'en',
   KO = 'ko',
 }
+
+export enum GalleryItemType {
+  ANONYMOUS_GOODS = 'anonymous_goods',
+  CAR = 'car',
+  ADVERT = 'advert',
+}
+
+export enum GalleryItemStatus {
+  DRAFT = 'draft',
+  PUBLISHED = 'published',
+  CLAIM_PENDING = 'claim_pending',
+  CLAIMED = 'claimed',
+  CAR_RESERVED = 'car_reserved',
+  CAR_SOLD = 'car_sold',
+  ARCHIVED = 'archived',
+}
+
+export enum GalleryClaimType {
+  OWNERSHIP = 'ownership',
+  CAR_PURCHASE = 'car_purchase',
+}
+
+export enum GalleryClaimStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+}
