@@ -3,7 +3,7 @@ import { usersService } from '../services/users.service'
 import { generateGdprExportPdf } from '../services/pdf-export.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
-import { PreferredLanguage, UserRole } from '../types/enums'
+import { PreferredLanguage, SupplierUpdateRequestStatus, UserRole } from '../types/enums'
 import type { PaginationParams } from '../types'
 
 export const usersController = {
@@ -203,6 +203,109 @@ export const usersController = {
     return reply.send(successResponse(result.data))
   },
 
+  async requestMySupplierUpdate(
+    request: FastifyRequest<{
+      Params: { supplierId: string }
+      Body: {
+        firstName?: string | null
+        lastName?: string | null
+        businessName?: string | null
+        phone?: string | null
+        email?: string | null
+        note?: string | null
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    if (request.user.role !== UserRole.USER) {
+      return reply.code(403).send({
+        success: false,
+        message: 'Only customers can submit supplier info update requests.',
+      })
+    }
+
+    const result = await usersService.requestSupplierInfoUpdate({
+      requesterUserId: request.user.id,
+      supplierId: request.params.supplierId,
+      firstName: request.body.firstName,
+      lastName: request.body.lastName,
+      businessName: request.body.businessName,
+      phone: request.body.phone,
+      email: request.body.email,
+      note: request.body.note,
+    })
+
+    return reply.code(201).send(successResponse(result))
+  },
+
+  async listMySupplierUpdateRequests(
+    request: FastifyRequest<{
+      Querystring: { page?: string; limit?: string; status?: SupplierUpdateRequestStatus }
+    }>,
+    reply: FastifyReply,
+  ) {
+    if (request.user.role !== UserRole.USER) {
+      return reply.code(403).send({
+        success: false,
+        message: 'Only customers can view customer-side supplier update requests.',
+      })
+    }
+
+    const result = await usersService.listMySupplierUpdateRequests(request.user.id, {
+      page: Number(request.query.page) || 1,
+      limit: Number(request.query.limit) || 20,
+      status: request.query.status,
+    })
+
+    return reply.send(successResponse(result))
+  },
+
+  async listIncomingSupplierUpdateRequests(
+    request: FastifyRequest<{
+      Querystring: { page?: string; limit?: string; status?: SupplierUpdateRequestStatus }
+    }>,
+    reply: FastifyReply,
+  ) {
+    if (request.user.role !== UserRole.SUPPLIER) {
+      return reply.code(403).send({
+        success: false,
+        message: 'Only suppliers can view incoming supplier validation requests.',
+      })
+    }
+
+    const result = await usersService.listIncomingSupplierUpdateRequests(request.user.id, {
+      page: Number(request.query.page) || 1,
+      limit: Number(request.query.limit) || 20,
+      status: request.query.status,
+    })
+
+    return reply.send(successResponse(result))
+  },
+
+  async validateIncomingSupplierUpdateRequest(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: { isTrue: boolean; note?: string | null }
+    }>,
+    reply: FastifyReply,
+  ) {
+    if (request.user.role !== UserRole.SUPPLIER) {
+      return reply.code(403).send({
+        success: false,
+        message: 'Only suppliers can validate update requests.',
+      })
+    }
+
+    const result = await usersService.validateSupplierUpdateRequest({
+      requestId: request.params.id,
+      supplierId: request.user.id,
+      isTrue: request.body.isTrue,
+      note: request.body.note,
+    })
+
+    return reply.send(successResponse(result))
+  },
+
   async listUsers(
     request: FastifyRequest<{
       Querystring: PaginationParams & { role?: string; isActive?: boolean }
@@ -336,6 +439,76 @@ export const usersController = {
     })
 
     return reply.send(successResponse(updated))
+  },
+
+  async setStaffClientLoginProvisionPermission(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: { canProvisionClientLogin: boolean }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await usersService.setStaffClientLoginProvisionPermission(
+      request.params.id,
+      request.body.canProvisionClientLogin,
+    )
+
+    if (result.status === 'not_found') {
+      return reply.code(404).send({ success: false, message: 'User not found' })
+    }
+
+    if (result.status === 'invalid_role') {
+      return reply.code(422).send({
+        success: false,
+        message: 'Permission can only be assigned to staff accounts.',
+      })
+    }
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: `${request.body.canProvisionClientLogin ? 'Granted' : 'Revoked'} client login-link provisioning permission`,
+      resourceType: 'user',
+      resourceId: request.params.id,
+      request,
+      metadata: { canProvisionClientLogin: request.body.canProvisionClientLogin },
+    })
+
+    return reply.send(successResponse(result.data))
+  },
+
+  async setStaffShipmentBatchPermission(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: { canManageShipmentBatches: boolean }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await usersService.setStaffShipmentBatchPermission(
+      request.params.id,
+      request.body.canManageShipmentBatches,
+    )
+
+    if (result.status === 'not_found') {
+      return reply.code(404).send({ success: false, message: 'User not found' })
+    }
+
+    if (result.status === 'invalid_role') {
+      return reply.code(422).send({
+        success: false,
+        message: 'Shipment batch permission can only be assigned to staff accounts.',
+      })
+    }
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: `${request.body.canManageShipmentBatches ? 'Granted' : 'Revoked'} shipment batch management permission`,
+      resourceType: 'user',
+      resourceId: request.params.id,
+      request,
+      metadata: { canManageShipmentBatches: request.body.canManageShipmentBatches },
+    })
+
+    return reply.send(successResponse(result.data))
   },
 
   async deleteUser(

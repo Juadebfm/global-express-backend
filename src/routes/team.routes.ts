@@ -13,6 +13,8 @@ const teamMemberSchema = z.object({
   displayName: z.string().nullable().describe('Derived: firstName + lastName, or null'),
   role: z.enum(['superadmin', 'staff']),
   isActive: z.boolean(),
+  canProvisionClientLogin: z.boolean(),
+  canManageShipmentBatches: z.boolean(),
   permissions: z.array(z.string()).describe('Derived list of permission labels for this role'),
   createdAt: z.string(),
   updatedAt: z.string(),

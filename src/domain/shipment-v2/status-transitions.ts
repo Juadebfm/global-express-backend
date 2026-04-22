@@ -38,6 +38,7 @@ const SEA_FLOW: readonly ShipmentStatusV2[] = [
 ]
 
 const D2D_LAST_MILE_FLOW: readonly ShipmentStatusV2[] = [
+  ShipmentStatusV2.IN_EXTRA_TRUCK_MOVEMENT_LAGOS,
   ShipmentStatusV2.LOCAL_COURIER_ASSIGNED,
   ShipmentStatusV2.IN_TRANSIT_TO_DESTINATION_CITY,
   ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY,
@@ -94,6 +95,7 @@ export function canTransitionSequentially(
   currentStatus: ShipmentStatusV2 | null,
   nextStatus: ShipmentStatusV2,
   shipmentType?: ShipmentType | 'air' | 'ocean' | 'd2d' | null,
+  options?: { allowSkipExtraTruckMovement?: boolean },
 ): boolean {
   if (isExceptionStatus(nextStatus)) return true
   if (currentStatus && isExceptionStatus(currentStatus)) return true
@@ -107,7 +109,18 @@ export function canTransitionSequentially(
   const currentIdx = flow.indexOf(currentStatus)
   if (currentIdx < 0) return false
 
-  return nextIdx === currentIdx + 1
+  if (nextIdx === currentIdx + 1) return true
+
+  if (
+    options?.allowSkipExtraTruckMovement &&
+    currentStatus === ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE &&
+    nextStatus === ShipmentStatusV2.LOCAL_COURIER_ASSIGNED &&
+    flow.includes(ShipmentStatusV2.IN_EXTRA_TRUCK_MOVEMENT_LAGOS)
+  ) {
+    return true
+  }
+
+  return false
 }
 
 export function getInitialStatusForMode(mode: TransportMode): ShipmentStatusV2 {

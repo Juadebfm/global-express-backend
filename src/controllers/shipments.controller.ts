@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { shipmentsService } from '../services/shipments.service'
 import { dispatchBatchesService } from '../services/dispatch-batches.service'
 import { d2dOperationsService } from '../services/d2d-operations.service'
+import { ordersService } from '../services/orders.service'
 import { successResponse } from '../utils/response'
 import { createAuditLog } from '../utils/audit'
 import {
@@ -13,6 +14,26 @@ import {
   TransportMode,
   UserRole,
 } from '../types/enums'
+
+async function ensureCanManageShipmentBatches(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<boolean> {
+  const canManage = await dispatchBatchesService.canActorManageShipmentBatches(
+    request.user.id,
+    request.user.role as UserRole,
+  )
+
+  if (!canManage) {
+    await reply.code(403).send({
+      success: false,
+      message:
+        'Forbidden — only superadmin or staff granted shipment batch permission can perform this action.',
+    })
+  }
+
+  return canManage
+}
 
 export const shipmentsController = {
   async list(
@@ -61,6 +82,7 @@ export const shipmentsController = {
           weightKg?: number
           cbm?: number
           itemCostUsd?: number
+          requiresExtraTruckMovement?: boolean
         }>
       }
     }>,
@@ -118,6 +140,10 @@ export const shipmentsController = {
     request: FastifyRequest<{ Params: { batchId: string } }>,
     reply: FastifyReply,
   ) {
+    if (!(await ensureCanManageShipmentBatches(request, reply))) {
+      return
+    }
+
     const updated = await dispatchBatchesService.approveCutoff(
       request.params.batchId,
       request.user.id,
@@ -137,6 +163,179 @@ export const shipmentsController = {
     })
 
     return reply.send(successResponse(updated))
+  },
+
+  async updateBatchCarrierInfo(
+    request: FastifyRequest<{
+      Params: { batchId: string }
+      Body: {
+        carrierName?: string | null
+        airlineTrackingNumber?: string | null
+        oceanTrackingNumber?: string | null
+        d2dTrackingNumber?: string | null
+        voyageOrFlightNumber?: string | null
+        estimatedDepartureAt?: string | null
+        estimatedArrivalAt?: string | null
+        notes?: string | null
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    if (!(await ensureCanManageShipmentBatches(request, reply))) {
+      return
+    }
+
+    const hasEstimatedDepartureAt = Object.prototype.hasOwnProperty.call(
+      request.body,
+      'estimatedDepartureAt',
+    )
+    const hasEstimatedArrivalAt = Object.prototype.hasOwnProperty.call(
+      request.body,
+      'estimatedArrivalAt',
+    )
+
+    try {
+      const payload = await dispatchBatchesService.updateBatchCarrierInfo({
+        batchId: request.params.batchId,
+        updatedBy: request.user.id,
+        carrierName: request.body.carrierName,
+        airlineTrackingNumber: request.body.airlineTrackingNumber,
+        oceanTrackingNumber: request.body.oceanTrackingNumber,
+        d2dTrackingNumber: request.body.d2dTrackingNumber,
+        voyageOrFlightNumber: request.body.voyageOrFlightNumber,
+        ...(hasEstimatedDepartureAt
+          ? {
+              estimatedDepartureAt: request.body.estimatedDepartureAt
+                ? new Date(request.body.estimatedDepartureAt)
+                : null,
+            }
+          : {}),
+        ...(hasEstimatedArrivalAt
+          ? {
+              estimatedArrivalAt: request.body.estimatedArrivalAt
+                ? new Date(request.body.estimatedArrivalAt)
+                : null,
+            }
+          : {}),
+        notes: request.body.notes,
+      })
+
+      if (!payload) {
+        return reply.code(404).send({ success: false, message: 'Dispatch batch not found' })
+      }
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: `Updated carrier info for dispatch batch ${request.params.batchId}`,
+        resourceType: 'dispatch_batch',
+        resourceId: request.params.batchId,
+        request,
+        metadata: {
+          carrierName: payload.carrierName,
+          airlineTrackingNumber: payload.airlineTrackingNumber,
+          oceanTrackingNumber: payload.oceanTrackingNumber,
+          d2dTrackingNumber: payload.d2dTrackingNumber,
+          voyageOrFlightNumber: payload.voyageOrFlightNumber,
+        },
+      })
+
+      return reply.send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to update carrier info.'
+      return reply.code(400).send({ success: false, message })
+    }
+  },
+
+  async updateBatchStatus(
+    request: FastifyRequest<{
+      Params: { batchId: string }
+      Body: { statusV2: ShipmentStatusV2 }
+    }>,
+    reply: FastifyReply,
+  ) {
+    if (!(await ensureCanManageShipmentBatches(request, reply))) {
+      return
+    }
+
+    try {
+      const payload = await ordersService.updateBatchStatus({
+        batchId: request.params.batchId,
+        statusV2: request.body.statusV2,
+        updatedBy: request.user.id,
+        actorRole: request.user.role as UserRole,
+        actorCanManageShipmentBatches: true,
+      })
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: `Updated dispatch batch ${request.params.batchId} status to ${request.body.statusV2}`,
+        resourceType: 'dispatch_batch',
+        resourceId: request.params.batchId,
+        request,
+        metadata: {
+          statusV2: request.body.statusV2,
+          updatedCount: payload.updatedCount,
+        },
+      })
+
+      return reply.send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Batch status update failed'
+      const statusCode = message === 'No shipments found in this batch.' ? 404 : 400
+      return reply.code(statusCode).send({ success: false, message })
+    }
+  },
+
+  async moveGoodsToNextBatch(
+    request: FastifyRequest<{
+      Params: { batchId: string }
+      Body: {
+        orderId: string
+        supplierId?: string
+        packageIds?: string[]
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    if (!(await ensureCanManageShipmentBatches(request, reply))) {
+      return
+    }
+
+    try {
+      const payload = await dispatchBatchesService.moveGoodsToNextBatch({
+        sourceBatchId: request.params.batchId,
+        orderId: request.body.orderId,
+        movedBy: request.user.id,
+        supplierId: request.body.supplierId,
+        packageIds: request.body.packageIds,
+      })
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: `Moved goods from batch ${request.params.batchId} to next batch`,
+        resourceType: 'dispatch_batch',
+        resourceId: request.params.batchId,
+        request,
+        metadata: {
+          orderId: request.body.orderId,
+          supplierId: request.body.supplierId ?? null,
+          packageIds: request.body.packageIds ?? [],
+          movedPackageCount: payload.movedPackageCount,
+          nextBatchId: payload.nextBatchId,
+          nextBatchMasterTrackingNumber: payload.nextBatchMasterTrackingNumber,
+        },
+      })
+
+      return reply.send(successResponse(payload))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to move goods to next batch.'
+      const notFoundMessages = new Set([
+        'Order not found in the specified batch.',
+        'Source batch not found.',
+      ])
+      const statusCode = notFoundMessages.has(message) ? 404 : 400
+      return reply.code(statusCode).send({ success: false, message })
+    }
   },
 
   async upsertMeasurement(

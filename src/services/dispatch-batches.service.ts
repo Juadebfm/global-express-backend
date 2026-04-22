@@ -20,6 +20,7 @@ import {
   UserRole,
 } from '../types/enums'
 import { settingsFxRateService } from './settings-fx-rate.service'
+import { generateTrackingNumber } from '../utils/tracking'
 
 const FINALIZABLE_INVOICE_STATUSES: Array<'draft' | 'finalized'> = ['draft', 'finalized']
 const DEPARTED_STATUSES = new Set<ShipmentStatusV2>([
@@ -45,6 +46,7 @@ export interface IntakeGoodsInput {
     weightKg?: number
     cbm?: number
     itemCostUsd?: number
+    requiresExtraTruckMovement?: boolean
   }>
 }
 
@@ -62,6 +64,13 @@ function inferShipmentType(mode: TransportMode, requestedType?: ShipmentType): S
 function toNumericString(value: number | null | undefined, decimals = 2): string | null {
   if (value === null || value === undefined || Number.isNaN(value)) return null
   return value.toFixed(decimals)
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 function toNumber(value: string | number | null | undefined): number {
@@ -112,10 +121,57 @@ export class DispatchBatchesService {
           isNull(dispatchBatches.deletedAt),
         ),
       )
-      .orderBy(desc(dispatchBatches.createdAt))
+      // "Current" batch = oldest open batch in this mode.
+      .orderBy(dispatchBatches.createdAt)
       .limit(1)
 
     if (existing) return existing
+
+    const [created] = await db
+      .insert(dispatchBatches)
+      .values({
+        masterTrackingNumber: generateMasterTrackingNumber(),
+        transportMode: mode,
+        status: 'open',
+        createdBy: actorId,
+      })
+      .returning()
+
+    return created
+  }
+
+  async canActorManageShipmentBatches(actorId: string, actorRole: UserRole): Promise<boolean> {
+    if (actorRole === UserRole.SUPER_ADMIN) return true
+    if (actorRole !== UserRole.STAFF) return false
+
+    const [actor] = await db
+      .select({
+        role: users.role,
+        canManageShipmentBatches: users.canManageShipmentBatches,
+      })
+      .from(users)
+      .where(and(eq(users.id, actorId), isNull(users.deletedAt)))
+      .limit(1)
+
+    return Boolean(actor && actor.role === UserRole.STAFF && actor.canManageShipmentBatches)
+  }
+
+  async getOrCreateFutureBatch(mode: TransportMode, actorId: string, currentBatchId: string) {
+    const [existingFuture] = await db
+      .select()
+      .from(dispatchBatches)
+      .where(
+        and(
+          eq(dispatchBatches.transportMode, mode),
+          eq(dispatchBatches.status, 'open'),
+          isNull(dispatchBatches.deletedAt),
+          sql`${dispatchBatches.id} <> ${currentBatchId}`,
+        ),
+      )
+      .orderBy(desc(dispatchBatches.createdAt))
+      .limit(1)
+
+    if (existingFuture) return existingFuture
 
     const [created] = await db
       .insert(dispatchBatches)
@@ -171,6 +227,61 @@ export class DispatchBatchesService {
       .returning()
 
     return updated ?? null
+  }
+
+  async updateBatchCarrierInfo(params: {
+    batchId: string
+    updatedBy: string
+    carrierName?: string | null
+    airlineTrackingNumber?: string | null
+    oceanTrackingNumber?: string | null
+    d2dTrackingNumber?: string | null
+    voyageOrFlightNumber?: string | null
+    estimatedDepartureAt?: Date | null
+    estimatedArrivalAt?: Date | null
+    notes?: string | null
+  }) {
+    const patch: Record<string, unknown> = {
+      updatedAt: new Date(),
+    }
+
+    const carrierName = normalizeOptionalText(params.carrierName)
+    if (carrierName !== undefined) patch.carrierName = carrierName
+
+    const airlineTrackingNumber = normalizeOptionalText(params.airlineTrackingNumber)
+    if (airlineTrackingNumber !== undefined) patch.airlineTrackingNumber = airlineTrackingNumber
+
+    const oceanTrackingNumber = normalizeOptionalText(params.oceanTrackingNumber)
+    if (oceanTrackingNumber !== undefined) patch.oceanTrackingNumber = oceanTrackingNumber
+
+    const d2dTrackingNumber = normalizeOptionalText(params.d2dTrackingNumber)
+    if (d2dTrackingNumber !== undefined) patch.d2dTrackingNumber = d2dTrackingNumber
+
+    const voyageOrFlightNumber = normalizeOptionalText(params.voyageOrFlightNumber)
+    if (voyageOrFlightNumber !== undefined) patch.voyageOrFlightNumber = voyageOrFlightNumber
+
+    if (params.estimatedDepartureAt !== undefined) {
+      patch.estimatedDepartureAt = params.estimatedDepartureAt
+    }
+    if (params.estimatedArrivalAt !== undefined) {
+      patch.estimatedArrivalAt = params.estimatedArrivalAt
+    }
+
+    const notes = normalizeOptionalText(params.notes)
+    if (notes !== undefined) patch.notes = notes
+
+    if (Object.keys(patch).length === 1) {
+      throw new Error('Provide at least one field to update.')
+    }
+
+    const [updated] = await db
+      .update(dispatchBatches)
+      .set(patch)
+      .where(and(eq(dispatchBatches.id, params.batchId), isNull(dispatchBatches.deletedAt)))
+      .returning()
+
+    if (!updated) return null
+    return this.mapBatch(updated)
   }
 
   async ensureDraftInvoiceForOrder(params: {
@@ -445,6 +556,7 @@ export class DispatchBatchesService {
       cbm: toNumericString(item.cbm, 6),
       arrivalAt: now,
       itemCostUsd: toNumericString(item.itemCostUsd, 2),
+      requiresExtraTruckMovement: item.requiresExtraTruckMovement ?? false,
       createdBy: input.createdBy,
       updatedBy: input.createdBy,
     }))
@@ -583,6 +695,7 @@ export class DispatchBatchesService {
             weightKg: orderPackages.weightKg,
             cbm: orderPackages.cbm,
             itemCostUsd: orderPackages.itemCostUsd,
+            requiresExtraTruckMovement: orderPackages.requiresExtraTruckMovement,
             arrivalAt: orderPackages.arrivalAt,
             supplierId: users.id,
             supplierFirstName: users.firstName,
@@ -634,6 +747,7 @@ export class DispatchBatchesService {
         weightKg: g.weightKg,
         cbm: g.cbm,
         itemCostUsd: g.itemCostUsd,
+        requiresExtraTruckMovement: g.requiresExtraTruckMovement,
         arrivalAt: g.arrivalAt?.toISOString() ?? null,
         supplierId: g.supplierId,
         supplierName: formatUserDisplayName({
@@ -654,16 +768,7 @@ export class DispatchBatchesService {
     }))
 
     return {
-      batch: {
-        id: batch.id,
-        masterTrackingNumber: batch.masterTrackingNumber,
-        transportMode: batch.transportMode,
-        status: batch.status,
-        cutoffRequestedAt: batch.cutoffRequestedAt?.toISOString() ?? null,
-        cutoffApprovedAt: batch.cutoffApprovedAt?.toISOString() ?? null,
-        closedAt: batch.closedAt?.toISOString() ?? null,
-        createdAt: batch.createdAt.toISOString(),
-      },
+      batch: this.mapBatch(batch),
       shipments,
     }
   }
@@ -688,6 +793,297 @@ export class DispatchBatchesService {
 
     if (!summary || summary.successfulCount === 0) return 'pending'
     return 'completed'
+  }
+
+  async moveGoodsToNextBatch(params: {
+    sourceBatchId: string
+    orderId: string
+    movedBy: string
+    supplierId?: string
+    packageIds?: string[]
+  }) {
+    const [sourceOrder] = await db
+      .select()
+      .from(orders)
+      .where(
+        and(
+          eq(orders.id, params.orderId),
+          eq(orders.dispatchBatchId, params.sourceBatchId),
+          isNull(orders.deletedAt),
+        ),
+      )
+      .limit(1)
+
+    if (!sourceOrder) {
+      throw new Error('Order not found in the specified batch.')
+    }
+
+    if (!sourceOrder.transportMode) {
+      throw new Error('Order has no transport mode and cannot be moved between batches.')
+    }
+
+    const [sourceBatch] = await db
+      .select()
+      .from(dispatchBatches)
+      .where(and(eq(dispatchBatches.id, params.sourceBatchId), isNull(dispatchBatches.deletedAt)))
+      .limit(1)
+
+    if (!sourceBatch) {
+      throw new Error('Source batch not found.')
+    }
+
+    if (sourceBatch.status === 'closed') {
+      throw new Error('Closed batches cannot be modified.')
+    }
+
+    if (params.supplierId && params.packageIds && params.packageIds.length > 0) {
+      throw new Error('Provide either supplierId or packageIds, not both.')
+    }
+
+    const allPackages = await db
+      .select()
+      .from(orderPackages)
+      .where(eq(orderPackages.orderId, sourceOrder.id))
+
+    if (allPackages.length === 0) {
+      throw new Error('Order has no goods lines to move.')
+    }
+
+    let selected = allPackages
+    if (params.supplierId) {
+      selected = allPackages.filter((pkg) => pkg.supplierId === params.supplierId)
+    }
+    if (params.packageIds && params.packageIds.length > 0) {
+      const allowed = new Set(params.packageIds)
+      selected = allPackages.filter((pkg) => allowed.has(pkg.id))
+    }
+
+    if (selected.length === 0) {
+      throw new Error('No goods lines matched the selection.')
+    }
+
+    const nextBatch = await this.getOrCreateFutureBatch(
+      sourceOrder.transportMode as TransportMode,
+      params.movedBy,
+      params.sourceBatchId,
+    )
+
+    const allSelected = selected.length === allPackages.length
+    const selectedIds = selected.map((pkg) => pkg.id)
+
+    const [compatibleTarget] = await db
+      .select()
+      .from(orders)
+      .where(
+        and(
+          eq(orders.dispatchBatchId, nextBatch.id),
+          eq(orders.senderId, sourceOrder.senderId),
+          eq(orders.transportMode, sourceOrder.transportMode),
+          sourceOrder.shipmentType
+            ? eq(orders.shipmentType, sourceOrder.shipmentType)
+            : isNull(orders.shipmentType),
+          eq(orders.shipmentPayer, sourceOrder.shipmentPayer),
+          sourceOrder.billingSupplierId
+            ? eq(orders.billingSupplierId, sourceOrder.billingSupplierId)
+            : isNull(orders.billingSupplierId),
+          isNull(orders.deletedAt),
+        ),
+      )
+      .limit(1)
+
+    let targetOrder = compatibleTarget
+
+    if (allSelected && !targetOrder) {
+      const [movedWhole] = await db
+        .update(orders)
+        .set({
+          dispatchBatchId: nextBatch.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, sourceOrder.id))
+        .returning()
+
+      await this.recomputeOrderTotalsAndInvoice(sourceOrder.id, params.movedBy)
+
+      return {
+        sourceBatchId: params.sourceBatchId,
+        nextBatchId: nextBatch.id,
+        nextBatchMasterTrackingNumber: nextBatch.masterTrackingNumber,
+        sourceOrderId: sourceOrder.id,
+        targetOrderId: movedWhole?.id ?? sourceOrder.id,
+        movedPackageCount: selected.length,
+        movedPackageIds: selectedIds,
+        movedWholeOrder: true,
+      }
+    }
+
+    if (!targetOrder) {
+      const [createdTarget] = await db
+        .insert(orders)
+        .values({
+          trackingNumber: generateTrackingNumber(),
+          senderId: sourceOrder.senderId,
+          recipientName: sourceOrder.recipientName,
+          recipientAddress: sourceOrder.recipientAddress,
+          recipientPhone: sourceOrder.recipientPhone,
+          recipientEmail: sourceOrder.recipientEmail,
+          origin: sourceOrder.origin,
+          destination: sourceOrder.destination,
+          orderDirection: sourceOrder.orderDirection,
+          weight: sourceOrder.weight,
+          declaredValue: sourceOrder.declaredValue,
+          description: sourceOrder.description,
+          shipmentType: sourceOrder.shipmentType,
+          shipmentPayer: sourceOrder.shipmentPayer,
+          billingSupplierId: sourceOrder.billingSupplierId,
+          departureDate: sourceOrder.departureDate,
+          eta: sourceOrder.eta,
+          transportMode: sourceOrder.transportMode,
+          isPreorder: sourceOrder.isPreorder,
+          statusV2: sourceOrder.statusV2,
+          customerStatusV2: sourceOrder.customerStatusV2,
+          createdBy: params.movedBy,
+          dispatchBatchId: nextBatch.id,
+          packageCount: 0,
+        })
+        .returning()
+
+      targetOrder = createdTarget
+    }
+
+    await db
+      .update(orderPackages)
+      .set({
+        orderId: targetOrder.id,
+        updatedBy: params.movedBy,
+        updatedAt: new Date(),
+      })
+      .where(inArray(orderPackages.id, selectedIds))
+
+    await this.recomputeOrderTotalsAndInvoice(targetOrder.id, params.movedBy)
+    await this.recomputeOrderTotalsAndInvoice(sourceOrder.id, params.movedBy)
+
+    return {
+      sourceBatchId: params.sourceBatchId,
+      nextBatchId: nextBatch.id,
+      nextBatchMasterTrackingNumber: nextBatch.masterTrackingNumber,
+      sourceOrderId: sourceOrder.id,
+      targetOrderId: targetOrder.id,
+      movedPackageCount: selected.length,
+      movedPackageIds: selectedIds,
+      movedWholeOrder: allSelected,
+    }
+  }
+
+  private async recomputeOrderTotalsAndInvoice(orderId: string, actorId: string) {
+    const [order] = await db
+      .select({
+        id: orders.id,
+        senderId: orders.senderId,
+        transportMode: orders.transportMode,
+        shipmentPayer: orders.shipmentPayer,
+        billingSupplierId: orders.billingSupplierId,
+      })
+      .from(orders)
+      .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order) return
+
+    const packages = await db
+      .select({
+        weightKg: orderPackages.weightKg,
+        cbm: orderPackages.cbm,
+      })
+      .from(orderPackages)
+      .where(eq(orderPackages.orderId, orderId))
+
+    if (packages.length === 0) {
+      await db
+        .update(orders)
+        .set({
+          packageCount: 0,
+          weight: '0',
+          deletedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId))
+      return
+    }
+
+    const totalWeightKg = round2(
+      packages.reduce((sum, pkg) => sum + toNumber(pkg.weightKg), 0),
+    )
+    const totalCbm = round2(
+      packages.reduce((sum, pkg) => sum + toNumber(pkg.cbm), 0),
+    )
+
+    await db
+      .update(orders)
+      .set({
+        packageCount: packages.length,
+        weight: totalWeightKg.toFixed(3),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+
+    if (!order.transportMode) return
+
+    const mode = order.transportMode as TransportMode
+    const chargeableWeight =
+      mode === TransportMode.AIR
+        ? round2(
+            packages.reduce((sum, pkg) => {
+              const actual = toNumber(pkg.weightKg)
+              const cbm = toNumber(pkg.cbm)
+              const volumetric = cbm > 0 ? (cbm * 1_000_000) / 6000 : 0
+              return sum + Math.max(actual, volumetric)
+            }, 0),
+          )
+        : round2(totalCbm * SEA_CBM_TO_KG_FACTOR)
+
+    const rateOwnerId =
+      order.shipmentPayer === ShipmentPayer.SUPPLIER
+        ? (order.billingSupplierId ?? order.senderId)
+        : order.senderId
+
+    const pricing = await pricingV2Service.calculatePricing({
+      customerId: rateOwnerId,
+      mode,
+      weightKg: chargeableWeight,
+      cbm: mode === TransportMode.SEA ? totalCbm : undefined,
+    })
+
+    await this.ensureDraftInvoiceForOrder({
+      orderId,
+      actorId,
+      totalUsd: pricing.amountUsd,
+      shipmentPayer: order.shipmentPayer as ShipmentPayer,
+      billToUserId: order.shipmentPayer === ShipmentPayer.USER ? order.senderId : null,
+      billToSupplierId: order.shipmentPayer === ShipmentPayer.SUPPLIER ? order.billingSupplierId : null,
+    })
+  }
+
+  private mapBatch(batch: typeof dispatchBatches.$inferSelect) {
+    return {
+      id: batch.id,
+      masterTrackingNumber: batch.masterTrackingNumber,
+      transportMode: batch.transportMode,
+      status: batch.status,
+      carrierName: batch.carrierName,
+      airlineTrackingNumber: batch.airlineTrackingNumber,
+      oceanTrackingNumber: batch.oceanTrackingNumber,
+      d2dTrackingNumber: batch.d2dTrackingNumber,
+      voyageOrFlightNumber: batch.voyageOrFlightNumber,
+      estimatedDepartureAt: batch.estimatedDepartureAt?.toISOString() ?? null,
+      estimatedArrivalAt: batch.estimatedArrivalAt?.toISOString() ?? null,
+      notes: batch.notes,
+      cutoffRequestedAt: batch.cutoffRequestedAt?.toISOString() ?? null,
+      cutoffApprovedAt: batch.cutoffApprovedAt?.toISOString() ?? null,
+      closedAt: batch.closedAt?.toISOString() ?? null,
+      createdAt: batch.createdAt.toISOString(),
+      updatedAt: batch.updatedAt.toISOString(),
+    }
   }
 }
 

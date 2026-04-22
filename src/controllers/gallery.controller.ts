@@ -13,6 +13,15 @@ export const galleryController = {
     return reply.send(successResponse(payload))
   },
 
+  async getPublicAdverts(
+    request: FastifyRequest<{ Querystring: { limit?: string } }>,
+    reply: FastifyReply,
+  ) {
+    const limit = Number(request.query.limit) || 20
+    const payload = await galleryService.listPublicGallery(limit)
+    return reply.send(successResponse(payload.adverts))
+  },
+
   async getAuthenticatedGallery(
     request: FastifyRequest<{ Querystring: { limitPerSection?: string } }>,
     reply: FastifyReply,
@@ -32,6 +41,21 @@ export const galleryController = {
     reply: FastifyReply,
   ) {
     const payload = await galleryService.generateClaimProofUploadUrl({
+      uploadToken: request.body.uploadToken,
+      contentType: request.body.contentType,
+      originalFileName: request.body.originalFileName,
+    })
+
+    return reply.send(successResponse(payload))
+  },
+
+  async generateItemMediaPresign(
+    request: FastifyRequest<{
+      Body: { uploadToken?: string; contentType: string; originalFileName?: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const payload = await galleryService.generateItemMediaUploadUrl({
       uploadToken: request.body.uploadToken,
       contentType: request.body.contentType,
       originalFileName: request.body.originalFileName,
@@ -197,6 +221,42 @@ export const galleryController = {
     return reply.code(201).send(successResponse(payload))
   },
 
+  async createAdvert(
+    request: FastifyRequest<{
+      Body: {
+        title: string
+        description?: string
+        previewImageUrl?: string
+        mediaUrls?: string[]
+        ctaUrl?: string
+        startsAt?: string
+        endsAt?: string
+        isPublished?: boolean
+        status?: GalleryItemStatus
+        metadata?: Record<string, unknown>
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const payload = await galleryService.createItem({
+      actorId: request.user.id,
+      actorRole: request.user.role as UserRole,
+      itemType: GalleryItemType.ADVERT,
+      title: request.body.title,
+      description: request.body.description,
+      previewImageUrl: request.body.previewImageUrl,
+      mediaUrls: request.body.mediaUrls,
+      ctaUrl: request.body.ctaUrl,
+      startsAt: request.body.startsAt ? new Date(request.body.startsAt) : undefined,
+      endsAt: request.body.endsAt ? new Date(request.body.endsAt) : undefined,
+      isPublished: request.body.isPublished,
+      status: request.body.status,
+      metadata: request.body.metadata,
+    })
+
+    return reply.code(201).send(successResponse(payload))
+  },
+
   async updateItem(
     request: FastifyRequest<{
       Params: { id: string }
@@ -220,6 +280,7 @@ export const galleryController = {
       itemId: request.params.id,
       actorId: request.user.id,
       actorRole: request.user.role as UserRole,
+      expectedItemType: GalleryItemType.ADVERT,
       title: request.body.title,
       description: request.body.description,
       previewImageUrl: request.body.previewImageUrl,
@@ -230,6 +291,53 @@ export const galleryController = {
       isPublished: request.body.isPublished,
       status: request.body.status,
       carPriceNgn: request.body.carPriceNgn,
+      metadata: request.body.metadata,
+    })
+
+    return reply.send(successResponse(payload))
+  },
+
+  async updateAdvert(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: {
+        title?: string
+        description?: string | null
+        previewImageUrl?: string | null
+        mediaUrls?: string[]
+        ctaUrl?: string | null
+        startsAt?: string | null
+        endsAt?: string | null
+        isPublished?: boolean
+        status?: GalleryItemStatus
+        metadata?: Record<string, unknown>
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const payload = await galleryService.updateItem({
+      itemId: request.params.id,
+      actorId: request.user.id,
+      actorRole: request.user.role as UserRole,
+      title: request.body.title,
+      description: request.body.description,
+      previewImageUrl: request.body.previewImageUrl,
+      mediaUrls: request.body.mediaUrls,
+      ctaUrl: request.body.ctaUrl,
+      startsAt:
+        request.body.startsAt === undefined
+          ? undefined
+          : request.body.startsAt
+            ? new Date(request.body.startsAt)
+            : null,
+      endsAt:
+        request.body.endsAt === undefined
+          ? undefined
+          : request.body.endsAt
+            ? new Date(request.body.endsAt)
+            : null,
+      isPublished: request.body.isPublished,
+      status: request.body.status,
       metadata: request.body.metadata,
     })
 

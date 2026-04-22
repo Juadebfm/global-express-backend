@@ -11,10 +11,15 @@ import {
 import {
   InvoiceAttachmentType,
   MeasurementCheckpoint,
+  PreferredLanguage,
   ShipmentType,
   UserRole,
 } from '../types/enums'
 import { uploadsService } from './uploads.service'
+import { decrypt } from '../utils/encryption'
+import { notifyUser } from './notifications.service'
+import { sendSupplierInvoiceEmail } from '../notifications/email'
+import { sendSupplierInvoiceWhatsApp } from '../notifications/whatsapp'
 
 const MAX_PDF_BYTES = 5 * 1024 * 1024
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024
@@ -37,6 +42,31 @@ function toNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined) return null
   const n = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(n) ? n : null
+}
+
+function safeDecrypt(value: string | null | undefined): string | null {
+  if (!value) return null
+  try {
+    return decrypt(value)
+  } catch {
+    return null
+  }
+}
+
+function formatUserDisplayName(params: {
+  firstName: string | null
+  lastName: string | null
+  businessName: string | null
+  fallback: string
+}): string {
+  const first = safeDecrypt(params.firstName)
+  const last = safeDecrypt(params.lastName)
+  const business = safeDecrypt(params.businessName)
+
+  if (first && last) return `${first} ${last}`
+  if (first) return first
+  if (business) return business
+  return params.fallback
 }
 
 export class D2dOperationsService {
@@ -385,6 +415,164 @@ export class D2dOperationsService {
       ...params,
       attachmentType: InvoiceAttachmentType.TASK_INVOICE,
     })
+  }
+
+  async sendInvoiceToBilledSupplier(params: {
+    invoiceId: string
+    actorId: string
+    actorRole: UserRole
+    note?: string
+  }) {
+    if (![UserRole.STAFF, UserRole.SUPER_ADMIN].includes(params.actorRole)) {
+      throw new Error('Forbidden')
+    }
+
+    const [invoice] = await db
+      .select({
+        id: invoices.id,
+        invoiceNumber: invoices.invoiceNumber,
+        orderId: invoices.orderId,
+        status: invoices.status,
+        totalUsd: invoices.totalUsd,
+        totalNgn: invoices.totalNgn,
+        billToSupplierId: invoices.billToSupplierId,
+        trackingNumber: orders.trackingNumber,
+      })
+      .from(invoices)
+      .innerJoin(orders, eq(orders.id, invoices.orderId))
+      .where(eq(invoices.id, params.invoiceId))
+      .limit(1)
+
+    if (!invoice) {
+      throw new Error('Invoice not found.')
+    }
+
+    if (!invoice.billToSupplierId) {
+      throw new Error('Invoice is not billed to a supplier.')
+    }
+
+    const [supplier] = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        email: users.email,
+        phone: users.phone,
+        whatsappNumber: users.whatsappNumber,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        businessName: users.businessName,
+        notifyEmailAlerts: users.notifyEmailAlerts,
+        notifySmsAlerts: users.notifySmsAlerts,
+        notifyInAppAlerts: users.notifyInAppAlerts,
+        isActive: users.isActive,
+        deletedAt: users.deletedAt,
+      })
+      .from(users)
+      .where(eq(users.id, invoice.billToSupplierId))
+      .limit(1)
+
+    if (!supplier || supplier.role !== UserRole.SUPPLIER || supplier.deletedAt || !supplier.isActive) {
+      throw new Error('Billed supplier account is unavailable.')
+    }
+
+    const attachments = await db
+      .select({
+        r2Url: invoiceAttachments.r2Url,
+      })
+      .from(invoiceAttachments)
+      .where(
+        and(
+          eq(invoiceAttachments.invoiceId, invoice.id),
+          eq(invoiceAttachments.attachmentType, InvoiceAttachmentType.TASK_INVOICE),
+        ),
+      )
+      .orderBy(desc(invoiceAttachments.createdAt))
+
+    const attachmentUrls = attachments
+      .map((entry) => entry.r2Url)
+      .filter((url): url is string => typeof url === 'string' && url.length > 0)
+
+    const supplierName = formatUserDisplayName({
+      firstName: supplier.firstName,
+      lastName: supplier.lastName,
+      businessName: supplier.businessName,
+      fallback: 'Supplier',
+    })
+
+    const supplierEmail = safeDecrypt(supplier.email)
+    const supplierPhone = safeDecrypt(supplier.whatsappNumber) ?? safeDecrypt(supplier.phone)
+
+    const note = params.note?.trim() || null
+    const statusLabel = (invoice.status ?? 'draft').toUpperCase()
+
+    const sent = {
+      inApp: false,
+      email: false,
+      whatsapp: false,
+    }
+
+    if (supplier.notifyInAppAlerts ?? true) {
+      await notifyUser({
+        userId: supplier.id,
+        orderId: invoice.orderId,
+        type: 'payment_event',
+        title: 'Supplier Invoice Shared',
+        subtitle: invoice.invoiceNumber,
+        body: `Invoice ${invoice.invoiceNumber} for shipment ${invoice.trackingNumber} has been shared with you.`,
+        createdBy: params.actorId,
+        metadata: {
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          trackingNumber: invoice.trackingNumber,
+          orderId: invoice.orderId,
+          status: statusLabel,
+          totalUsd: invoice.totalUsd,
+          totalNgn: invoice.totalNgn,
+          attachmentCount: attachmentUrls.length,
+          note,
+        },
+      })
+      sent.inApp = true
+    }
+
+    if (supplierEmail && (supplier.notifyEmailAlerts ?? true)) {
+      await sendSupplierInvoiceEmail({
+        to: supplierEmail,
+        supplierName,
+        invoiceNumber: invoice.invoiceNumber,
+        trackingNumber: invoice.trackingNumber,
+        status: statusLabel,
+        totalUsd: invoice.totalUsd,
+        totalNgn: invoice.totalNgn,
+        note,
+        attachmentUrls,
+      })
+      sent.email = true
+    }
+
+    if (supplierPhone && (supplier.notifySmsAlerts ?? true)) {
+      await sendSupplierInvoiceWhatsApp({
+        phone: supplierPhone,
+        recipientName: supplierName,
+        invoiceNumber: invoice.invoiceNumber,
+        trackingNumber: invoice.trackingNumber,
+        totalUsd: invoice.totalUsd,
+        status: statusLabel,
+        attachmentUrl: attachmentUrls[0] ?? null,
+      })
+      sent.whatsapp = true
+    }
+
+    return {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      orderId: invoice.orderId,
+      trackingNumber: invoice.trackingNumber,
+      supplierId: supplier.id,
+      supplierName,
+      sent,
+      attachmentCount: attachmentUrls.length,
+    }
   }
 }
 

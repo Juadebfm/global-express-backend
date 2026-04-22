@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit'
 import swagger from '@fastify/swagger'
 import swaggerUI from '@fastify/swagger-ui'
 import websocketPlugin from '@fastify/websocket'
+import multipart from '@fastify/multipart'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { env } from './config/env'
 import { errorHandler } from './middleware/errorHandler'
@@ -67,6 +68,14 @@ export async function buildApp() {
 
   // ─── WebSocket ────────────────────────────────────────────────────────────
   await app.register(websocketPlugin)
+
+  // ─── Multipart uploads ────────────────────────────────────────────────────
+  await app.register(multipart, {
+    limits: {
+      files: 1,
+      fileSize: 10 * 1024 * 1024, // 10MB upload cap for import sheets
+    },
+  })
 
   // ─── Swagger ──────────────────────────────────────────────────────────────
   if (true) {

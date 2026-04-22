@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { shipmentsController } from '../controllers/shipments.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
+import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
 import {
   MeasurementCheckpoint,
   OrderDirection,
@@ -51,6 +51,10 @@ const goodsInputSchema = z.object({
   weightKg: z.number().positive().optional(),
   cbm: z.number().positive().optional(),
   itemCostUsd: z.number().positive().optional(),
+  requiresExtraTruckMovement: z
+    .boolean()
+    .optional()
+    .describe('Set true when this goods line needs extra truck movement after Lagos arrival'),
 })
 
 export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
@@ -317,19 +321,124 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.post('/batches/:batchId/approve-cutoff', {
-    preHandler: [authenticate, requireSuperAdmin],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Shipments — Staff'],
-      summary: 'Approve pending cutoff and close dispatch batch (superadmin)',
+      summary: 'Approve pending cutoff and close dispatch batch (authorized staff)',
       security: [{ bearerAuth: [] }],
       params: z.object({
         batchId: z.string().uuid(),
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
         404: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: shipmentsController.approveCutoff,
+  })
+
+  app.patch('/batches/:batchId/carrier-info', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Shipments — Staff'],
+      summary: 'Update carrier/tracking information for a dispatch batch',
+      description:
+        'Stores external movement references for batch-level tracking across air/ocean/D2D legs.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({
+        batchId: z.string().uuid(),
+      }),
+      body: z
+        .object({
+          carrierName: z.string().min(1).nullable().optional(),
+          airlineTrackingNumber: z.string().min(1).nullable().optional(),
+          oceanTrackingNumber: z.string().min(1).nullable().optional(),
+          d2dTrackingNumber: z.string().min(1).nullable().optional(),
+          voyageOrFlightNumber: z.string().min(1).nullable().optional(),
+          estimatedDepartureAt: z.string().datetime().nullable().optional(),
+          estimatedArrivalAt: z.string().datetime().nullable().optional(),
+          notes: z.string().min(1).nullable().optional(),
+        })
+        .refine((value) => Object.keys(value).length > 0, {
+          message: 'Provide at least one field to update.',
+        }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.any() }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: shipmentsController.updateBatchCarrierInfo,
+  })
+
+  app.patch('/batches/:batchId/status', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Shipments — Staff'],
+      summary: 'Update shipment status for all orders in a dispatch batch',
+      description:
+        'Applies one status transition from GEX shipment POV to every order in the batch. On departed status, cutoff is auto-approved for authorized actors.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({
+        batchId: z.string().uuid(),
+      }),
+      body: z.object({
+        statusV2: z.nativeEnum(ShipmentStatusV2),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.any() }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: shipmentsController.updateBatchStatus,
+  })
+
+  app.post('/batches/:batchId/move-to-next', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Shipments — Staff'],
+      summary: 'Move full or partial goods from one batch to the next open batch',
+      description:
+        'Supports moving selected supplier lines or selected package IDs (split behavior), or whole-order move when all goods are selected.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({
+        batchId: z.string().uuid(),
+      }),
+      body: z.object({
+        orderId: z.string().uuid(),
+        supplierId: z.string().uuid().optional(),
+        packageIds: z.array(z.string().uuid()).min(1).optional(),
+      }).superRefine((value, ctx) => {
+        const hasSupplierId = Boolean(value.supplierId)
+        const hasPackageIds = Boolean(value.packageIds && value.packageIds.length > 0)
+
+        if (hasSupplierId && hasPackageIds) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['supplierId'],
+            message: 'Provide either supplierId or packageIds, not both.',
+          })
+        }
+
+        if (!hasSupplierId && !hasPackageIds) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['supplierId'],
+            message: 'Provide supplierId or packageIds to select what should move.',
+          })
+        }
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.any() }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: shipmentsController.moveGoodsToNextBatch,
   })
 }

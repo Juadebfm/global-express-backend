@@ -79,8 +79,13 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     schema: {
       tags: ['Public'],
       summary: 'Estimate shipment cost (no auth required)',
+      description:
+        'Returns a quick estimate for calculated shipment types (for example air/ocean). For intake-based types (for example D2D), returns an intake guidance payload and directs the user to submit details for tailored pricing.',
       body: z.object({
-        shipmentType: z.enum(['air', 'ocean']),
+        shipmentType: z
+          .string()
+          .min(1)
+          .describe('Public shipment type key, e.g. air | ocean | d2d (configured in settings)'),
         weightKg: z.number().positive().optional(),
         lengthCm: z.number().positive().optional(),
         widthCm: z.number().positive().optional(),
@@ -91,18 +96,62 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
         200: z.object({
           success: z.literal(true),
           data: z.object({
-            mode: z.string(),
+            shipmentType: z.string(),
+            mode: z.string().nullable(),
             weightKg: z.number().nullable(),
             cbm: z.number().nullable(),
-            estimatedCostUsd: z.number(),
-            departureFrequency: z.string(),
-            estimatedTransitDays: z.number(),
+            estimatedCostUsd: z.number().nullable(),
+            departureFrequency: z.string().nullable(),
+            estimatedTransitDays: z.number().nullable(),
             disclaimer: z.string(),
+            intake: z.object({
+              title: z.string(),
+              description: z.string(),
+              submitEndpoint: z.string(),
+              requiredFields: z.array(z.string()),
+              nextStep: z.string(),
+            }).optional(),
+            d2dIntake: z.object({
+              title: z.string(),
+              description: z.string(),
+              submitEndpoint: z.string(),
+              requiredFields: z.array(z.string()),
+              nextStep: z.string(),
+            }).optional(),
           }),
         }),
       },
     },
     handler: publicController.calculateEstimate,
+  })
+
+  server.get('/shipment-types', {
+    schema: {
+      tags: ['Public'],
+      summary: 'List active shipment types (no auth required)',
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            items: z.array(z.object({
+              key: z.string(),
+              label: z.string(),
+              coreShipmentType: z.enum(['air', 'ocean', 'd2d']),
+              estimatorMode: z.enum(['CALCULATED', 'INTAKE']),
+              intake: z.object({
+                title: z.string(),
+                description: z.string().nullable(),
+                submitEndpoint: z.string().nullable(),
+                requiredFields: z.array(z.string()),
+                nextStep: z.string().nullable(),
+              }).nullable(),
+            })),
+            updatedAt: z.string().nullable(),
+          }),
+        }),
+      },
+    },
+    handler: publicController.listShipmentTypes,
   })
 
   // GET /calculator/rates — public rate sheet
@@ -175,6 +224,24 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
       },
     },
     handler: galleryController.getPublicGallery,
+  })
+
+  // GET /gallery/adverts — public adverts only
+  server.get('/gallery/adverts', {
+    schema: {
+      tags: ['Public'],
+      summary: 'Get public adverts for gallery page',
+      querystring: z.object({
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.array(publicGalleryItemSchema),
+        }),
+      },
+    },
+    handler: galleryController.getPublicAdverts,
   })
 
   // POST /gallery/claims/presign — public proof upload URL

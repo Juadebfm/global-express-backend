@@ -132,6 +132,33 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
     handler: galleryController.generateClaimPresign,
   })
 
+  app.post('/items/media/presign', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Gallery — Admin'],
+      summary: 'Generate presigned URL for gallery item media upload',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        uploadToken: z.string().optional(),
+        contentType: z.enum(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']),
+        originalFileName: z.string().optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            uploadUrl: z.string().url(),
+            r2Key: z.string(),
+            publicUrl: z.string().url(),
+            expiresInSeconds: z.number(),
+            uploadToken: z.string(),
+          }),
+        }),
+      },
+    },
+    handler: galleryController.generateItemMediaPresign,
+  })
+
   app.post('/anonymous/:trackingNumber/claim', {
     preHandler: [authenticate],
     schema: {
@@ -195,6 +222,31 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
     handler: galleryController.createItem,
   })
 
+  app.post('/adverts', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Gallery — Admin'],
+      summary: 'Create advert item (staff/superadmin)',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        title: z.string().min(2),
+        description: z.string().optional(),
+        previewImageUrl: z.string().url().optional(),
+        mediaUrls: z.array(z.string().url()).optional(),
+        ctaUrl: z.string().url().optional(),
+        startsAt: z.string().datetime().optional(),
+        endsAt: z.string().datetime().optional(),
+        isPublished: z.boolean().optional(),
+        status: z.enum(['draft', 'published', 'archived']).optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
+      }),
+      response: {
+        201: z.object({ success: z.literal(true), data: publicGalleryItemSchema }),
+      },
+    },
+    handler: galleryController.createAdvert,
+  })
+
   app.patch('/items/:id', {
     preHandler: [authenticate, requireStaffOrAbove],
     schema: {
@@ -220,6 +272,32 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     handler: galleryController.updateItem,
+  })
+
+  app.patch('/adverts/:id', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Gallery — Admin'],
+      summary: 'Update advert item (staff/superadmin)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      body: z.object({
+        title: z.string().min(2).optional(),
+        description: z.string().nullable().optional(),
+        previewImageUrl: z.string().url().nullable().optional(),
+        mediaUrls: z.array(z.string().url()).optional(),
+        ctaUrl: z.string().url().nullable().optional(),
+        startsAt: z.string().datetime().nullable().optional(),
+        endsAt: z.string().datetime().nullable().optional(),
+        isPublished: z.boolean().optional(),
+        status: z.enum(['draft', 'published', 'archived']).optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: publicGalleryItemSchema }),
+      },
+    },
+    handler: galleryController.updateAdvert,
   })
 
   app.get('/claims', {

@@ -384,6 +384,14 @@ export const ordersController = {
       return reply.code(404).send({ success: false, message: 'Order not found' })
     }
 
+    if (order.dispatchBatchId) {
+      return reply.code(409).send({
+        success: false,
+        message:
+          'This shipment is managed at batch level. Use PATCH /api/v1/shipments/batches/:batchId/status instead.',
+      })
+    }
+
     const sender = await usersService.getUserById(order.senderId)
 
     let updated: Awaited<ReturnType<typeof ordersService.updateOrderStatus>>
@@ -438,6 +446,7 @@ export const ordersController = {
           weightKg?: number
           cbm?: number
           itemCostUsd?: number
+          requiresExtraTruckMovement?: boolean
           isRestricted?: boolean
           restrictedReason?: string
           restrictedOverrideApproved?: boolean

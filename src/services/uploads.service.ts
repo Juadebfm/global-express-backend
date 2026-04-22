@@ -33,7 +33,7 @@ function isExternalViewerRole(role: UserRole): boolean {
 
 export class UploadsService {
   private async generateScopedPresignedUrl(params: {
-    scope: 'orders' | 'invoices' | 'payments' | 'gallery-claims'
+    scope: 'orders' | 'invoices' | 'payments' | 'gallery-claims' | 'gallery-items'
     scopeId: string
     contentType: string
     originalFileName?: string
@@ -107,6 +107,19 @@ export class UploadsService {
   }): Promise<PresignedUrlResult> {
     return this.generateScopedPresignedUrl({
       scope: 'gallery-claims',
+      scopeId: params.uploadToken,
+      contentType: params.contentType,
+      originalFileName: params.originalFileName,
+    })
+  }
+
+  async generateGalleryItemMediaPresignedUrl(params: {
+    uploadToken: string
+    contentType: string
+    originalFileName?: string
+  }): Promise<PresignedUrlResult> {
+    return this.generateScopedPresignedUrl({
+      scope: 'gallery-items',
       scopeId: params.uploadToken,
       contentType: params.contentType,
       originalFileName: params.originalFileName,

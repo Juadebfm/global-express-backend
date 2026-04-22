@@ -8,7 +8,15 @@ import { UserRole } from '../types/enums'
 
 // Role → permissions mapping shown in the team panel
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  superadmin: ['Manage Users', 'Manage Team', 'View Reports', 'Manage Orders', 'Send Notifications', 'System Settings'],
+  superadmin: [
+    'Manage Users',
+    'Manage Team',
+    'View Reports',
+    'Manage Orders',
+    'Send Notifications',
+    'System Settings',
+    'Provision Client Login Links',
+  ],
   staff:       ['View Reports', 'Manage Orders'],
 }
 
@@ -83,6 +91,25 @@ export class TeamService {
     else if (firstName) displayName = firstName
     else if (lastName) displayName = lastName
 
+    const effectiveCanProvisionClientLogin =
+      user.role === UserRole.SUPER_ADMIN ? true : user.canProvisionClientLogin
+
+    const permissions = [...(ROLE_PERMISSIONS[user.role] ?? [])]
+    if (
+      user.role === UserRole.STAFF &&
+      effectiveCanProvisionClientLogin &&
+      !permissions.includes('Provision Client Login Links')
+    ) {
+      permissions.push('Provision Client Login Links')
+    }
+    if (
+      user.role === UserRole.STAFF &&
+      user.canManageShipmentBatches &&
+      !permissions.includes('Manage Dispatch Batches')
+    ) {
+      permissions.push('Manage Dispatch Batches')
+    }
+
     return {
       id: user.id,
       email: decrypt(user.email),
@@ -91,7 +118,9 @@ export class TeamService {
       displayName,
       role: user.role,
       isActive: user.isActive,
-      permissions: ROLE_PERMISSIONS[user.role] ?? [],
+      canProvisionClientLogin: effectiveCanProvisionClientLogin,
+      canManageShipmentBatches: user.role === UserRole.SUPER_ADMIN ? true : user.canManageShipmentBatches,
+      permissions,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
     }

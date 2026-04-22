@@ -24,6 +24,13 @@ const ALLOWED_PROOF_CONTENT_TYPES = new Set([
   'image/webp',
 ])
 
+const ALLOWED_ITEM_MEDIA_CONTENT_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+])
+
 const MAX_PROOF_FILES = 5
 
 function httpError(message: string, statusCode: number): Error & { statusCode: number } {
@@ -93,6 +100,7 @@ export interface GalleryUpdateItemInput {
   itemId: string
   actorId: string
   actorRole: UserRole
+  expectedItemType?: GalleryItemType
   title?: string
   description?: string | null
   previewImageUrl?: string | null
@@ -443,6 +451,32 @@ export class GalleryService {
     }
   }
 
+  async generateItemMediaUploadUrl(input: {
+    uploadToken?: string
+    contentType: string
+    originalFileName?: string
+  }) {
+    if (!ALLOWED_ITEM_MEDIA_CONTENT_TYPES.has(input.contentType)) {
+      throw httpError(
+        `Unsupported content type. Allowed: ${[...ALLOWED_ITEM_MEDIA_CONTENT_TYPES].join(', ')}`,
+        400,
+      )
+    }
+
+    const uploadToken = input.uploadToken?.trim() || randomUUID()
+
+    const payload = await uploadsService.generateGalleryItemMediaPresignedUrl({
+      uploadToken,
+      contentType: input.contentType,
+      originalFileName: input.originalFileName,
+    })
+
+    return {
+      ...payload,
+      uploadToken,
+    }
+  }
+
   async createItem(input: GalleryCreateItemInput) {
     if (input.endsAt && input.startsAt && input.endsAt < input.startsAt) {
       throw httpError('endsAt must be greater than or equal to startsAt', 400)
@@ -454,6 +488,14 @@ export class GalleryService {
 
     if (input.carPriceNgn !== undefined && input.actorRole !== UserRole.SUPER_ADMIN) {
       throw httpError('Only superadmin can set car pricing', 403)
+    }
+
+    if (
+      input.itemType === GalleryItemType.ADVERT &&
+      !input.previewImageUrl?.trim() &&
+      (!input.mediaUrls || input.mediaUrls.length === 0)
+    ) {
+      throw httpError('Advert items require previewImageUrl or at least one media URL', 422)
     }
 
     const requestedStatus = input.status ?? (input.isPublished ? GalleryItemStatus.PUBLISHED : GalleryItemStatus.DRAFT)
@@ -529,6 +571,10 @@ export class GalleryService {
       throw httpError('Gallery item not found', 404)
     }
 
+    if (input.expectedItemType && existing.itemType !== input.expectedItemType) {
+      throw httpError('The selected gallery item is not the expected type.', 422)
+    }
+
     if (input.endsAt && input.startsAt && input.endsAt < input.startsAt) {
       throw httpError('endsAt must be greater than or equal to startsAt', 400)
     }
@@ -549,6 +595,10 @@ export class GalleryService {
           ? GalleryItemStatus.DRAFT
           : existing.status)
 
+    const nextPreviewImageUrl =
+      input.previewImageUrl === undefined ? existing.previewImageUrl : input.previewImageUrl
+    const nextMediaUrls = input.mediaUrls ?? existing.mediaUrls
+
     if (
       input.status !== undefined &&
       ![GalleryItemStatus.DRAFT, GalleryItemStatus.PUBLISHED, GalleryItemStatus.ARCHIVED].includes(
@@ -566,6 +616,15 @@ export class GalleryService {
       throw httpError('Published car listings require a valid carPriceNgn', 422)
     }
 
+    if (
+      existing.itemType === GalleryItemType.ADVERT &&
+      nextStatus === GalleryItemStatus.PUBLISHED &&
+      !nextPreviewImageUrl?.trim() &&
+      nextMediaUrls.length === 0
+    ) {
+      throw httpError('Published adverts require previewImageUrl or at least one media URL', 422)
+    }
+
     const nextIsPublished =
       input.isPublished !== undefined
         ? input.isPublished
@@ -576,9 +635,8 @@ export class GalleryService {
       .set({
         title: input.title?.trim() ?? existing.title,
         description: input.description === undefined ? existing.description : input.description,
-        previewImageUrl:
-          input.previewImageUrl === undefined ? existing.previewImageUrl : input.previewImageUrl,
-        mediaUrls: input.mediaUrls ?? existing.mediaUrls,
+        previewImageUrl: nextPreviewImageUrl,
+        mediaUrls: nextMediaUrls,
         ctaUrl: input.ctaUrl === undefined ? existing.ctaUrl : input.ctaUrl,
         startsAt: input.startsAt === undefined ? existing.startsAt : input.startsAt,
         endsAt: input.endsAt === undefined ? existing.endsAt : input.endsAt,

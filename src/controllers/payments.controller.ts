@@ -34,8 +34,7 @@ export const paymentsController = {
   async generateReceiptPresign(
     request: FastifyRequest<{
       Body: {
-        orderId?: string
-        invoiceId?: string
+        orderId: string
         contentType: string
         originalFileName?: string
       }
@@ -44,7 +43,6 @@ export const paymentsController = {
   ) {
     const payload = await paymentsService.generateReceiptUploadUrl({
       orderId: request.body.orderId,
-      invoiceId: request.body.invoiceId,
       userId: request.user.id,
       requesterRole: request.user.role as UserRole,
       contentType: request.body.contentType,
@@ -57,8 +55,7 @@ export const paymentsController = {
   async submitReceipt(
     request: FastifyRequest<{
       Body: {
-        orderId?: string
-        invoiceId?: string
+        orderId: string
         amount: number
         currency?: string
         r2Key: string
@@ -70,7 +67,6 @@ export const paymentsController = {
   ) {
     const payment = await paymentsService.submitPaymentReceipt({
       orderId: request.body.orderId,
-      invoiceId: request.body.invoiceId,
       userId: request.user.id,
       requesterRole: request.user.role as UserRole,
       amount: request.body.amount,

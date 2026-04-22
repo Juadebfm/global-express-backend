@@ -67,6 +67,10 @@ const warehouseVerifyPackageSchema = z
     weightKg: z.number().positive().optional().describe('Actual weight in kilograms'),
     cbm: z.number().positive().optional().describe('Volume in cubic meters (exact, no rounding)'),
     itemCostUsd: z.number().positive().optional().describe('Item-level cost in USD (staff/internal detail)'),
+    requiresExtraTruckMovement: z
+      .boolean()
+      .optional()
+      .describe('Set true when this package needs an extra truck movement leg in Lagos'),
     specialPackagingType: z.string().optional().describe('Special packaging type key (e.g. "liquid", "fragile") — must match a type configured in app settings'),
     isRestricted: z.boolean().optional().describe('Whether package contains a restricted item'),
     restrictedReason: z.string().optional().describe('Restricted item reason'),
@@ -434,6 +438,7 @@ Use this to render a step-by-step progress tracker showing each transit mileston
                 height: z.string().nullable(),
               }),
               itemCostUsd: z.string().nullable(),
+              requiresExtraTruckMovement: z.boolean(),
               arrivalAt: z.string().nullable(),
               supplierId: z.string().uuid().nullable(),
               supplierName: z.string().nullable(),
@@ -494,6 +499,7 @@ Use this to render a step-by-step progress tracker showing each transit mileston
       response: {
         200: z.object({ success: z.literal(true), data: orderResponseSchema }),
         400: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
         401: z.object({ success: z.literal(false), message: z.string() }),
         403: z.object({ success: z.literal(false), message: z.string() }),
         404: z.object({ success: z.literal(false), message: z.string() }),

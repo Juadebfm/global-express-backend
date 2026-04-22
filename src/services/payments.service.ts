@@ -58,8 +58,7 @@ export interface PaystackVerifyResponse {
 }
 
 export interface GeneratePaymentReceiptUploadUrlInput {
-  orderId?: string
-  invoiceId?: string
+  orderId: string
   userId: string
   requesterRole: UserRole
   contentType: string
@@ -67,8 +66,7 @@ export interface GeneratePaymentReceiptUploadUrlInput {
 }
 
 export interface SubmitPaymentReceiptInput {
-  orderId?: string
-  invoiceId?: string
+  orderId: string
   userId: string
   requesterRole: UserRole
   amount: number
@@ -97,7 +95,6 @@ export class PaymentsService {
     const currency = input.currency ?? 'NGN'
     const target = await this.resolvePaymentTarget({
       orderId: input.orderId,
-      invoiceId: input.invoiceId,
     })
 
     this.assertPaymentOwnership({
@@ -160,7 +157,6 @@ export class PaymentsService {
 
     const target = await this.resolvePaymentTarget({
       orderId: input.orderId,
-      invoiceId: input.invoiceId,
     })
 
     this.assertPaymentOwnership({
@@ -184,7 +180,6 @@ export class PaymentsService {
     const currency = (input.currency ?? 'NGN').toUpperCase()
     const target = await this.resolvePaymentTarget({
       orderId: input.orderId,
-      invoiceId: input.invoiceId,
     })
 
     this.assertPaymentOwnership({

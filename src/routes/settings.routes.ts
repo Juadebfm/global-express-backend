@@ -271,6 +271,35 @@ const fxRatePatchSchema = z
     }
   })
 
+const publicShipmentEstimatorModeSchema = z.enum(['CALCULATED', 'INTAKE'])
+const coreShipmentTypeSchema = z.enum(['air', 'ocean', 'd2d'])
+
+const publicShipmentTypeResponseSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  isActive: z.boolean(),
+  coreShipmentType: coreShipmentTypeSchema,
+  estimatorMode: publicShipmentEstimatorModeSchema,
+  infoTitle: z.string().nullable(),
+  infoDescription: z.string().nullable(),
+  submitEndpoint: z.string().nullable(),
+  requiredFields: z.array(z.string()),
+  nextStep: z.string().nullable(),
+})
+
+const publicShipmentTypePatchItemSchema = z.object({
+  key: z.string().trim().min(1),
+  label: z.string().trim().min(1).optional(),
+  isActive: z.boolean().optional(),
+  coreShipmentType: coreShipmentTypeSchema.optional(),
+  estimatorMode: publicShipmentEstimatorModeSchema.optional(),
+  infoTitle: z.string().trim().min(1).nullable().optional(),
+  infoDescription: z.string().trim().min(1).nullable().optional(),
+  submitEndpoint: z.string().trim().min(1).nullable().optional(),
+  requiredFields: z.array(z.string().trim().min(1)).optional(),
+  nextStep: z.string().trim().min(1).nullable().optional(),
+})
+
 const notificationTemplateChannelSchema = z.enum(['email', 'in_app'])
 
 const templateResponseSchema = z.object({
@@ -392,6 +421,69 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     handler: settingsController.updateFxRate,
+  })
+
+  app.get('/shipment-types', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Settings - Shipment Types'],
+      summary: 'List configurable shipment types (staff+)',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            items: z.array(publicShipmentTypeResponseSchema),
+            updatedAt: z.string().nullable(),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: settingsController.listShipmentTypes,
+  })
+
+  app.patch('/shipment-types', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Settings - Shipment Types'],
+      summary: 'Update configurable shipment types (superadmin)',
+      security: [{ bearerAuth: [] }],
+      body: z
+        .object({
+          items: z.array(publicShipmentTypePatchItemSchema).optional(),
+          deleteKeys: z.array(z.string().trim().min(1)).optional(),
+        })
+        .superRefine((value, ctx) => {
+          const hasAnyMutation =
+            (value.items?.length ?? 0) > 0 || (value.deleteKeys?.length ?? 0) > 0
+          if (!hasAnyMutation) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'At least one mutation is required: items or deleteKeys',
+            })
+          }
+        }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            summary: z.object({
+              createdKeys: z.array(z.string()),
+              updatedKeys: z.array(z.string()),
+              deletedKeys: z.array(z.string()),
+            }),
+            items: z.array(publicShipmentTypeResponseSchema),
+            updatedAt: z.string().nullable(),
+          }),
+        }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: settingsController.updateShipmentTypes,
   })
 
   app.get('/templates', {

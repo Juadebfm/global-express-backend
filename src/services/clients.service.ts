@@ -7,8 +7,14 @@ import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { env } from '../config/env'
 import type { PaginationParams } from '../types'
 import { UserRole } from '../types/enums'
+import { sendClientLoginLinkEmail } from '../notifications/email'
+import { sendClientLoginLinkWhatsApp } from '../notifications/whatsapp'
 
 const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY })
+
+function httpError(message: string, statusCode: number): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode })
+}
 
 export class ClientsService {
   /**
@@ -141,6 +147,305 @@ export class ClientsService {
    */
   async sendClerkInvite(email: string) {
     return clerk.invitations.createInvitation({ emailAddress: email })
+  }
+
+  async canActorProvisionClientLoginLinks(actorId: string, actorRole: UserRole): Promise<boolean> {
+    if (actorRole === UserRole.SUPER_ADMIN) return true
+    if (actorRole !== UserRole.STAFF) return false
+
+    const [actor] = await db
+      .select({
+        role: users.role,
+        canProvisionClientLogin: users.canProvisionClientLogin,
+      })
+      .from(users)
+      .where(and(eq(users.id, actorId), isNull(users.deletedAt)))
+      .limit(1)
+
+    return Boolean(actor && actor.role === UserRole.STAFF && actor.canProvisionClientLogin)
+  }
+
+  async provisionClientAndShareLoginLink(input: {
+    actorRole: UserRole
+    email: string
+    firstName?: string
+    lastName?: string
+    businessName?: string
+    phone?: string
+    whatsappNumber?: string
+    addressStreet?: string
+    addressCity?: string
+    addressState?: string
+    addressCountry?: string
+    addressPostalCode?: string
+    shippingMark?: string
+    consentMarketing?: boolean
+  }) {
+    const normalizedEmail = input.email.trim().toLowerCase()
+    const normalizedFirstName = this.normalizeOptionalText(input.firstName)
+    const normalizedLastName = this.normalizeOptionalText(input.lastName)
+    const normalizedBusinessName = this.normalizeOptionalText(input.businessName)
+    const normalizedPhone = this.normalizeOptionalText(input.phone)
+    const normalizedWhatsapp = this.normalizeOptionalText(input.whatsappNumber)
+    const normalizedStreet = this.normalizeOptionalText(input.addressStreet)
+    const normalizedCity = this.normalizeOptionalText(input.addressCity)
+    const normalizedState = this.normalizeOptionalText(input.addressState)
+    const normalizedCountry = this.normalizeOptionalText(input.addressCountry)
+    const normalizedPostalCode = this.normalizeOptionalText(input.addressPostalCode)
+    const normalizedShippingMark = this.normalizeOptionalText(input.shippingMark)
+
+    const emailHash = hashEmail(normalizedEmail)
+
+    let [existing] = await db
+      .select()
+      .from(users)
+      .where(eq(users.emailHash, emailHash))
+      .limit(1)
+
+    if (existing && [UserRole.STAFF, UserRole.SUPER_ADMIN, UserRole.SUPPLIER].includes(existing.role as UserRole)) {
+      throw httpError('Email already belongs to a non-client account.', 409)
+    }
+
+    if (existing && existing.role !== UserRole.USER) {
+      throw httpError(`Email belongs to account role ${existing.role}.`, 409)
+    }
+
+    let clientRow: typeof users.$inferSelect
+
+    if (existing) {
+      const patch: Partial<typeof users.$inferInsert> = {
+        updatedAt: new Date(),
+        deletedAt: null,
+      }
+
+      if (normalizedFirstName !== undefined) patch.firstName = encrypt(normalizedFirstName)
+      if (normalizedLastName !== undefined) patch.lastName = encrypt(normalizedLastName)
+      if (normalizedBusinessName !== undefined) patch.businessName = encrypt(normalizedBusinessName)
+      if (normalizedPhone !== undefined) patch.phone = encrypt(normalizedPhone)
+      if (normalizedWhatsapp !== undefined) patch.whatsappNumber = encrypt(normalizedWhatsapp)
+      if (normalizedStreet !== undefined) patch.addressStreet = encrypt(normalizedStreet)
+      if (normalizedCity !== undefined) patch.addressCity = normalizedCity
+      if (normalizedState !== undefined) patch.addressState = normalizedState
+      if (normalizedCountry !== undefined) patch.addressCountry = normalizedCountry
+      if (normalizedPostalCode !== undefined) patch.addressPostalCode = normalizedPostalCode
+      if (input.consentMarketing !== undefined) patch.consentMarketing = input.consentMarketing
+
+      if (normalizedShippingMark && input.actorRole === UserRole.SUPER_ADMIN) {
+        patch.shippingMark = encrypt(normalizedShippingMark)
+      }
+
+      const [updated] = await db
+        .update(users)
+        .set(patch)
+        .where(eq(users.id, existing.id))
+        .returning()
+
+      if (!updated) {
+        throw httpError('Unable to update existing client profile.', 500)
+      }
+
+      clientRow = updated
+    } else {
+      const [created] = await db
+        .insert(users)
+        .values({
+          clerkId: null,
+          email: encrypt(normalizedEmail),
+          emailHash,
+          firstName: normalizedFirstName ? encrypt(normalizedFirstName) : null,
+          lastName: normalizedLastName ? encrypt(normalizedLastName) : null,
+          businessName: normalizedBusinessName ? encrypt(normalizedBusinessName) : null,
+          phone: normalizedPhone ? encrypt(normalizedPhone) : null,
+          whatsappNumber: normalizedWhatsapp ? encrypt(normalizedWhatsapp) : null,
+          addressStreet: normalizedStreet ? encrypt(normalizedStreet) : null,
+          addressCity: normalizedCity ?? null,
+          addressState: normalizedState ?? null,
+          addressCountry: normalizedCountry ?? null,
+          addressPostalCode: normalizedPostalCode ?? null,
+          shippingMark:
+            normalizedShippingMark && input.actorRole === UserRole.SUPER_ADMIN
+              ? encrypt(normalizedShippingMark)
+              : null,
+          consentMarketing: input.consentMarketing ?? false,
+          role: UserRole.USER,
+          isActive: false,
+        })
+        .returning()
+
+      clientRow = created
+    }
+
+    const emailAddress = decrypt(clientRow.email)
+    const login = await this.createClientLoginLink({
+      clerkId: clientRow.clerkId,
+      email: emailAddress,
+    })
+
+    const recipientName = this.buildDisplayNameFromClientRow(clientRow)
+    const whatsappTarget = this.resolveClientWhatsappNumber(clientRow)
+    if (!whatsappTarget) {
+      throw httpError(
+        'WhatsApp or phone number is required to share login details. Update the client contact info and retry.',
+        422,
+      )
+    }
+
+    await Promise.all([
+      sendClientLoginLinkEmail({
+        to: emailAddress,
+        recipientName,
+        loginLink: login.url,
+      }),
+      sendClientLoginLinkWhatsApp({
+        phone: whatsappTarget,
+        recipientName,
+        loginLink: login.url,
+      }),
+    ])
+
+    return {
+      id: clientRow.id,
+      email: emailAddress,
+      loginLink: login.url,
+      linkType: login.type,
+      whatsappNumber: whatsappTarget,
+      wasExistingClient: Boolean(existing),
+    }
+  }
+
+  async resendClientLoginLink(input: {
+    clientId: string
+    whatsappNumber?: string
+    phone?: string
+  }) {
+    const [client] = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, input.clientId), eq(users.role, UserRole.USER), isNull(users.deletedAt)))
+      .limit(1)
+
+    if (!client) {
+      throw httpError('Client not found', 404)
+    }
+
+    const normalizedWhatsapp = this.normalizeOptionalText(input.whatsappNumber)
+    const normalizedPhone = this.normalizeOptionalText(input.phone)
+
+    let clientRow = client
+    if (normalizedWhatsapp !== undefined || normalizedPhone !== undefined) {
+      const patch: Partial<typeof users.$inferInsert> = {
+        updatedAt: new Date(),
+      }
+
+      if (normalizedWhatsapp !== undefined) {
+        patch.whatsappNumber = normalizedWhatsapp ? encrypt(normalizedWhatsapp) : null
+      }
+
+      if (normalizedPhone !== undefined) {
+        patch.phone = normalizedPhone ? encrypt(normalizedPhone) : null
+      }
+
+      const [updated] = await db.update(users).set(patch).where(eq(users.id, client.id)).returning()
+      if (updated) clientRow = updated
+    }
+
+    const emailAddress = decrypt(clientRow.email)
+    const login = await this.createClientLoginLink({
+      clerkId: clientRow.clerkId,
+      email: emailAddress,
+    })
+
+    const recipientName = this.buildDisplayNameFromClientRow(clientRow)
+    const whatsappTarget = this.resolveClientWhatsappNumber(clientRow)
+    if (!whatsappTarget) {
+      throw httpError(
+        'WhatsApp or phone number is required to share login details. Add contact info and retry.',
+        422,
+      )
+    }
+
+    await Promise.all([
+      sendClientLoginLinkEmail({
+        to: emailAddress,
+        recipientName,
+        loginLink: login.url,
+      }),
+      sendClientLoginLinkWhatsApp({
+        phone: whatsappTarget,
+        recipientName,
+        loginLink: login.url,
+      }),
+    ])
+
+    return {
+      id: clientRow.id,
+      email: emailAddress,
+      loginLink: login.url,
+      linkType: login.type,
+      whatsappNumber: whatsappTarget,
+    }
+  }
+
+  private async createClientLoginLink(input: { clerkId: string | null; email: string }) {
+    if (input.clerkId) {
+      const signInToken = await clerk.signInTokens.createSignInToken({
+        userId: input.clerkId,
+        expiresInSeconds: 60 * 60 * 24,
+      })
+
+      return {
+        type: 'signin_token' as const,
+        url: signInToken.url,
+      }
+    }
+
+    const invitation = await clerk.invitations.createInvitation({
+      emailAddress: input.email,
+      ignoreExisting: true,
+      notify: false,
+      redirectUrl: `${this.getPublicAppBaseUrl()}/login`,
+    })
+
+    if (!invitation.url) {
+      throw httpError('Failed to generate invitation link for this client.', 502)
+    }
+
+    return {
+      type: 'invitation' as const,
+      url: invitation.url,
+    }
+  }
+
+  private getPublicAppBaseUrl(): string {
+    const firstHttpOrigin = env.CORS_ORIGINS
+      .split(',')
+      .map((origin) => origin.trim())
+      .find((origin) => origin.startsWith('http://') || origin.startsWith('https://'))
+
+    return (firstHttpOrigin ?? 'https://app.globalexpress.kr').replace(/\/+$/, '')
+  }
+
+  private buildDisplayNameFromClientRow(client: typeof users.$inferSelect): string {
+    const firstName = client.firstName ? decrypt(client.firstName) : null
+    const lastName = client.lastName ? decrypt(client.lastName) : null
+    const businessName = client.businessName ? decrypt(client.businessName) : null
+
+    if (firstName && lastName) return `${firstName} ${lastName}`
+    if (firstName) return firstName
+    if (businessName) return businessName
+    return 'Customer'
+  }
+
+  private resolveClientWhatsappNumber(client: typeof users.$inferSelect): string | null {
+    if (client.whatsappNumber) return decrypt(client.whatsappNumber)
+    if (client.phone) return decrypt(client.phone)
+    return null
+  }
+
+  private normalizeOptionalText(value?: string): string | undefined {
+    if (value === undefined) return undefined
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : undefined
   }
 
   private formatClient(

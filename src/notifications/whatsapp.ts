@@ -50,3 +50,34 @@ export async function sendOrderConfirmationWhatsApp(params: {
     `Hi ${recipientName}! Your shipment order has been confirmed.\nTracking Number: ${trackingNumber}\nFrom: ${origin}\nTo: ${destination}\nWe will keep you updated!`,
   )
 }
+
+export async function sendClientLoginLinkWhatsApp(params: {
+  phone: string
+  recipientName: string
+  loginLink: string
+}): Promise<void> {
+  const { phone, recipientName, loginLink } = params
+
+  await sendPhoneNotification(
+    phone,
+    `Hi ${recipientName}! Your Global Express account is ready. Use this secure login link to access your account:\n${loginLink}`,
+  )
+}
+
+export async function sendSupplierInvoiceWhatsApp(params: {
+  phone: string
+  recipientName: string
+  invoiceNumber: string
+  trackingNumber: string
+  totalUsd: string | null
+  status: string
+  attachmentUrl?: string | null
+}): Promise<void> {
+  const statusLabel = params.status.toUpperCase()
+  const attachmentLine = params.attachmentUrl ? `\nInvoice file: ${params.attachmentUrl}` : ''
+
+  await sendPhoneNotification(
+    params.phone,
+    `Hi ${params.recipientName}! Invoice ${params.invoiceNumber} for shipment ${params.trackingNumber} has been shared with you.\nStatus: ${statusLabel}\nTotal (USD): ${params.totalUsd ?? 'N/A'}${attachmentLine}`,
+  )
+}

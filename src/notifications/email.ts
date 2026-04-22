@@ -152,6 +152,27 @@ export async function sendWelcomeCredentialsEmail(params: {
   })
 }
 
+export async function sendClientLoginLinkEmail(params: {
+  to: string
+  recipientName: string
+  loginLink: string
+}): Promise<void> {
+  const { to, recipientName, loginLink } = params
+
+  await sendEmail({
+    to,
+    subject: 'Your Global Express Login Link',
+    html: `
+      <h2>Your Login Link Is Ready</h2>
+      <p>Hi ${escapeHtml(recipientName)},</p>
+      <p>Your Global Express account has been prepared by our team. Use the secure link below to access your account and complete your onboarding:</p>
+      <p><a href="${escapeHtml(loginLink)}" style="display: inline-block; padding: 12px 24px; background: #1d4ed8; color: #fff; text-decoration: none; border-radius: 6px;">Open Login Link</a></p>
+      <p style="color: #666; font-size: 13px;">If you did not request this, please contact support immediately.</p>
+    `,
+    text: `Hi ${recipientName},\n\nYour Global Express account is ready.\nUse this secure login link to access your account:\n${loginLink}\n\nIf you did not request this, please contact support immediately.`,
+  })
+}
+
 export async function sendPasswordResetOtpEmail(params: {
   to: string
   otp: string
@@ -166,5 +187,69 @@ export async function sendPasswordResetOtpEmail(params: {
       <p>If you did not request a password reset, ignore this email.</p>
     `,
     text: `Your password reset code is: ${params.otp}\n\nIt expires in 10 minutes.`,
+  })
+}
+
+export async function sendSupplierInvoiceEmail(params: {
+  to: string
+  supplierName: string
+  invoiceNumber: string
+  trackingNumber: string
+  status: string
+  totalUsd: string | null
+  totalNgn: string | null
+  note?: string | null
+  attachmentUrls?: string[]
+}): Promise<void> {
+  const attachmentSection =
+    (params.attachmentUrls?.length ?? 0) > 0
+      ? `
+      <p><strong>Attached invoice files:</strong></p>
+      <ul>
+        ${params.attachmentUrls?.map((url) => `<li><a href="${url}">${url}</a></li>`).join('') ?? ''}
+      </ul>
+    `
+      : '<p>No task-invoice attachment links were included in this dispatch.</p>'
+
+  const noteSection = params.note?.trim()
+    ? `<p><strong>Note from team:</strong> ${escapeHtml(params.note.trim())}</p>`
+    : ''
+
+  const statusLabel = params.status.toUpperCase()
+
+  await sendEmail({
+    to: params.to,
+    subject: `Supplier Invoice Shared — ${params.invoiceNumber}`,
+    html: `
+      <h2>Invoice Shared</h2>
+      <p>Hi ${escapeHtml(params.supplierName)},</p>
+      <p>An invoice has been shared with you for shipment <strong>${escapeHtml(params.trackingNumber)}</strong>.</p>
+      <ul>
+        <li><strong>Invoice Number:</strong> ${escapeHtml(params.invoiceNumber)}</li>
+        <li><strong>Status:</strong> ${escapeHtml(statusLabel)}</li>
+        <li><strong>Total (USD):</strong> ${escapeHtml(params.totalUsd ?? 'N/A')}</li>
+        <li><strong>Total (NGN):</strong> ${escapeHtml(params.totalNgn ?? 'N/A')}</li>
+      </ul>
+      ${noteSection}
+      ${attachmentSection}
+      <p>Please contact support if you need help with this invoice.</p>
+    `,
+    text: [
+      `Hi ${params.supplierName},`,
+      '',
+      `Invoice ${params.invoiceNumber} has been shared with you for shipment ${params.trackingNumber}.`,
+      `Status: ${statusLabel}`,
+      `Total (USD): ${params.totalUsd ?? 'N/A'}`,
+      `Total (NGN): ${params.totalNgn ?? 'N/A'}`,
+      params.note?.trim() ? `Note: ${params.note.trim()}` : '',
+      '',
+      (params.attachmentUrls?.length ?? 0) > 0
+        ? `Files:\n${params.attachmentUrls?.join('\n') ?? ''}`
+        : 'No task-invoice attachment links were included in this dispatch.',
+      '',
+      'Please contact support if you need help with this invoice.',
+    ]
+      .filter((line) => line !== '')
+      .join('\n'),
   })
 }

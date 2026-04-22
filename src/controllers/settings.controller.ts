@@ -15,6 +15,7 @@ import {
   settingsTemplatesService,
   type NotificationTemplateChannel,
 } from '../services/settings-templates.service'
+import { settingsShipmentTypesService } from '../services/settings-shipment-types.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import { PreferredLanguage, TransportMode, UserRole } from '../types/enums'
@@ -126,6 +127,66 @@ export const settingsController = {
       return reply.send(successResponse(data))
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to update FX rate settings'
+      return reply.code(400).send({ success: false, message })
+    }
+  },
+
+  async listShipmentTypes(_request: FastifyRequest, reply: FastifyReply) {
+    const data = await settingsShipmentTypesService.getShipmentTypeSettings({
+      includeInactive: true,
+    })
+    return reply.send(successResponse(data))
+  },
+
+  async updateShipmentTypes(
+    request: FastifyRequest<{
+      Body: {
+        items?: Array<{
+          key: string
+          label?: string
+          isActive?: boolean
+          coreShipmentType?: 'air' | 'ocean' | 'd2d'
+          estimatorMode?: 'CALCULATED' | 'INTAKE'
+          infoTitle?: string | null
+          infoDescription?: string | null
+          submitEndpoint?: string | null
+          requiredFields?: string[]
+          nextStep?: string | null
+        }>
+        deleteKeys?: string[]
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const result = await settingsShipmentTypesService.updateShipmentTypeSettings({
+        actorId: request.user.id,
+        items: request.body.items,
+        deleteKeys: request.body.deleteKeys,
+      })
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: 'Updated shipment type settings',
+        resourceType: 'app_settings',
+        resourceId: 'shipment_types',
+        request,
+        metadata: {
+          summary: result.summary,
+        },
+      })
+
+      return reply.send(
+        successResponse({
+          summary: result.summary,
+          ...result.settings,
+        }),
+      )
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Unable to update shipment type settings'
       return reply.code(400).send({ success: false, message })
     }
   },

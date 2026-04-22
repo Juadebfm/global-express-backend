@@ -99,14 +99,11 @@ After the customer pays and returns to your \`callbackUrl\`, call \`POST /api/v1
         'Generates a short-lived presigned PUT URL for uploading a payment receipt file to R2. After upload, submit the receipt using POST /payments/receipts.',
       security: [{ bearerAuth: [] }],
       body: z.object({
-        orderId: z.string().uuid().optional(),
-        invoiceId: z.string().uuid().optional(),
+        orderId: z.string().uuid().describe('UUID of the order this receipt belongs to'),
         contentType: z
           .enum(['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
           .describe('Receipt file MIME type'),
         originalFileName: z.string().optional(),
-      }).refine((v) => Boolean(v.orderId || v.invoiceId), {
-        message: 'Either orderId or invoiceId is required',
       }),
       response: {
         200: z.object({ success: z.literal(true), data: receiptUploadResponseSchema }),
@@ -125,18 +122,15 @@ After the customer pays and returns to your \`callbackUrl\`, call \`POST /api/v1
       tags: ['Payments'],
       summary: 'Submit uploaded payment receipt for verification',
       description:
-        'Creates a pending transfer payment record linked to an order/invoice and marks payment collection as in-progress pending superadmin verification.',
+        'Creates a pending transfer payment record linked to an order and marks payment collection as in-progress pending superadmin verification.',
       security: [{ bearerAuth: [] }],
       body: z.object({
-        orderId: z.string().uuid().optional(),
-        invoiceId: z.string().uuid().optional(),
+        orderId: z.string().uuid().describe('UUID of the order this receipt belongs to'),
         amount: z.number().positive().describe('Amount paid in major currency units'),
         currency: z.string().default('NGN').optional(),
         r2Key: z.string().min(1).describe('R2 object key returned from /payments/receipts/presign'),
         referenceCode: z.string().optional().describe('Optional bank transfer/reference code'),
         note: z.string().optional().describe('Optional note from customer'),
-      }).refine((v) => Boolean(v.orderId || v.invoiceId), {
-        message: 'Either orderId or invoiceId is required',
       }),
       response: {
         201: z.object({ success: z.literal(true), data: paymentResponseSchema }),

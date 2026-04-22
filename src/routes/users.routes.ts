@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { usersController } from '../controllers/users.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
-import { PreferredLanguage, UserRole } from '../types/enums'
+import { PreferredLanguage, SupplierUpdateRequestStatus, UserRole } from '../types/enums'
 
 const userResponseSchema = z.object({
   id: z.string().uuid().describe('Internal user UUID'),
@@ -27,6 +27,12 @@ const userResponseSchema = z.object({
   // Account
   role: z.nativeEnum(UserRole).describe('Account role: user | supplier | staff | superadmin'),
   isActive: z.boolean().describe('Whether the account is active'),
+  canProvisionClientLogin: z
+    .boolean()
+    .describe('Superadmin-managed flag that allows staff to create/share client login links'),
+  canManageShipmentBatches: z
+    .boolean()
+    .describe('Superadmin-managed flag that allows staff to manage dispatch batches'),
   consentMarketing: z.boolean().describe('Marketing email consent'),
   notifyEmailAlerts: z.boolean().describe('Whether transactional email alerts are enabled'),
   notifySmsAlerts: z.boolean().describe('Whether SMS/WhatsApp alerts are enabled'),
@@ -71,6 +77,13 @@ const supplierListItemSchema = z.object({
   businessName: z.string().nullable(),
   email: z.string().email(),
   phone: z.string().nullable(),
+  whatsappNumber: z.string().nullable(),
+  shippingMark: z.string().nullable(),
+  addressStreet: z.string().nullable(),
+  addressCity: z.string().nullable(),
+  addressState: z.string().nullable(),
+  addressCountry: z.string().nullable(),
+  addressPostalCode: z.string().nullable(),
   isActive: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -85,6 +98,25 @@ const mySupplierListItemSchema = supplierListItemSchema.extend({
   savedAt: z.string().nullable(),
   usageCount: z.number().int().nonnegative(),
   lastUsedAt: z.string().nullable(),
+})
+
+const supplierUpdateRequestSchema = z.object({
+  id: z.string().uuid(),
+  requesterUserId: z.string().uuid(),
+  supplierId: z.string().uuid(),
+  status: z.enum(['pending', 'accepted', 'rejected']),
+  proposedFirstName: z.string().nullable(),
+  proposedLastName: z.string().nullable(),
+  proposedBusinessName: z.string().nullable(),
+  proposedPhone: z.string().nullable(),
+  proposedEmail: z.string().nullable(),
+  note: z.string().nullable(),
+  supplierResponseNote: z.string().nullable(),
+  reviewedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  requesterDisplayName: z.string(),
+  supplierDisplayName: z.string(),
 })
 
 const saveMySupplierBodySchema = z
@@ -322,6 +354,144 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
     handler: usersController.saveMySupplier,
   })
 
+  app.post('/me/suppliers/:supplierId/update-request', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'Submit supplier info update request for supplier validation',
+      description:
+        'Customer submits updated supplier info from their vendor view. Supplier receives notification and validates as true/false.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({
+        supplierId: z.string().uuid(),
+      }),
+      body: z
+        .object({
+          firstName: z.string().min(1).nullable().optional(),
+          lastName: z.string().min(1).nullable().optional(),
+          businessName: z.string().min(1).nullable().optional(),
+          phone: z.string().min(5).nullable().optional(),
+          email: z.string().email().nullable().optional(),
+          note: z.string().max(1000).nullable().optional(),
+        })
+        .refine(
+          (value) =>
+            Boolean(
+              value.firstName ??
+                value.lastName ??
+                value.businessName ??
+                value.phone ??
+                value.email,
+            ),
+          {
+            message: 'Provide at least one field to update',
+            path: ['firstName'],
+          },
+        ),
+      response: {
+        201: z.object({
+          success: z.literal(true),
+          data: supplierUpdateRequestSchema,
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
+        422: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.requestMySupplierUpdate,
+  })
+
+  app.get('/me/suppliers/update-requests', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'List my supplier update requests (customer view)',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        page: z.coerce.number().int().positive().optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+        status: z.nativeEnum(SupplierUpdateRequestStatus).optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(supplierUpdateRequestSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.listMySupplierUpdateRequests,
+  })
+
+  app.get('/me/suppliers/validation-requests', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'List incoming supplier validation requests (supplier view)',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        page: z.coerce.number().int().positive().optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+        status: z.nativeEnum(SupplierUpdateRequestStatus).optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(supplierUpdateRequestSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.listIncomingSupplierUpdateRequests,
+  })
+
+  app.patch('/me/suppliers/validation-requests/:id', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Users'],
+      summary: 'Validate supplier update request as true/false (supplier view)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({
+        id: z.string().uuid(),
+      }),
+      body: z.object({
+        isTrue: z.boolean().describe('true=accept, false=reject'),
+        note: z.string().max(1000).nullable().optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: supplierUpdateRequestSchema,
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.validateIncomingSupplierUpdateRequest,
+  })
+
   app.delete('/me', {
     preHandler: [authenticate],
     schema: {
@@ -529,6 +699,52 @@ Provide either \`firstName\` + \`lastName\`, or \`businessName\` (or both). Addr
       },
     },
     handler: usersController.updateUserRole,
+  })
+
+  app.patch('/:id/client-login-permission', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Users — SuperAdmin'],
+      summary: 'Grant/revoke staff client login-link permission',
+      description: `Allows superadmin to decide which **staff** accounts can provision customer login links.
+
+Only staff accounts can hold this permission.`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Staff user UUID') }),
+      body: z.object({
+        canProvisionClientLogin: z.boolean().describe('true = grant, false = revoke'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: userResponseSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        422: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.setStaffClientLoginProvisionPermission,
+  })
+
+  app.patch('/:id/shipment-batch-permission', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Users — SuperAdmin'],
+      summary: 'Grant/revoke staff shipment batch management permission',
+      description: `Allows superadmin to decide which **staff** accounts can manage dispatch batches (batch status updates, moving goods to next batch).`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Staff user UUID') }),
+      body: z.object({
+        canManageShipmentBatches: z.boolean().describe('true = grant, false = revoke'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: userResponseSchema }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        422: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: usersController.setStaffShipmentBatchPermission,
   })
 
   app.delete('/:id', {

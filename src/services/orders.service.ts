@@ -59,6 +59,7 @@ const MILESTONE_STATUSES = new Set<ShipmentStatusV2>([
   ShipmentStatusV2.FLIGHT_LANDED_LAGOS,
   ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT,
   ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS,
+  ShipmentStatusV2.IN_EXTRA_TRUCK_MOVEMENT_LAGOS,
   ShipmentStatusV2.LOCAL_COURIER_ASSIGNED,
   ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY,
   ShipmentStatusV2.DELIVERED_TO_RECIPIENT,
@@ -75,6 +76,7 @@ const V2_MILESTONE_TITLES: Partial<Record<ShipmentStatusV2, string>> = {
   [ShipmentStatusV2.FLIGHT_LANDED_LAGOS]: 'Landed in Lagos',
   [ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT]: 'Arrived at Lagos Port',
   [ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS]: 'Customs Cleared',
+  [ShipmentStatusV2.IN_EXTRA_TRUCK_MOVEMENT_LAGOS]: 'Extra Truck Movement in Lagos',
   [ShipmentStatusV2.LOCAL_COURIER_ASSIGNED]: 'Local Courier Assigned',
   [ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY]: 'Out for Delivery',
   [ShipmentStatusV2.DELIVERED_TO_RECIPIENT]: 'Delivered to Recipient',
@@ -91,6 +93,7 @@ const V2_MILESTONE_BODIES: Partial<Record<ShipmentStatusV2, (tracking: string) =
   [ShipmentStatusV2.FLIGHT_LANDED_LAGOS]: (t) => `Your shipment ${t} has landed in Lagos.`,
   [ShipmentStatusV2.VESSEL_ARRIVED_LAGOS_PORT]: (t) => `Your shipment ${t} has arrived at Lagos port.`,
   [ShipmentStatusV2.CUSTOMS_CLEARED_LAGOS]: (t) => `Your shipment ${t} has cleared customs in Lagos.`,
+  [ShipmentStatusV2.IN_EXTRA_TRUCK_MOVEMENT_LAGOS]: (t) => `Your shipment ${t} is on an extra truck movement leg in Lagos.`,
   [ShipmentStatusV2.LOCAL_COURIER_ASSIGNED]: (t) => `Your shipment ${t} has been handed over to a local courier.`,
   [ShipmentStatusV2.OUT_FOR_DELIVERY_DESTINATION_CITY]: (t) => `Your shipment ${t} is out for delivery in your destination city.`,
   [ShipmentStatusV2.DELIVERED_TO_RECIPIENT]: (t) => `Your shipment ${t} has been delivered.`,
@@ -150,6 +153,7 @@ export interface WarehouseVerifyPackageInput {
   weightKg?: number
   cbm?: number
   itemCostUsd?: number
+  requiresExtraTruckMovement?: boolean
   specialPackagingType?: string
   isRestricted?: boolean
   restrictedReason?: string
@@ -308,51 +312,8 @@ export class OrdersService {
 
     if (!existing) return null
 
-    // 2. Resolve transport mode (set after warehouse verification)
-    const mode = normalizeTransportMode(
-      existing.transportMode ?? resolveTransportModeFromShipmentType(existing.shipmentType),
-    )
-
-    // 3. Enforce sequential transition rules
-    if (mode) {
-      if (!canTransitionSequentially(
-        mode,
-        existing.statusV2 as ShipmentStatusV2 | null,
-        input.statusV2,
-        existing.shipmentType as ShipmentType | null,
-      )) {
-        throw new Error(
-          `Invalid status transition: cannot move from "${existing.statusV2 ?? 'none'}" to "${input.statusV2}" for ${mode} shipments.`,
-        )
-      }
-    } else {
-      // No transport mode yet — only common flow statuses and exceptions are allowed
-      if (!isExceptionStatus(input.statusV2) && !COMMON_FLOW.includes(input.statusV2)) {
-        throw new Error(
-          `Transport mode must be set via warehouse verification before advancing to "${input.statusV2}".`,
-        )
-      }
-      // Validate sequential order within the common flow (use AIR as placeholder — both flows share COMMON_FLOW)
-      if (!isExceptionStatus(input.statusV2) && !canTransitionSequentially(
-        TransportMode.AIR,
-        existing.statusV2 as ShipmentStatusV2 | null,
-        input.statusV2,
-        existing.shipmentType as ShipmentType | null,
-      )) {
-        throw new Error(
-          `Invalid status transition: cannot move from "${existing.statusV2 ?? 'none'}" to "${input.statusV2}".`,
-        )
-      }
-    }
-
-    // 4. Payment gate — order must be paid before it can be marked ready for pickup
-    if (input.statusV2 === ShipmentStatusV2.READY_FOR_PICKUP) {
-      if (existing.paymentCollectionStatus !== 'PAID_IN_FULL') {
-        throw new Error(
-          'Payment must be collected in full before marking the shipment as ready for pickup.',
-        )
-      }
-    }
+    const requiresExtraTruckMovement = await this.orderRequiresExtraTruckMovement(id)
+    this.assertOrderCanTransition(existing, input.statusV2, { requiresExtraTruckMovement })
 
     // 5. Write statusV2 as primary (legacy status column no longer synced — Phase 6)
     const [updated] = await db
@@ -514,7 +475,105 @@ export class OrdersService {
       }
     }
 
+    await this.notifyD2DSuppliersIfNeeded({
+      orderId: updated.id,
+      trackingNumber: decrypted.trackingNumber,
+      statusV2: input.statusV2,
+      shipmentType: updated.shipmentType,
+      locale: (input.preferredLanguage ?? 'en') as import('../types/enums').PreferredLanguage,
+    })
+
     return decrypted
+  }
+
+  async updateBatchStatus(input: {
+    batchId: string
+    statusV2: ShipmentStatusV2
+    updatedBy: string
+    actorRole: UserRole
+    actorCanManageShipmentBatches: boolean
+  }) {
+    const rows = await db
+      .select({
+        orderId: orders.id,
+        statusV2: orders.statusV2,
+        shipmentType: orders.shipmentType,
+        transportMode: orders.transportMode,
+        paymentCollectionStatus: orders.paymentCollectionStatus,
+        requiresExtraTruckMovement: sql<boolean>`exists(
+          select 1
+          from order_packages op
+          where op.order_id = ${orders.id}
+            and op.requires_extra_truck_movement = true
+        )`,
+        senderEmail: users.email,
+        senderPhone: users.phone,
+        notifyEmailAlerts: users.notifyEmailAlerts,
+        notifySmsAlerts: users.notifySmsAlerts,
+        notifyInAppAlerts: users.notifyInAppAlerts,
+        preferredLanguage: users.preferredLanguage,
+      })
+      .from(orders)
+      .innerJoin(users, eq(users.id, orders.senderId))
+      .where(and(eq(orders.dispatchBatchId, input.batchId), isNull(orders.deletedAt)))
+
+    if (rows.length === 0) {
+      throw new Error('No shipments found in this batch.')
+    }
+
+    rows.forEach((row) => {
+      this.assertOrderCanTransition(
+        {
+          statusV2: row.statusV2,
+          shipmentType: row.shipmentType,
+          transportMode: row.transportMode,
+          paymentCollectionStatus: row.paymentCollectionStatus,
+        } as Pick<
+          typeof orders.$inferSelect,
+          'statusV2' | 'shipmentType' | 'transportMode' | 'paymentCollectionStatus'
+        >,
+        input.statusV2,
+        { requiresExtraTruckMovement: row.requiresExtraTruckMovement },
+      )
+    })
+
+    const updatedOrders: Array<{ id: string; trackingNumber: string }> = []
+
+    for (const row of rows) {
+      const senderEmail = row.senderEmail ? decrypt(row.senderEmail) : undefined
+      const senderPhone = row.senderPhone ? decrypt(row.senderPhone) : undefined
+
+      const updated = await this.updateOrderStatus(row.orderId, {
+        statusV2: input.statusV2,
+        updatedBy: input.updatedBy,
+        actorRole: input.actorRole,
+        senderEmail,
+        senderPhone,
+        notifyEmailAlerts: row.notifyEmailAlerts,
+        notifySmsAlerts: row.notifySmsAlerts,
+        notifyInAppAlerts: row.notifyInAppAlerts,
+        preferredLanguage: row.preferredLanguage,
+      })
+
+      if (!updated) continue
+      updatedOrders.push({ id: updated.id, trackingNumber: updated.trackingNumber })
+    }
+
+    const departedStatuses = new Set<ShipmentStatusV2>([
+      ShipmentStatusV2.FLIGHT_DEPARTED,
+      ShipmentStatusV2.VESSEL_DEPARTED,
+    ])
+
+    if (departedStatuses.has(input.statusV2) && input.actorCanManageShipmentBatches) {
+      await dispatchBatchesService.approveCutoff(input.batchId, input.updatedBy)
+    }
+
+    return {
+      batchId: input.batchId,
+      statusV2: input.statusV2,
+      updatedCount: updatedOrders.length,
+      updatedOrders,
+    }
   }
 
   async verifyOrderAtWarehouse(id: string, input: VerifyOrderAtWarehouseInput) {
@@ -599,6 +658,7 @@ export class OrdersService {
         cbm: derivedCbm ?? null,
         airVolumetricWeightKg: derivedAirVolumetricWeightKg,
         airChargeableWeightKg,
+        requiresExtraTruckMovement: pkg.requiresExtraTruckMovement ?? false,
         specialPackagingType: pkg.specialPackagingType ?? null,
         specialPackagingSurchargeUsd,
         itemCostUsd: pkg.itemCostUsd ?? null,
@@ -746,6 +806,7 @@ export class OrdersService {
           weightKg: pkg.weightKg !== null ? pkg.weightKg.toString() : null,
           cbm: pkg.cbm !== null ? pkg.cbm.toString() : null,
           itemCostUsd: pkg.itemCostUsd !== null ? pkg.itemCostUsd.toString() : null,
+          requiresExtraTruckMovement: pkg.requiresExtraTruckMovement,
           specialPackagingType: pkg.specialPackagingType,
           specialPackagingSurchargeUsd: pkg.specialPackagingSurchargeUsd !== null ? pkg.specialPackagingSurchargeUsd.toString() : null,
           isRestricted: pkg.isRestricted,
@@ -810,6 +871,165 @@ export class OrdersService {
       })
 
     return this.getOrderById(id)
+  }
+
+  private assertOrderCanTransition(
+    existing: Pick<
+      typeof orders.$inferSelect,
+      'statusV2' | 'shipmentType' | 'transportMode' | 'paymentCollectionStatus'
+    >,
+    nextStatus: ShipmentStatusV2,
+    options?: {
+      requiresExtraTruckMovement?: boolean
+    },
+  ) {
+    const allowSkipExtraTruckMovement = !(options?.requiresExtraTruckMovement ?? false)
+    const mode = normalizeTransportMode(
+      existing.transportMode ?? resolveTransportModeFromShipmentType(existing.shipmentType),
+    )
+
+    if (mode) {
+      if (!canTransitionSequentially(
+        mode,
+        existing.statusV2 as ShipmentStatusV2 | null,
+        nextStatus,
+        existing.shipmentType as ShipmentType | null,
+        { allowSkipExtraTruckMovement },
+      )) {
+        throw new Error(
+          `Invalid status transition: cannot move from "${existing.statusV2 ?? 'none'}" to "${nextStatus}" for ${mode} shipments.`,
+        )
+      }
+    } else {
+      if (!isExceptionStatus(nextStatus) && !COMMON_FLOW.includes(nextStatus)) {
+        throw new Error(
+          `Transport mode must be set via warehouse verification before advancing to "${nextStatus}".`,
+        )
+      }
+      if (
+        !isExceptionStatus(nextStatus) &&
+        !canTransitionSequentially(
+          TransportMode.AIR,
+          existing.statusV2 as ShipmentStatusV2 | null,
+          nextStatus,
+          existing.shipmentType as ShipmentType | null,
+          { allowSkipExtraTruckMovement },
+        )
+      ) {
+        throw new Error(
+          `Invalid status transition: cannot move from "${existing.statusV2 ?? 'none'}" to "${nextStatus}".`,
+        )
+      }
+    }
+
+    if (nextStatus === ShipmentStatusV2.READY_FOR_PICKUP) {
+      if (existing.paymentCollectionStatus !== 'PAID_IN_FULL') {
+        throw new Error(
+          'Payment must be collected in full before marking the shipment as ready for pickup.',
+        )
+      }
+    }
+  }
+
+  private async orderRequiresExtraTruckMovement(orderId: string): Promise<boolean> {
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(orderPackages)
+      .where(
+        and(
+          eq(orderPackages.orderId, orderId),
+          eq(orderPackages.requiresExtraTruckMovement, true),
+        ),
+      )
+      .limit(1)
+
+    return (row?.count ?? 0) > 0
+  }
+
+  private async notifyD2DSuppliersIfNeeded(input: {
+    orderId: string
+    trackingNumber: string
+    statusV2: ShipmentStatusV2
+    shipmentType: string | null
+    locale: import('../types/enums').PreferredLanguage
+  }) {
+    if (input.shipmentType !== ShipmentType.D2D) return
+    if (!MILESTONE_STATUSES.has(input.statusV2)) return
+
+    const supplierRows = await db
+      .select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        businessName: users.businessName,
+        email: users.email,
+        phone: users.phone,
+        notifyEmailAlerts: users.notifyEmailAlerts,
+        notifySmsAlerts: users.notifySmsAlerts,
+        notifyInAppAlerts: users.notifyInAppAlerts,
+        preferredLanguage: users.preferredLanguage,
+      })
+      .from(users)
+      .innerJoin(orderPackages, eq(orderPackages.supplierId, users.id))
+      .where(
+        and(
+          eq(orderPackages.orderId, input.orderId),
+          eq(users.role, UserRole.SUPPLIER),
+          isNull(users.deletedAt),
+        ),
+      )
+
+    const uniq = new Map<string, (typeof supplierRows)[number]>()
+    supplierRows.forEach((row) => uniq.set(row.id, row))
+
+    for (const supplier of uniq.values()) {
+      const firstName = supplier.firstName ? decrypt(supplier.firstName) : null
+      const lastName = supplier.lastName ? decrypt(supplier.lastName) : null
+      const businessName = supplier.businessName ? decrypt(supplier.businessName) : null
+      const displayName =
+        (firstName && lastName && `${firstName} ${lastName}`) ||
+        firstName ||
+        businessName ||
+        'Supplier'
+
+      if (supplier.notifyInAppAlerts ?? true) {
+        notifyUser({
+          userId: supplier.id,
+          orderId: input.orderId,
+          type: 'order_status_update',
+          title: 'Customer Shipment Status Updated',
+          subtitle: input.trackingNumber,
+          body: `A D2D shipment linked to you is now ${input.statusV2.replace(/_/g, ' ')}.`,
+          metadata: {
+            orderId: input.orderId,
+            trackingNumber: input.trackingNumber,
+            statusV2: input.statusV2,
+          },
+        }).catch(() => {})
+      }
+
+      const email = supplier.email ? decrypt(supplier.email) : null
+      if (email && (supplier.notifyEmailAlerts ?? true)) {
+        sendOrderStatusUpdateEmail({
+          to: email,
+          recipientName: displayName,
+          trackingNumber: input.trackingNumber,
+          status: input.statusV2,
+          templateKey: `order.${input.statusV2.toLowerCase()}`,
+          locale: (supplier.preferredLanguage ?? input.locale) as import('../types/enums').PreferredLanguage,
+        }).catch(() => {})
+      }
+
+      const phone = supplier.phone ? decrypt(supplier.phone) : null
+      if (phone && (supplier.notifySmsAlerts ?? true)) {
+        sendOrderStatusWhatsApp({
+          phone,
+          recipientName: displayName,
+          trackingNumber: input.trackingNumber,
+          status: input.statusV2,
+        }).catch(() => {})
+      }
+    }
   }
 
   async listOrders(
@@ -943,6 +1163,7 @@ export class OrdersService {
         widthCm: orderPackages.widthCm,
         heightCm: orderPackages.heightCm,
         itemCostUsd: orderPackages.itemCostUsd,
+        requiresExtraTruckMovement: orderPackages.requiresExtraTruckMovement,
         arrivalAt: orderPackages.arrivalAt,
         supplierId: users.id,
         supplierFirstName: users.firstName,
@@ -977,6 +1198,7 @@ export class OrdersService {
           height: row.heightCm,
         },
         itemCostUsd: row.itemCostUsd,
+        requiresExtraTruckMovement: row.requiresExtraTruckMovement,
         arrivalAt: row.arrivalAt?.toISOString() ?? null,
         supplierId: row.supplierId ?? null,
         supplierName,

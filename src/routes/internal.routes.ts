@@ -261,6 +261,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: z.object({
             requireNationalId: z.boolean(),
+            allowedCountries: z.array(z.enum(['SK', 'Nigeria'])),
           }),
         }),
       },
@@ -274,7 +275,13 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
       const requireNationalId = (setting?.value as { enabled?: boolean })?.enabled ?? false
 
-      return reply.send({ success: true, data: { requireNationalId } })
+      return reply.send({
+        success: true,
+        data: {
+          requireNationalId,
+          allowedCountries: ['SK', 'Nigeria'],
+        },
+      })
     },
   })
 
@@ -288,7 +295,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       tags: ['Internal — Profile'],
       summary: 'Complete staff profile',
       description:
-        'Completes the mandatory profile for internal users. All fields except nationalId are required. nationalId is required only when the superadmin has enabled it via settings.',
+        'Completes the mandatory profile for internal users. All fields except nationalId are required. nationalId is required only when the superadmin has enabled it via settings. addressCountry must be either SK or Nigeria.',
       security: [{ bearerAuth: [] }],
       body: z.object({
         gender: z.enum(['male', 'female', 'other']),
@@ -297,7 +304,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
         addressStreet: z.string().min(1, 'Street address is required'),
         addressCity: z.string().min(1, 'City is required'),
         addressState: z.string().min(1, 'State is required'),
-        addressCountry: z.string().min(1, 'Country is required'),
+        addressCountry: z.enum(['SK', 'Nigeria']),
         addressPostalCode: z.string().min(1, 'Postal code is required'),
         emergencyContactName: z.string().min(1, 'Emergency contact name is required'),
         emergencyContactPhone: z.string().min(1, 'Emergency contact phone is required'),

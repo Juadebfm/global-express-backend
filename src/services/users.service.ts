@@ -1,10 +1,18 @@
 import { eq, and, isNull, sql, desc, inArray } from 'drizzle-orm'
 import { db } from '../config/db'
-import { users, orders, payments, orderPackages, userSuppliers } from '../../drizzle/schema'
+import {
+  users,
+  orders,
+  payments,
+  orderPackages,
+  userSuppliers,
+  supplierUpdateRequests,
+} from '../../drizzle/schema'
 import { encrypt, decrypt, hashEmail } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import type { PaginationParams } from '../types'
-import { PreferredLanguage, UserRole } from '../types/enums'
+import { PreferredLanguage, SupplierUpdateRequestStatus, UserRole } from '../types/enums'
+import { notifyUser } from './notifications.service'
 
 export interface CreateUserInput {
   clerkId: string
@@ -103,6 +111,13 @@ export interface SupplierListItem {
   businessName: string | null
   email: string
   phone: string | null
+  whatsappNumber: string | null
+  shippingMark: string | null
+  addressStreet: string | null
+  addressCity: string | null
+  addressState: string | null
+  addressCountry: string | null
+  addressPostalCode: string | null
   isActive: boolean
   createdAt: string
   updatedAt: string
@@ -121,6 +136,7 @@ export interface MySupplierListItem extends SupplierListItem {
 
 export interface SaveMySupplierInput {
   userId: string
+  linkedByUserId?: string
   supplierId?: string
   email?: string
   firstName?: string | null
@@ -142,6 +158,36 @@ export type SaveMySupplierResult =
   | { status: 'forbidden'; message: string }
   | { status: 'conflict'; message: string }
 
+export interface RequestSupplierInfoUpdateInput {
+  requesterUserId: string
+  supplierId: string
+  firstName?: string | null
+  lastName?: string | null
+  businessName?: string | null
+  phone?: string | null
+  email?: string | null
+  note?: string | null
+}
+
+export interface SupplierUpdateRequestListItem {
+  id: string
+  requesterUserId: string
+  supplierId: string
+  status: SupplierUpdateRequestStatus
+  proposedFirstName: string | null
+  proposedLastName: string | null
+  proposedBusinessName: string | null
+  proposedPhone: string | null
+  proposedEmail: string | null
+  note: string | null
+  supplierResponseNote: string | null
+  reviewedAt: string | null
+  createdAt: string
+  updatedAt: string
+  requesterDisplayName: string
+  supplierDisplayName: string
+}
+
 interface SupplierLinkResult {
   linkedNow: boolean
   linkedAt: Date
@@ -154,9 +200,20 @@ interface SupplierUserRow {
   businessName: string | null
   email: string
   phone: string | null
+  whatsappNumber: string | null
+  shippingMark: string | null
+  addressStreet: string | null
+  addressCity: string | null
+  addressState: string | null
+  addressCountry: string | null
+  addressPostalCode: string | null
   isActive: boolean
   createdAt: Date
   updatedAt: Date
+}
+
+function httpError(message: string, statusCode: number): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode })
 }
 
 export class UsersService {
@@ -294,6 +351,68 @@ export class UsersService {
       .returning()
 
     return updated ? this.decryptUser(updated) : null
+  }
+
+  async setStaffClientLoginProvisionPermission(staffId: string, enabled: boolean) {
+    const [target] = await db
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(and(eq(users.id, staffId), isNull(users.deletedAt)))
+      .limit(1)
+
+    if (!target) {
+      return { status: 'not_found' as const }
+    }
+
+    if (target.role !== UserRole.STAFF) {
+      return { status: 'invalid_role' as const }
+    }
+
+    const [updated] = await db
+      .update(users)
+      .set({
+        canProvisionClientLogin: enabled,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, staffId))
+      .returning()
+
+    if (!updated) {
+      return { status: 'not_found' as const }
+    }
+
+    return { status: 'ok' as const, data: this.decryptUser(updated) }
+  }
+
+  async setStaffShipmentBatchPermission(staffId: string, enabled: boolean) {
+    const [target] = await db
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(and(eq(users.id, staffId), isNull(users.deletedAt)))
+      .limit(1)
+
+    if (!target) {
+      return { status: 'not_found' as const }
+    }
+
+    if (target.role !== UserRole.STAFF) {
+      return { status: 'invalid_role' as const }
+    }
+
+    const [updated] = await db
+      .update(users)
+      .set({
+        canManageShipmentBatches: enabled,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, staffId))
+      .returning()
+
+    if (!updated) {
+      return { status: 'not_found' as const }
+    }
+
+    return { status: 'ok' as const, data: this.decryptUser(updated) }
   }
 
   async softDeleteUser(id: string) {
@@ -436,6 +555,13 @@ export class UsersService {
           supplierBusinessName: users.businessName,
           supplierEmail: users.email,
           supplierPhone: users.phone,
+          supplierWhatsappNumber: users.whatsappNumber,
+          supplierShippingMark: users.shippingMark,
+          supplierAddressStreet: users.addressStreet,
+          supplierAddressCity: users.addressCity,
+          supplierAddressState: users.addressState,
+          supplierAddressCountry: users.addressCountry,
+          supplierAddressPostalCode: users.addressPostalCode,
           supplierIsActive: users.isActive,
           supplierCreatedAt: users.createdAt,
           supplierUpdatedAt: users.updatedAt,
@@ -460,6 +586,13 @@ export class UsersService {
           supplierBusinessName: users.businessName,
           supplierEmail: users.email,
           supplierPhone: users.phone,
+          supplierWhatsappNumber: users.whatsappNumber,
+          supplierShippingMark: users.shippingMark,
+          supplierAddressStreet: users.addressStreet,
+          supplierAddressCity: users.addressCity,
+          supplierAddressState: users.addressState,
+          supplierAddressCountry: users.addressCountry,
+          supplierAddressPostalCode: users.addressPostalCode,
           supplierIsActive: users.isActive,
           supplierCreatedAt: users.createdAt,
           supplierUpdatedAt: users.updatedAt,
@@ -485,6 +618,13 @@ export class UsersService {
           users.businessName,
           users.email,
           users.phone,
+          users.whatsappNumber,
+          users.shippingMark,
+          users.addressStreet,
+          users.addressCity,
+          users.addressState,
+          users.addressCountry,
+          users.addressPostalCode,
           users.isActive,
           users.createdAt,
           users.updatedAt,
@@ -512,6 +652,13 @@ export class UsersService {
           businessName: row.supplierBusinessName,
           email: row.supplierEmail,
           phone: row.supplierPhone,
+          whatsappNumber: row.supplierWhatsappNumber,
+          shippingMark: row.supplierShippingMark,
+          addressStreet: row.supplierAddressStreet,
+          addressCity: row.supplierAddressCity,
+          addressState: row.supplierAddressState,
+          addressCountry: row.supplierAddressCountry,
+          addressPostalCode: row.supplierAddressPostalCode,
           isActive: row.supplierIsActive,
           createdAt: row.supplierCreatedAt,
           updatedAt: row.supplierUpdatedAt,
@@ -554,6 +701,13 @@ export class UsersService {
           businessName: row.supplierBusinessName,
           email: row.supplierEmail,
           phone: row.supplierPhone,
+          whatsappNumber: row.supplierWhatsappNumber,
+          shippingMark: row.supplierShippingMark,
+          addressStreet: row.supplierAddressStreet,
+          addressCity: row.supplierAddressCity,
+          addressState: row.supplierAddressState,
+          addressCountry: row.supplierAddressCountry,
+          addressPostalCode: row.supplierAddressPostalCode,
           isActive: row.supplierIsActive,
           createdAt: row.supplierCreatedAt,
           updatedAt: row.supplierUpdatedAt,
@@ -637,7 +791,7 @@ export class UsersService {
       const link = await this.ensureUserSupplierLink({
         userId: input.userId,
         supplierId: existingSupplier.id,
-        linkedByUserId: input.userId,
+        linkedByUserId: input.linkedByUserId ?? input.userId,
       })
       const usage = await this.getUserSupplierUsage(input.userId, existingSupplier.id)
 
@@ -758,7 +912,7 @@ export class UsersService {
     const link = await this.ensureUserSupplierLink({
       userId: input.userId,
       supplierId: supplier.id,
-      linkedByUserId: input.userId,
+      linkedByUserId: input.linkedByUserId ?? input.userId,
     })
     const usage = await this.getUserSupplierUsage(input.userId, supplier.id)
 
@@ -781,6 +935,269 @@ export class UsersService {
         linkedNow: link.linkedNow,
       },
     }
+  }
+
+  async requestSupplierInfoUpdate(input: RequestSupplierInfoUpdateInput): Promise<SupplierUpdateRequestListItem> {
+    const normalizedFirstName = this.normalizeNullableText(input.firstName)
+    const normalizedLastName = this.normalizeNullableText(input.lastName)
+    const normalizedBusinessName = this.normalizeNullableText(input.businessName)
+    const normalizedPhone = this.normalizeNullableText(input.phone)
+    const normalizedEmail = this.normalizeNullableText(input.email)?.toLowerCase() ?? null
+    const normalizedNote = this.normalizeNullableText(input.note)
+
+    if (
+      !normalizedFirstName &&
+      !normalizedLastName &&
+      !normalizedBusinessName &&
+      !normalizedPhone &&
+      !normalizedEmail
+    ) {
+      throw httpError('Provide at least one supplier field to update.', 422)
+    }
+
+    const [requester] = await db
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(and(eq(users.id, input.requesterUserId), isNull(users.deletedAt)))
+      .limit(1)
+
+    if (!requester) throw httpError('User not found', 404)
+    if (requester.role !== UserRole.USER) {
+      throw httpError('Only customer users can submit supplier update requests.', 403)
+    }
+
+    const [supplier] = await db
+      .select({
+        id: users.id,
+        role: users.role,
+      })
+      .from(users)
+      .where(and(eq(users.id, input.supplierId), isNull(users.deletedAt)))
+      .limit(1)
+
+    if (!supplier || supplier.role !== UserRole.SUPPLIER) {
+      throw httpError('Supplier not found', 404)
+    }
+
+    const [linked] = await db
+      .select({ id: userSuppliers.userId })
+      .from(userSuppliers)
+      .where(and(eq(userSuppliers.userId, input.requesterUserId), eq(userSuppliers.supplierId, input.supplierId)))
+      .limit(1)
+
+    const [used] = await db
+      .select({ count: sql<number>`count(${orderPackages.id})::int` })
+      .from(orderPackages)
+      .innerJoin(orders, eq(orders.id, orderPackages.orderId))
+      .where(
+        and(
+          eq(orders.senderId, input.requesterUserId),
+          eq(orderPackages.supplierId, input.supplierId),
+          isNull(orders.deletedAt),
+        ),
+      )
+
+    if (!linked && (used?.count ?? 0) < 1) {
+      throw httpError('Supplier must be linked or previously used before requesting updates.', 403)
+    }
+
+    const [pendingExisting] = await db
+      .select({ id: supplierUpdateRequests.id })
+      .from(supplierUpdateRequests)
+      .where(
+        and(
+          eq(supplierUpdateRequests.requesterUserId, input.requesterUserId),
+          eq(supplierUpdateRequests.supplierId, input.supplierId),
+          eq(supplierUpdateRequests.status, SupplierUpdateRequestStatus.PENDING),
+        ),
+      )
+      .limit(1)
+
+    if (pendingExisting) {
+      throw httpError('A pending supplier update request already exists for this supplier.', 409)
+    }
+
+    const [created] = await db
+      .insert(supplierUpdateRequests)
+      .values({
+        requesterUserId: input.requesterUserId,
+        supplierId: input.supplierId,
+        status: SupplierUpdateRequestStatus.PENDING,
+        proposedFirstName: normalizedFirstName ? encrypt(normalizedFirstName) : null,
+        proposedLastName: normalizedLastName ? encrypt(normalizedLastName) : null,
+        proposedBusinessName: normalizedBusinessName ? encrypt(normalizedBusinessName) : null,
+        proposedPhone: normalizedPhone ? encrypt(normalizedPhone) : null,
+        proposedEmail: normalizedEmail ? encrypt(normalizedEmail) : null,
+        note: normalizedNote,
+        updatedAt: new Date(),
+      })
+      .returning()
+
+    notifyUser({
+      userId: input.supplierId,
+      type: 'system_announcement',
+      title: 'Vendor Info Update Request',
+      subtitle: 'Please validate submitted info',
+      body: 'A customer submitted updated supplier details for your validation (true/false).',
+      metadata: {
+        requestId: created.id,
+        requesterUserId: input.requesterUserId,
+        supplierId: input.supplierId,
+      },
+      createdBy: input.requesterUserId,
+    }).catch(() => {})
+
+    return this.getSupplierUpdateRequestById(created.id)
+  }
+
+  async listMySupplierUpdateRequests(
+    userId: string,
+    params: PaginationParams & { status?: SupplierUpdateRequestStatus },
+  ) {
+    const offset = getPaginationOffset(params.page, params.limit)
+
+    const where = and(
+      eq(supplierUpdateRequests.requesterUserId, userId),
+      params.status ? eq(supplierUpdateRequests.status, params.status) : undefined,
+    )
+
+    const [rows, countResult] = await Promise.all([
+      db
+        .select()
+        .from(supplierUpdateRequests)
+        .where(where)
+        .orderBy(desc(supplierUpdateRequests.createdAt))
+        .limit(params.limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(supplierUpdateRequests)
+        .where(where),
+    ])
+
+    const data = await Promise.all(rows.map((row) => this.getSupplierUpdateRequestById(row.id)))
+    return buildPaginatedResult(data, countResult[0]?.count ?? 0, params)
+  }
+
+  async listIncomingSupplierUpdateRequests(
+    supplierId: string,
+    params: PaginationParams & { status?: SupplierUpdateRequestStatus },
+  ) {
+    const offset = getPaginationOffset(params.page, params.limit)
+
+    const where = and(
+      eq(supplierUpdateRequests.supplierId, supplierId),
+      params.status ? eq(supplierUpdateRequests.status, params.status) : undefined,
+    )
+
+    const [rows, countResult] = await Promise.all([
+      db
+        .select()
+        .from(supplierUpdateRequests)
+        .where(where)
+        .orderBy(desc(supplierUpdateRequests.createdAt))
+        .limit(params.limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(supplierUpdateRequests)
+        .where(where),
+    ])
+
+    const data = await Promise.all(rows.map((row) => this.getSupplierUpdateRequestById(row.id)))
+    return buildPaginatedResult(data, countResult[0]?.count ?? 0, params)
+  }
+
+  async validateSupplierUpdateRequest(input: {
+    requestId: string
+    supplierId: string
+    isTrue: boolean
+    note?: string | null
+  }): Promise<SupplierUpdateRequestListItem> {
+    const [request] = await db
+      .select()
+      .from(supplierUpdateRequests)
+      .where(eq(supplierUpdateRequests.id, input.requestId))
+      .limit(1)
+
+    if (!request) throw httpError('Update request not found', 404)
+    if (request.supplierId !== input.supplierId) {
+      throw httpError('Forbidden — this request is not assigned to you.', 403)
+    }
+    if (request.status !== SupplierUpdateRequestStatus.PENDING) {
+      throw httpError('Only pending requests can be validated.', 409)
+    }
+
+    const normalizedSupplierNote = this.normalizeNullableText(input.note)
+    const now = new Date()
+
+    if (input.isTrue) {
+      const patch: Partial<typeof users.$inferInsert> = { updatedAt: now }
+
+      const firstName = request.proposedFirstName ? decrypt(request.proposedFirstName) : null
+      const lastName = request.proposedLastName ? decrypt(request.proposedLastName) : null
+      const businessName = request.proposedBusinessName ? decrypt(request.proposedBusinessName) : null
+      const phone = request.proposedPhone ? decrypt(request.proposedPhone) : null
+      const email = request.proposedEmail ? decrypt(request.proposedEmail).toLowerCase() : null
+
+      if (firstName !== null) patch.firstName = encrypt(firstName)
+      if (lastName !== null) patch.lastName = encrypt(lastName)
+      if (businessName !== null) patch.businessName = encrypt(businessName)
+      if (phone !== null) patch.phone = encrypt(phone)
+
+      if (email !== null) {
+        const emailHash = hashEmail(email)
+        const [existingEmailOwner] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.emailHash, emailHash), isNull(users.deletedAt)))
+          .limit(1)
+
+        if (existingEmailOwner && existingEmailOwner.id !== input.supplierId) {
+          throw httpError(
+            'Cannot approve this email because it is already used by another account.',
+            409,
+          )
+        }
+
+        patch.email = encrypt(email)
+        patch.emailHash = emailHash
+      }
+
+      await db.update(users).set(patch).where(eq(users.id, input.supplierId))
+    }
+
+    await db
+      .update(supplierUpdateRequests)
+      .set({
+        status: input.isTrue
+          ? SupplierUpdateRequestStatus.ACCEPTED
+          : SupplierUpdateRequestStatus.REJECTED,
+        supplierResponseNote: normalizedSupplierNote,
+        reviewedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(supplierUpdateRequests.id, input.requestId))
+
+    notifyUser({
+      userId: request.requesterUserId,
+      type: 'system_announcement',
+      title: input.isTrue
+        ? 'Vendor Update Accepted'
+        : 'Vendor Update Rejected',
+      subtitle: 'Supplier response received',
+      body: input.isTrue
+        ? 'Your supplier info update request was accepted by the vendor.'
+        : 'Your supplier info update request was rejected by the vendor.',
+      metadata: {
+        requestId: input.requestId,
+        supplierId: request.supplierId,
+        decision: input.isTrue ? 'accepted' : 'rejected',
+      },
+      createdBy: input.supplierId,
+    }).catch(() => {})
+
+    return this.getSupplierUpdateRequestById(input.requestId)
   }
 
   /**
@@ -894,6 +1311,76 @@ export class UsersService {
     return this.getProfileCompleteness(user).isComplete
   }
 
+  private async getSupplierUpdateRequestById(id: string): Promise<SupplierUpdateRequestListItem> {
+    const [request] = await db
+      .select()
+      .from(supplierUpdateRequests)
+      .where(eq(supplierUpdateRequests.id, id))
+      .limit(1)
+
+    if (!request) {
+      throw httpError('Update request not found', 404)
+    }
+
+    const [requester, supplier] = await Promise.all([
+      db
+        .select({
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          businessName: users.businessName,
+        })
+        .from(users)
+        .where(eq(users.id, request.requesterUserId))
+        .limit(1),
+      db
+        .select({
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          businessName: users.businessName,
+        })
+        .from(users)
+        .where(eq(users.id, request.supplierId))
+        .limit(1),
+    ])
+
+    const requesterName = requester[0]
+      ? this.buildDisplayName(
+          requester[0].firstName ? decrypt(requester[0].firstName) : null,
+          requester[0].lastName ? decrypt(requester[0].lastName) : null,
+          requester[0].businessName ? decrypt(requester[0].businessName) : null,
+        )
+      : 'User'
+
+    const supplierName = supplier[0]
+      ? this.buildDisplayName(
+          supplier[0].firstName ? decrypt(supplier[0].firstName) : null,
+          supplier[0].lastName ? decrypt(supplier[0].lastName) : null,
+          supplier[0].businessName ? decrypt(supplier[0].businessName) : null,
+        )
+      : 'Supplier'
+
+    return {
+      id: request.id,
+      requesterUserId: request.requesterUserId,
+      supplierId: request.supplierId,
+      status: request.status as SupplierUpdateRequestStatus,
+      proposedFirstName: request.proposedFirstName ? decrypt(request.proposedFirstName) : null,
+      proposedLastName: request.proposedLastName ? decrypt(request.proposedLastName) : null,
+      proposedBusinessName: request.proposedBusinessName ? decrypt(request.proposedBusinessName) : null,
+      proposedPhone: request.proposedPhone ? decrypt(request.proposedPhone) : null,
+      proposedEmail: request.proposedEmail ? decrypt(request.proposedEmail) : null,
+      note: request.note,
+      supplierResponseNote: request.supplierResponseNote,
+      reviewedAt: request.reviewedAt?.toISOString() ?? null,
+      createdAt: request.createdAt.toISOString(),
+      updatedAt: request.updatedAt.toISOString(),
+      requesterDisplayName: requesterName,
+      supplierDisplayName: supplierName,
+    }
+  }
+
   private toSupplierListItem(
     supplier: SupplierUserRow,
     stats: {
@@ -915,6 +1402,13 @@ export class UsersService {
       businessName,
       email: decrypt(supplier.email),
       phone: supplier.phone ? decrypt(supplier.phone) : null,
+      whatsappNumber: supplier.whatsappNumber ? decrypt(supplier.whatsappNumber) : null,
+      shippingMark: supplier.shippingMark ? decrypt(supplier.shippingMark) : null,
+      addressStreet: supplier.addressStreet ? decrypt(supplier.addressStreet) : null,
+      addressCity: supplier.addressCity,
+      addressState: supplier.addressState,
+      addressCountry: supplier.addressCountry,
+      addressPostalCode: supplier.addressPostalCode,
       isActive: supplier.isActive,
       createdAt: supplier.createdAt.toISOString(),
       updatedAt: supplier.updatedAt.toISOString(),

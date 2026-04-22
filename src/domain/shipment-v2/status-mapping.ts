@@ -43,6 +43,7 @@ export function mapV2StatusToLegacy(v2Status: ShipmentStatusV2): OrderStatus {
       return OrderStatus.IN_TRANSIT
 
     case ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE:
+    case ShipmentStatusV2.IN_EXTRA_TRUCK_MOVEMENT_LAGOS:
     case ShipmentStatusV2.READY_FOR_PICKUP:
     case ShipmentStatusV2.LOCAL_COURIER_ASSIGNED:
     case ShipmentStatusV2.IN_TRANSIT_TO_DESTINATION_CITY:

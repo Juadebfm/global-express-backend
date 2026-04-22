@@ -68,8 +68,27 @@ describe('shipment-v2 status transitions', () => {
       canTransitionSequentially(
         TransportMode.AIR,
         ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE,
+        ShipmentStatusV2.IN_EXTRA_TRUCK_MOVEMENT_LAGOS,
+        ShipmentType.D2D,
+      ),
+    ).toBe(true)
+
+    expect(
+      canTransitionSequentially(
+        TransportMode.AIR,
+        ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE,
         ShipmentStatusV2.LOCAL_COURIER_ASSIGNED,
         ShipmentType.D2D,
+      ),
+    ).toBe(false)
+
+    expect(
+      canTransitionSequentially(
+        TransportMode.AIR,
+        ShipmentStatusV2.IN_TRANSIT_TO_LAGOS_OFFICE,
+        ShipmentStatusV2.LOCAL_COURIER_ASSIGNED,
+        ShipmentType.D2D,
+        { allowSkipExtraTruckMovement: true },
       ),
     ).toBe(true)
 

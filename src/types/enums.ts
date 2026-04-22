@@ -57,6 +57,7 @@ export enum ShipmentStatusV2 {
   VESSEL_ARRIVED_LAGOS_PORT = 'VESSEL_ARRIVED_LAGOS_PORT',
   CUSTOMS_CLEARED_LAGOS = 'CUSTOMS_CLEARED_LAGOS',
   IN_TRANSIT_TO_LAGOS_OFFICE = 'IN_TRANSIT_TO_LAGOS_OFFICE',
+  IN_EXTRA_TRUCK_MOVEMENT_LAGOS = 'IN_EXTRA_TRUCK_MOVEMENT_LAGOS',
   READY_FOR_PICKUP = 'READY_FOR_PICKUP',
   PICKED_UP_COMPLETED = 'PICKED_UP_COMPLETED',
   LOCAL_COURIER_ASSIGNED = 'LOCAL_COURIER_ASSIGNED',
@@ -145,5 +146,11 @@ export enum GalleryClaimType {
 export enum GalleryClaimStatus {
   PENDING = 'pending',
   APPROVED = 'approved',
+  REJECTED = 'rejected',
+}
+
+export enum SupplierUpdateRequestStatus {
+  PENDING = 'pending',
+  ACCEPTED = 'accepted',
   REJECTED = 'rejected',
 }

@@ -62,6 +62,10 @@ export const users = pgTable('users', {
   mustChangePassword: boolean('must_change_password').notNull().default(false),
   // Internal users must complete profile after password change
   mustCompleteProfile: boolean('must_complete_profile').notNull().default(false),
+  // Superadmin-granted privilege: allows specific staff to provision client login links
+  canProvisionClientLogin: boolean('can_provision_client_login').notNull().default(false),
+  // Superadmin-granted privilege: allows specific staff to manage dispatch batch status/movements
+  canManageShipmentBatches: boolean('can_manage_shipment_batches').notNull().default(false),
 
   // Soft delete — never hard delete user records
   deletedAt: timestamp('deleted_at'),

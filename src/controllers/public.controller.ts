@@ -10,6 +10,7 @@ import { successResponse } from '../utils/response'
 import { db } from '../config/db'
 import { newsletterSubscribers } from '../../drizzle/schema'
 import { publicD2dIntakeService } from '../services/public-d2d-intake.service'
+import { settingsShipmentTypesService } from '../services/settings-shipment-types.service'
 
 const AIR_VOLUMETRIC_DIVISOR = 6000
 
@@ -17,7 +18,7 @@ export const publicController = {
   async calculateEstimate(
     request: FastifyRequest<{
       Body: {
-        shipmentType: 'air' | 'ocean'
+        shipmentType: string
         weightKg?: number
         lengthCm?: number
         widthCm?: number
@@ -27,10 +28,65 @@ export const publicController = {
     }>,
     reply: FastifyReply,
   ) {
-    const { shipmentType, weightKg, lengthCm, widthCm, heightCm } = request.body
+    const shipmentType = request.body.shipmentType.trim().toLowerCase()
+    const { weightKg, lengthCm, widthCm, heightCm } = request.body
     let { cbm } = request.body
 
-    const mode = shipmentType === 'air' ? TransportMode.AIR : TransportMode.SEA
+    const configuredType = await settingsShipmentTypesService.getActiveShipmentTypeByKey(
+      shipmentType,
+    )
+
+    if (!configuredType) {
+      const available = await settingsShipmentTypesService.getShipmentTypeSettings({
+        includeInactive: false,
+      })
+      return reply.code(400).send({
+        success: false,
+        message: `Unsupported shipmentType "${shipmentType}". Available types: ${available.items
+          .map((item) => item.key)
+          .join(', ')}`,
+      })
+    }
+
+    if (configuredType.estimatorMode === 'INTAKE') {
+      const intake = {
+        title: configuredType.infoTitle ?? configuredType.label,
+        description:
+          configuredType.infoDescription ??
+          `Submit your ${configuredType.label} details and our team will review and provide tailored guidance.`,
+        submitEndpoint: configuredType.submitEndpoint ?? '/api/v1/public/d2d/intake',
+        requiredFields: configuredType.requiredFields,
+        nextStep:
+          configuredType.nextStep ??
+          'Submit your details and our team will contact you with tailored pricing and next actions.',
+      }
+      return reply.send(
+        successResponse({
+          shipmentType: configuredType.key,
+          mode: null,
+          weightKg: null,
+          cbm: null,
+          estimatedCostUsd: null,
+          departureFrequency: null,
+          estimatedTransitDays: null,
+          disclaimer:
+            `${configuredType.label} pricing is customized after intake review because final cost depends on route details, goods profile, and last-mile handling needs.`,
+          intake,
+          d2dIntake: configuredType.key === 'd2d' ? intake : undefined,
+        }),
+      )
+    }
+
+    if (configuredType.coreShipmentType === 'd2d') {
+      return reply.code(400).send({
+        success: false,
+        message:
+          `Shipment type "${configuredType.key}" is misconfigured: CALCULATED mode supports only coreShipmentType air or ocean.`,
+      })
+    }
+
+    const mode =
+      configuredType.coreShipmentType === 'air' ? TransportMode.AIR : TransportMode.SEA
 
     // Auto-calculate CBM from dimensions if not provided directly
     if (!cbm && lengthCm && widthCm && heightCm) {
@@ -79,6 +135,7 @@ export const publicController = {
 
       return reply.send(
         successResponse({
+          shipmentType: configuredType.key,
           mode,
           weightKg: weightKg ?? null,
           cbm: cbm ? Math.round(cbm * 1_000_000) / 1_000_000 : null,
@@ -127,6 +184,34 @@ export const publicController = {
           unit: 'USD per CBM',
           flatRateUsdPerCbm: DEFAULT_SEA_USD_PER_CBM,
         },
+      }),
+    )
+  },
+
+  async listShipmentTypes(_request: FastifyRequest, reply: FastifyReply) {
+    const settings = await settingsShipmentTypesService.getShipmentTypeSettings({
+      includeInactive: false,
+    })
+
+    return reply.send(
+      successResponse({
+        items: settings.items.map((item) => ({
+          key: item.key,
+          label: item.label,
+          coreShipmentType: item.coreShipmentType,
+          estimatorMode: item.estimatorMode,
+          intake:
+            item.estimatorMode === 'INTAKE'
+              ? {
+                  title: item.infoTitle ?? item.label,
+                  description: item.infoDescription ?? null,
+                  submitEndpoint: item.submitEndpoint ?? null,
+                  requiredFields: item.requiredFields,
+                  nextStep: item.nextStep ?? null,
+                }
+              : null,
+        })),
+        updatedAt: settings.updatedAt,
       }),
     )
   },

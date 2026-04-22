@@ -15,6 +15,7 @@ export const STATUS_LABELS: Record<string, string> = {
   VESSEL_ARRIVED_LAGOS_PORT: 'Arrived at Lagos Port',
   CUSTOMS_CLEARED_LAGOS: 'Customs Cleared',
   IN_TRANSIT_TO_LAGOS_OFFICE: 'In Transit to Office',
+  IN_EXTRA_TRUCK_MOVEMENT_LAGOS: 'In Extra Truck Movement (Lagos)',
   READY_FOR_PICKUP: 'Ready for Pickup',
   PICKED_UP_COMPLETED: 'Delivered',
   LOCAL_COURIER_ASSIGNED: 'Local Courier Assigned',
