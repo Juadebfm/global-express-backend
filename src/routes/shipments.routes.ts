@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { shipmentsController } from '../controllers/shipments.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
+import { requireAdminOrAbove, requireStaffOrAbove, requireSuperAdmin } from '../middleware/requireRole'
 import {
   MeasurementCheckpoint,
   OrderDirection,
@@ -321,10 +321,10 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   app.post('/batches/:batchId/approve-cutoff', {
-    preHandler: [authenticate, requireStaffOrAbove],
+    preHandler: [authenticate, requireSuperAdmin],
     schema: {
       tags: ['Shipments — Staff'],
-      summary: 'Approve pending cutoff and close dispatch batch (authorized staff)',
+      summary: 'Approve pending cutoff and close dispatch batch (superadmin)',
       security: [{ bearerAuth: [] }],
       params: z.object({
         batchId: z.string().uuid(),
@@ -379,7 +379,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       tags: ['Shipments — Staff'],
       summary: 'Update shipment status for all orders in a dispatch batch',
       description:
-        'Applies one status transition from GEX shipment POV to every order in the batch. On departed status, cutoff is auto-approved for authorized actors.',
+        'Applies one status transition from GEX shipment POV to every order in the batch. On departed status, staff transitions request cutoff approval while superadmin transitions can close the batch directly.',
       security: [{ bearerAuth: [] }],
       params: z.object({
         batchId: z.string().uuid(),

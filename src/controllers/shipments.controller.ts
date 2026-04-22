@@ -263,7 +263,6 @@ export const shipmentsController = {
         statusV2: request.body.statusV2,
         updatedBy: request.user.id,
         actorRole: request.user.role as UserRole,
-        actorCanManageShipmentBatches: true,
       })
 
       await createAuditLog({

@@ -327,6 +327,9 @@ export const ordersController = {
     reply: FastifyReply,
   ) {
     const { trackingNumber } = request.params
+    if (trackingNumber.trim().toUpperCase().startsWith('GEX-MASTER-')) {
+      return reply.code(404).send({ success: false, message: 'Shipment not found' })
+    }
 
     const order = await ordersService.getOrderByTrackingNumber(trackingNumber)
     if (order) {
@@ -345,6 +348,7 @@ export const ordersController = {
           : order.paymentCollectionStatus === 'PAID_IN_FULL'
             ? 'completed'
             : 'pending'
+      const hideSupplierInvoiceDetails = order.shipmentPayer === ShipmentPayer.SUPPLIER
 
       return reply.send(
         successResponse(buildTrackingResponse({
@@ -358,9 +362,11 @@ export const ordersController = {
             paymentStatus,
             estimatedDelivery: order.eta ?? null,
             shipmentCost: {
-              usd: invoice?.totalUsd ?? order.finalChargeUsd ?? order.calculatedChargeUsd ?? null,
-              ngn: invoice?.totalNgn ?? null,
-              invoiceStatus: invoice?.status ?? null,
+              usd: hideSupplierInvoiceDetails
+                ? null
+                : (invoice?.totalUsd ?? order.finalChargeUsd ?? order.calculatedChargeUsd ?? null),
+              ngn: hideSupplierInvoiceDetails ? null : (invoice?.totalNgn ?? null),
+              invoiceStatus: hideSupplierInvoiceDetails ? null : (invoice?.status ?? null),
             },
             vendorCount: distinctVendors.size,
             cargoMetrics: buildCargoMetrics(goods),
@@ -668,6 +674,8 @@ export const ordersController = {
         : order.paymentCollectionStatus === 'PAID_IN_FULL'
           ? 'completed'
           : 'pending'
+    const hideSupplierInvoiceDetails =
+      isCustomerRole(userRole) && order.shipmentPayer === ShipmentPayer.SUPPLIER
 
     return reply.send(successResponse({
       orderId: order.id,
@@ -683,14 +691,16 @@ export const ordersController = {
           paymentStatus,
           estimatedDelivery: order.eta ?? null,
           shipmentCost: {
-            usd: invoice?.totalUsd ?? order.finalChargeUsd ?? order.calculatedChargeUsd ?? null,
-            ngn: invoice?.totalNgn ?? null,
-            invoiceStatus: invoice?.status ?? null,
+            usd: hideSupplierInvoiceDetails
+              ? null
+              : (invoice?.totalUsd ?? order.finalChargeUsd ?? order.calculatedChargeUsd ?? null),
+            ngn: hideSupplierInvoiceDetails ? null : (invoice?.totalNgn ?? null),
+            invoiceStatus: hideSupplierInvoiceDetails ? null : (invoice?.status ?? null),
           },
           vendorCount: distinctVendors.size,
           cargoMetrics: buildCargoMetrics(goods),
           goodsBreakdown: goods,
-          invoice: invoice
+          invoice: invoice && !hideSupplierInvoiceDetails
             ? {
                 id: invoice.id,
                 invoiceNumber: invoice.invoiceNumber,

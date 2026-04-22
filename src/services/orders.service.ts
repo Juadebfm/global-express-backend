@@ -5,6 +5,7 @@ import {
   packageImages,
   orderPackages,
   invoices,
+  invoiceAttachments,
   shipmentMeasurements,
   users,
 } from '../../drizzle/schema'
@@ -31,6 +32,7 @@ import {
 } from '../domain/shipment-v2/status-transitions'
 import type { PaginationParams } from '../types'
 import {
+  InvoiceAttachmentType,
   ShipmentPayer,
   ShipmentStatusV2,
   ShipmentType,
@@ -314,6 +316,7 @@ export class OrdersService {
 
     const requiresExtraTruckMovement = await this.orderRequiresExtraTruckMovement(id)
     this.assertOrderCanTransition(existing, input.statusV2, { requiresExtraTruckMovement })
+    await this.assertD2dSupplierTaskInvoiceBeforeDeparture(existing, input.statusV2)
 
     // 5. Write statusV2 as primary (legacy status column no longer synced — Phase 6)
     const [updated] = await db
@@ -491,7 +494,6 @@ export class OrdersService {
     statusV2: ShipmentStatusV2
     updatedBy: string
     actorRole: UserRole
-    actorCanManageShipmentBatches: boolean
   }) {
     const rows = await db
       .select({
@@ -557,15 +559,6 @@ export class OrdersService {
 
       if (!updated) continue
       updatedOrders.push({ id: updated.id, trackingNumber: updated.trackingNumber })
-    }
-
-    const departedStatuses = new Set<ShipmentStatusV2>([
-      ShipmentStatusV2.FLIGHT_DEPARTED,
-      ShipmentStatusV2.VESSEL_DEPARTED,
-    ])
-
-    if (departedStatuses.has(input.statusV2) && input.actorCanManageShipmentBatches) {
-      await dispatchBatchesService.approveCutoff(input.batchId, input.updatedBy)
     }
 
     return {
@@ -738,8 +731,19 @@ export class OrdersService {
         ? roundTo(totalCbm * SEA_CBM_TO_KG_FACTOR, 3)
         : undefined
 
+    const rateOwnerId =
+      existing.shipmentPayer === ShipmentPayer.SUPPLIER
+        ? existing.billingSupplierId
+        : existing.senderId
+
+    if (!rateOwnerId) {
+      throw new Error(
+        'Supplier-payer shipment is missing billingSupplierId. Set billing supplier before verification.',
+      )
+    }
+
     const pricing = await pricingV2Service.calculatePricing({
-      customerId: existing.senderId,
+      customerId: rateOwnerId,
       mode: resolvedMode,
       weightKg:
         resolvedMode === TransportMode.AIR
@@ -931,6 +935,50 @@ export class OrdersService {
     }
   }
 
+  private async assertD2dSupplierTaskInvoiceBeforeDeparture(
+    existing: Pick<typeof orders.$inferSelect, 'id' | 'shipmentType' | 'shipmentPayer'>,
+    nextStatus: ShipmentStatusV2,
+  ) {
+    const isDepartureStatus =
+      nextStatus === ShipmentStatusV2.FLIGHT_DEPARTED || nextStatus === ShipmentStatusV2.VESSEL_DEPARTED
+    if (!isDepartureStatus) return
+
+    if (
+      existing.shipmentType !== ShipmentType.D2D ||
+      existing.shipmentPayer !== ShipmentPayer.SUPPLIER
+    ) {
+      return
+    }
+
+    const [invoice] = await db
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(eq(invoices.orderId, existing.id))
+      .limit(1)
+
+    if (!invoice) {
+      throw new Error(
+        'Supplier-payer D2D shipment requires an invoice before departure.',
+      )
+    }
+
+    const [attachmentSummary] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(invoiceAttachments)
+      .where(
+        and(
+          eq(invoiceAttachments.invoiceId, invoice.id),
+          eq(invoiceAttachments.attachmentType, InvoiceAttachmentType.TASK_INVOICE),
+        ),
+      )
+
+    if ((attachmentSummary?.count ?? 0) < 1) {
+      throw new Error(
+        'Supplier-payer D2D shipment requires at least one supplier task invoice attachment before departure.',
+      )
+    }
+  }
+
   private async orderRequiresExtraTruckMovement(orderId: string): Promise<boolean> {
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })
@@ -1091,6 +1139,7 @@ export class OrdersService {
         declaredValue: orders.declaredValue,
         description: orders.description,
         shipmentType: orders.shipmentType,
+        shipmentPayer: orders.shipmentPayer,
         transportMode: orders.transportMode,
         departureDate: orders.departureDate,
         eta: orders.eta,
@@ -1107,6 +1156,7 @@ export class OrdersService {
 
     const normalized = rows.map((o) => {
       const eta = computeEta(o.departureDate, o.shipmentType, o.transportMode)
+      const hideInvoiceFinancials = o.shipmentPayer === ShipmentPayer.SUPPLIER
       return {
         type: 'solo' as const,
         id: o.id,
@@ -1125,9 +1175,9 @@ export class OrdersService {
         shipmentType: o.shipmentType,
         departureDate: o.departureDate ? o.departureDate.toISOString() : null,
         eta,
-        invoiceStatus: o.invoiceStatus ?? null,
-        invoiceTotalUsd: o.invoiceTotalUsd ?? null,
-        invoiceTotalNgn: o.invoiceTotalNgn ?? null,
+        invoiceStatus: hideInvoiceFinancials ? null : (o.invoiceStatus ?? null),
+        invoiceTotalUsd: hideInvoiceFinancials ? null : (o.invoiceTotalUsd ?? null),
+        invoiceTotalNgn: hideInvoiceFinancials ? null : (o.invoiceTotalNgn ?? null),
         createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),
       }

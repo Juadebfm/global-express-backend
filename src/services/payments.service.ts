@@ -518,20 +518,11 @@ export class PaymentsService {
     proofReference?: string
     note?: string
   }) {
-    let resolvedOrderId = input.orderId
-
-    if (!resolvedOrderId && input.invoiceId) {
-      const [invoice] = await db
-        .select({ orderId: invoices.orderId })
-        .from(invoices)
-        .where(eq(invoices.id, input.invoiceId))
-        .limit(1)
-      resolvedOrderId = invoice?.orderId
-    }
-
-    if (!resolvedOrderId) {
-      throw new Error('orderId or invoiceId is required')
-    }
+    const target = await this.resolvePaymentTarget({
+      orderId: input.orderId,
+      invoiceId: input.invoiceId,
+    })
+    const resolvedOrderId = target.orderId
 
     // Validate: order must exist and amount must not exceed the order charge
     const [order] = await db
@@ -559,7 +550,7 @@ export class PaymentsService {
         .insert(payments)
         .values({
           orderId: resolvedOrderId,
-          invoiceId: input.invoiceId ?? null,
+          invoiceId: target.invoiceId,
           userId: input.userId,
           amount: String(input.amount),
           currency: 'NGN',

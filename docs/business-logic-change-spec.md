@@ -226,7 +226,7 @@ This document captures all requested business-logic changes before implementatio
 
 ### Change 6
 
-- Status: `Scope Frozen — ready for implementation`
+- Status: `Implemented (local) — pending deploy`
 - Request:
   - Implement shipment aggregation and tracking refactor for customer-cycle accumulation and GEX dispatch batching.
 - Core Decisions Confirmed:
@@ -282,7 +282,7 @@ This document captures all requested business-logic changes before implementatio
 
 ### Change 7
 
-- Status: `Scope Frozen — ready for implementation`
+- Status: `Implemented (local) — pending deploy`
 - Request:
   - Introduce `D2D` (Door-to-Door) as a new shipment type with its own operational flow, pricing/payer rules, verification checkpoints, and external visibility behavior.
 - Business Context:
@@ -588,6 +588,27 @@ This document captures all requested business-logic changes before implementatio
   - `npm run build` ✅
   - `npm test` ✅ (46/46 tests passed)
 
+### Change 6/7 Hardening Notes (2026-04-22)
+
+- Dispatch approval gate alignment:
+  - Staff-triggered departed transitions now leave batch in `cutoff_pending_approval`.
+  - Superadmin-only cutoff approval is enforced on `POST /shipments/batches/:batchId/approve-cutoff`.
+  - Removed staff auto-close path from batch status update flow.
+- Supplier-payer pricing alignment at warehouse verification:
+  - Verification pricing now resolves rate owner by payer:
+    - `USER` payer → customer rate owner.
+    - `SUPPLIER` payer → billing supplier rate owner.
+- Supplier-payer D2D dispatch guard:
+  - Before moving to departed milestones (`FLIGHT_DEPARTED` / `VESSEL_DEPARTED`), supplier-payer D2D shipments now require at least one uploaded supplier task-invoice attachment.
+- User-facing invoice visibility guard for supplier-payer shipments:
+  - Public tracking and authenticated customer timeline now hide supplier invoice financial details (cost/status/invoice object), while still exposing payment state.
+  - Customer `my-shipments` listing now suppresses invoice financial fields for supplier-payer shipments.
+- Payment linkage hardening:
+  - Offline payment recording now always resolves and persists canonical `invoiceId` (invoice-centric payment linkage).
+- Validation:
+  - `npm run build` ✅
+  - `npm test` ✅ (46/46 tests passed)
+
 ## Decisions Log
 
 - 2026-04-19: Captured Change 1 scope and formulas from stakeholder request; implementation deferred pending full change list and open-question resolution.
@@ -694,6 +715,12 @@ This document captures all requested business-logic changes before implementatio
   - Added unauthenticated public D2D intake endpoint that creates both D2D pre-order + linked support ticket.
   - Added payment receipt upload flow for authenticated users with pending verification state.
   - Added superadmin-only receipt verification endpoint to approve/reject and update shipment payment state.
+- 2026-04-22: Hardened Change 6 dispatch approval semantics and Change 7 supplier-payer safeguards:
+  - Enforced superadmin-only cutoff approval route and removed staff auto-close path.
+  - Enforced supplier-payer D2D task-invoice attachment requirement before departed milestones.
+  - Aligned warehouse verification pricing owner selection with payer (`USER` vs `SUPPLIER`).
+  - Restricted customer/public visibility of supplier-payer invoice financial details.
+  - Enforced invoice-centric offline payment linkage (`invoiceId` always resolved/persisted).
 
 ## Implementation Plan (To Be Filled After Scope Freeze)
 
@@ -702,8 +729,8 @@ This document captures all requested business-logic changes before implementatio
 - Change 2: Implemented (local), validated.
 - Change 4: Implemented (local), validated.
 - Change 5: Configured (Clerk) + FE follow-up required.
-- Change 6: Scope frozen; implement event-driven cutoff with Option B approval gate.
-- Change 7: Scope frozen; ready for implementation.
+- Change 6: Implemented (local), validated.
+- Change 7: Implemented (local), validated.
 - Change 8: Implemented (local), validated.
 - Change 9: Implemented (local), validated.
 - Change 10: Implemented (local), validated.
