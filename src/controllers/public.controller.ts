@@ -14,6 +14,11 @@ import { settingsShipmentTypesService } from '../services/settings-shipment-type
 
 const AIR_VOLUMETRIC_DIVISOR = 6000
 
+function round(value: number, places = 3): number {
+  const factor = 10 ** places
+  return Math.round(value * factor) / factor
+}
+
 export const publicController = {
   async calculateEstimate(
     request: FastifyRequest<{
@@ -31,6 +36,7 @@ export const publicController = {
     const shipmentType = request.body.shipmentType.trim().toLowerCase()
     const { weightKg, lengthCm, widthCm, heightCm } = request.body
     let { cbm } = request.body
+    const rawCbm = request.body.cbm
 
     const configuredType = await settingsShipmentTypesService.getActiveShipmentTypeByKey(
       shipmentType,
@@ -73,6 +79,29 @@ export const publicController = {
             `${configuredType.label} pricing is customized after intake review because final cost depends on route details, goods profile, and last-mile handling needs.`,
           intake,
           d2dIntake: configuredType.key === 'd2d' ? intake : undefined,
+          estimateDetails: {
+            input: {
+              shipmentType: configuredType.key,
+              weightKgInput: weightKg ?? null,
+              lengthCmInput: lengthCm ?? null,
+              widthCmInput: widthCm ?? null,
+              heightCmInput: heightCm ?? null,
+              cbmInput: rawCbm ?? null,
+            },
+            calculation: {
+              chargeBasis: 'intake_required',
+              actualWeightKg: null,
+              volumetricWeightKg: null,
+              chargeableWeightKg: null,
+              cbmUsed: null,
+            },
+            pricing: {
+              estimatedCostUsd: null,
+              unitRateUsd: null,
+              currency: 'USD',
+              airTier: null,
+            },
+          },
         }),
       )
     }
@@ -119,6 +148,22 @@ export const publicController = {
       const seaChargeableWeightKg =
         mode === TransportMode.SEA && cbm ? cbm * SEA_CBM_TO_KG_FACTOR : undefined
 
+      const matchedAirTier =
+        mode === TransportMode.AIR && billableAirWeightKg
+          ? DEFAULT_AIR_TIERS.find((tier) => {
+              const minOk = billableAirWeightKg >= tier.minKg
+              const maxOk = tier.maxKg === null ? true : billableAirWeightKg <= tier.maxKg
+              return minOk && maxOk
+            }) ?? null
+          : null
+
+      const chargeableWeightKg =
+        mode === TransportMode.AIR
+          ? billableAirWeightKg ?? null
+          : mode === TransportMode.SEA
+            ? seaChargeableWeightKg ?? null
+            : null
+
       const pricing = pricingV2Service.calculateDefaultPricing({
         mode,
         weightKg:
@@ -130,6 +175,18 @@ export const publicController = {
         cbm: mode === TransportMode.SEA ? cbm : undefined,
       })
 
+      const unitRateUsd =
+        chargeableWeightKg && chargeableWeightKg > 0
+          ? round(pricing.amountUsd / chargeableWeightKg, 4)
+          : null
+
+      const chargeBasis =
+        mode === TransportMode.AIR
+          ? (volumetricWeightKg ?? 0) > (weightKg ?? 0)
+            ? 'volumetric_weight'
+            : 'actual_weight'
+          : 'cbm_converted_to_kg'
+
       const departureFrequency = 'Event-driven (based on warehouse movement)'
       const estimatedTransitDays = mode === TransportMode.AIR ? 7 : 90
 
@@ -138,12 +195,45 @@ export const publicController = {
           shipmentType: configuredType.key,
           mode,
           weightKg: weightKg ?? null,
-          cbm: cbm ? Math.round(cbm * 1_000_000) / 1_000_000 : null,
+          cbm: cbm ? round(cbm, 6) : null,
           estimatedCostUsd: pricing.amountUsd,
           departureFrequency,
           estimatedTransitDays,
           disclaimer:
             'This is an estimate based on standard rates. Final pricing is determined after warehouse verification of actual weight and volume. Rates are subject to change without prior notice.',
+          estimateDetails: {
+            input: {
+              shipmentType: configuredType.key,
+              weightKgInput: weightKg ?? null,
+              lengthCmInput: lengthCm ?? null,
+              widthCmInput: widthCm ?? null,
+              heightCmInput: heightCm ?? null,
+              cbmInput: rawCbm ?? null,
+            },
+            calculation: {
+              chargeBasis,
+              actualWeightKg: mode === TransportMode.AIR ? weightKg ?? null : null,
+              volumetricWeightKg:
+                mode === TransportMode.AIR && volumetricWeightKg
+                  ? round(volumetricWeightKg, 3)
+                  : null,
+              chargeableWeightKg: chargeableWeightKg ? round(chargeableWeightKg, 3) : null,
+              cbmUsed: cbm ? round(cbm, 6) : null,
+            },
+            pricing: {
+              estimatedCostUsd: pricing.amountUsd,
+              unitRateUsd,
+              currency: 'USD',
+              airTier:
+                mode === TransportMode.AIR && matchedAirTier
+                  ? {
+                      minKg: matchedAirTier.minKg,
+                      maxKg: matchedAirTier.maxKg,
+                      rateUsdPerKg: matchedAirTier.usdPerKg,
+                    }
+                  : null,
+            },
+          },
         }),
       )
     } catch (err) {
@@ -225,6 +315,12 @@ export const publicController = {
         city: string
         country: string
         goodsDescription: string
+        deliveryPhone: string
+        deliveryAddressLine1: string
+        deliveryState?: string
+        deliveryCity?: string
+        deliveryPostalCode?: string
+        deliveryLandmark?: string
         wantsAccount: boolean
         estimatedWeightKg?: number
         estimatedCbm?: number
@@ -239,6 +335,12 @@ export const publicController = {
       city: request.body.city,
       country: request.body.country,
       goodsDescription: request.body.goodsDescription,
+      deliveryPhone: request.body.deliveryPhone,
+      deliveryAddressLine1: request.body.deliveryAddressLine1,
+      deliveryState: request.body.deliveryState,
+      deliveryCity: request.body.deliveryCity,
+      deliveryPostalCode: request.body.deliveryPostalCode,
+      deliveryLandmark: request.body.deliveryLandmark,
       wantsAccount: request.body.wantsAccount,
       estimatedWeightKg: request.body.estimatedWeightKg,
       estimatedCbm: request.body.estimatedCbm,

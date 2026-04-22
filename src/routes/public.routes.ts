@@ -74,6 +74,16 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     updatedAt: z.string(),
   })
 
+  const optionalD2dStringSchema = z.preprocess(
+    (value) => {
+      if (typeof value === 'string' && value.trim().length === 0) {
+        return undefined
+      }
+      return value
+    },
+    z.string().trim().min(1).max(255).optional(),
+  )
+
   // POST /calculator/estimate — public shipment cost calculator
   server.post('/calculator/estimate', {
     schema: {
@@ -117,6 +127,38 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
               submitEndpoint: z.string(),
               requiredFields: z.array(z.string()),
               nextStep: z.string(),
+            }).optional(),
+            estimateDetails: z.object({
+              input: z.object({
+                shipmentType: z.string(),
+                weightKgInput: z.number().nullable(),
+                lengthCmInput: z.number().nullable(),
+                widthCmInput: z.number().nullable(),
+                heightCmInput: z.number().nullable(),
+                cbmInput: z.number().nullable(),
+              }),
+              calculation: z.object({
+                chargeBasis: z.enum([
+                  'actual_weight',
+                  'volumetric_weight',
+                  'cbm_converted_to_kg',
+                  'intake_required',
+                ]),
+                actualWeightKg: z.number().nullable(),
+                volumetricWeightKg: z.number().nullable(),
+                chargeableWeightKg: z.number().nullable(),
+                cbmUsed: z.number().nullable(),
+              }),
+              pricing: z.object({
+                estimatedCostUsd: z.number().nullable(),
+                unitRateUsd: z.number().nullable(),
+                currency: z.literal('USD'),
+                airTier: z.object({
+                  minKg: z.number(),
+                  maxKg: z.number().nullable(),
+                  rateUsdPerKg: z.number(),
+                }).nullable(),
+              }),
             }).optional(),
           }),
         }),
@@ -332,8 +374,8 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
   server.post('/d2d/intake', {
     schema: {
       tags: ['Public'],
-      summary: 'Submit public D2D intake request (order + support ticket)',
-      description: `Creates a D2D pre-order intake and an associated support ticket for follow-up by internal staff.
+      summary: 'Submit public D2D intake request (support ticket only)',
+      description: `Creates a D2D intake support ticket for follow-up by internal staff.
 
 This endpoint is for users who are not signed in. Required contact + goods details are captured immediately.
 The requester can indicate whether they want to register on the platform or remain an external contact.`,
@@ -345,9 +387,18 @@ The requester can indicate whether they want to register on the platform or rema
         country: z.string().min(1).describe('Current country'),
         goodsDescription: z
           .string()
-          .min(10)
+          .min(3)
           .max(5000)
           .describe('Detailed description of goods for D2D intake review'),
+        deliveryPhone: z.string().min(5).describe('Recipient or delivery contact phone number in Nigeria'),
+        deliveryAddressLine1: z
+          .string()
+          .min(5)
+          .describe('Primary intended delivery address in Nigeria'),
+        deliveryState: optionalD2dStringSchema.describe('Optional delivery state in Nigeria'),
+        deliveryCity: optionalD2dStringSchema.describe('Optional delivery city in Nigeria'),
+        deliveryPostalCode: optionalD2dStringSchema.describe('Optional delivery postal/zip code in Nigeria'),
+        deliveryLandmark: optionalD2dStringSchema.describe('Optional delivery landmark in Nigeria'),
         wantsAccount: z
           .boolean()
           .describe('True if requester wants to register on the platform, false to remain external'),
@@ -361,12 +412,6 @@ The requester can indicate whether they want to register on the platform or rema
         201: z.object({
           success: z.literal(true),
           data: z.object({
-            order: z.object({
-              id: z.string().uuid(),
-              trackingNumber: z.string(),
-              shipmentType: z.string().nullable(),
-              statusV2: z.string().nullable(),
-            }),
             ticket: z.object({
               id: z.string().uuid(),
               ticketNumber: z.string(),
@@ -387,6 +432,26 @@ The requester can indicate whether they want to register on the platform or rema
               accountLinked: z.boolean(),
               isActive: z.boolean(),
               registerIntent: z.boolean(),
+            }),
+            intakeRequest: z.object({
+              fullName: z.string(),
+              email: z.string().email(),
+              phone: z.string(),
+              city: z.string(),
+              country: z.string(),
+              goodsDescription: z.string(),
+              wantsAccount: z.boolean(),
+              estimatedWeightKg: z.number().nullable(),
+              estimatedCbm: z.number().nullable(),
+              delivery: z.object({
+                phone: z.string(),
+                addressLine1: z.string(),
+                country: z.literal('Nigeria'),
+                state: z.string().nullable(),
+                city: z.string().nullable(),
+                postalCode: z.string().nullable(),
+                landmark: z.string().nullable(),
+              }),
             }),
           }),
         }),

@@ -2,10 +2,9 @@ import { eq } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
 import { decrypt, encrypt, hashEmail } from '../utils/encryption'
-import { ordersService } from './orders.service'
 import { supportService } from './support.service'
 import { notificationsService } from './notifications.service'
-import { ShipmentType, UserRole } from '../types/enums'
+import { UserRole } from '../types/enums'
 
 function httpError(message: string, statusCode: number): Error & { statusCode: number } {
   return Object.assign(new Error(message), { statusCode })
@@ -26,9 +25,21 @@ export interface PublicD2dIntakeInput {
   city: string
   country: string
   goodsDescription: string
+  deliveryPhone: string
+  deliveryAddressLine1: string
+  deliveryState?: string
+  deliveryCity?: string
+  deliveryPostalCode?: string
+  deliveryLandmark?: string
   wantsAccount: boolean
   estimatedWeightKg?: number
   estimatedCbm?: number
+}
+
+function formatOptionalLine(label: string, value: string | undefined): string | null {
+  const normalized = value?.trim()
+  if (!normalized) return null
+  return `- ${label}: ${normalized}`
 }
 
 export class PublicD2dIntakeService {
@@ -108,17 +119,15 @@ export class PublicD2dIntakeService {
     }
     const estimatedSummary = estimatedParts.length > 0 ? `\n${estimatedParts.join('\n')}` : ''
 
-    const order = await ordersService.createOrder({
-      senderId: customer.id,
-      recipientName: input.fullName.trim(),
-      recipientAddress: `${input.city.trim()}, ${input.country.trim()}`,
-      recipientPhone: input.phone.trim(),
-      recipientEmail: input.email.trim().toLowerCase(),
-      description: `${input.goodsDescription.trim()}${estimatedSummary}`,
-      shipmentType: ShipmentType.D2D,
-      isPreorder: true,
-      createdBy: customer.id,
-    })
+    const deliveryLines = [
+      `- Phone: ${input.deliveryPhone.trim()}`,
+      `- Address line 1: ${input.deliveryAddressLine1.trim()}`,
+      '- Country: Nigeria',
+      formatOptionalLine('State', input.deliveryState),
+      formatOptionalLine('City', input.deliveryCity),
+      formatOptionalLine('Postal code', input.deliveryPostalCode),
+      formatOptionalLine('Landmark', input.deliveryLandmark),
+    ].filter((line): line is string => Boolean(line))
 
     const supportBody =
       `Public D2D intake submitted.\n\n` +
@@ -128,28 +137,28 @@ export class PublicD2dIntakeService {
       `- Phone: ${input.phone.trim()}\n` +
       `- City/Country: ${input.city.trim()}, ${input.country.trim()}\n` +
       `- Register intent: ${input.wantsAccount ? 'Wants to register' : 'Remain external'}\n\n` +
+      `Intended Nigeria delivery details:\n${deliveryLines.join('\n')}\n\n` +
       `Goods details:\n${input.goodsDescription.trim()}` +
       (estimatedSummary ? `\n\n${estimatedParts.join('\n')}` : '')
 
     const ticketPayload = await supportService.createTicket(
       {
-        subject: `D2D intake request - ${order.trackingNumber}`,
+        subject: 'Public D2D intake request',
         category: 'shipment_inquiry',
         body: supportBody,
-        orderId: order.id,
       },
       { id: customer.id, role: customer.role },
     )
 
     notificationsService.notifyRole({
       targetRole: UserRole.STAFF,
-      type: 'new_order',
+      type: 'admin_alert',
       title: 'New Public D2D Intake',
-      body: `Public D2D intake received for ${order.trackingNumber}`,
+      body: `Public D2D intake ticket ${ticketPayload.ticket.ticketNumber} requires review.`,
       metadata: {
-        orderId: order.id,
-        trackingNumber: order.trackingNumber,
-        senderId: order.senderId,
+        ticketId: ticketPayload.ticket.id,
+        ticketNumber: ticketPayload.ticket.ticketNumber,
+        requesterUserId: customer.id,
       },
     })
 
@@ -166,12 +175,6 @@ export class PublicD2dIntakeService {
       .limit(1)
 
     return {
-      order: {
-        id: order.id,
-        trackingNumber: order.trackingNumber,
-        shipmentType: order.shipmentType,
-        statusV2: order.statusV2,
-      },
       ticket: ticketPayload.ticket,
       contact: {
         userId: freshUser?.id ?? customer.id,
@@ -180,6 +183,26 @@ export class PublicD2dIntakeService {
         accountLinked: Boolean(freshUser?.clerkId),
         isActive: freshUser?.isActive ?? customer.isActive,
         registerIntent: input.wantsAccount,
+      },
+      intakeRequest: {
+        fullName: input.fullName.trim(),
+        email: input.email.trim().toLowerCase(),
+        phone: input.phone.trim(),
+        city: input.city.trim(),
+        country: input.country.trim(),
+        goodsDescription: input.goodsDescription.trim(),
+        wantsAccount: input.wantsAccount,
+        estimatedWeightKg: input.estimatedWeightKg ?? null,
+        estimatedCbm: input.estimatedCbm ?? null,
+        delivery: {
+          phone: input.deliveryPhone.trim(),
+          addressLine1: input.deliveryAddressLine1.trim(),
+          country: 'Nigeria',
+          state: input.deliveryState?.trim() || null,
+          city: input.deliveryCity?.trim() || null,
+          postalCode: input.deliveryPostalCode?.trim() || null,
+          landmark: input.deliveryLandmark?.trim() || null,
+        },
       },
     }
   }

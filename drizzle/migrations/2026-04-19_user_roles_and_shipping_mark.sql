@@ -4,6 +4,11 @@
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS shipping_mark text;
 
+-- Drop enum-typed default before role type swap to avoid cast failures
+-- on environments where the default is still bound to the old enum type.
+ALTER TABLE users
+  ALTER COLUMN role DROP DEFAULT;
+
 -- Rebuild enum to remove `admin` and add `supplier`.
 DO $$
 BEGIN
@@ -45,5 +50,9 @@ ALTER TABLE notifications
       ELSE target_role::text
     END
   )::user_role;
+
+-- Restore application default for newly created external users.
+ALTER TABLE users
+  ALTER COLUMN role SET DEFAULT 'user'::user_role;
 
 DROP TYPE IF EXISTS user_role_old;

@@ -59,6 +59,8 @@ const DEFAULT_D2D_REQUIRED_FIELDS = [
   'city',
   'country',
   'goodsDescription',
+  'deliveryPhone',
+  'deliveryAddressLine1',
   'consentAcknowledgement',
   'wantsAccount',
 ]
@@ -151,6 +153,10 @@ function normalizeRequiredFields(value: unknown, fallback: string[]): string[] {
   return normalized.length > 0 ? Array.from(new Set(normalized)) : fallback
 }
 
+function mergeRequiredFields(base: string[], enforced: string[]): string[] {
+  return Array.from(new Set([...base, ...enforced]))
+}
+
 function assertValidTypeKey(key: string) {
   if (!/^[a-z0-9_-]+$/.test(key)) {
     throw new Error('shipment type key must contain only lowercase letters, numbers, underscore, or hyphen')
@@ -229,6 +235,10 @@ function normalizeItem(raw: unknown, fallback?: ShipmentTypeConfig): ShipmentTyp
     submitEndpoint: toNullableTrimmedString(root.submitEndpoint, fallback?.submitEndpoint ?? null),
     requiredFields: normalizeRequiredFields(root.requiredFields, fallback?.requiredFields ?? []),
     nextStep: toNullableTrimmedString(root.nextStep, fallback?.nextStep ?? null),
+  }
+
+  if (config.key === 'd2d' && config.estimatorMode === 'INTAKE') {
+    config.requiredFields = mergeRequiredFields(config.requiredFields, DEFAULT_D2D_REQUIRED_FIELDS)
   }
 
   validateShipmentTypeConfig(config)
