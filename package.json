@@ -17,6 +17,8 @@
     "test:coverage": "vitest run --coverage",
     "seed:superadmin": "tsx scripts/seed-superadmin.ts",
     "seed:data": "tsx scripts/seed-data.ts",
+    "seed:gallery": "tsx scripts/seed-gallery.ts",
+    "seed:gallery:cleanup": "tsx scripts/cleanup-gallery-seed.ts",
     "seed:gabriel": "tsx scripts/seed-dashboard-user.ts",
     "seed:gabriel2": "tsx scripts/seed-gabriel2.ts",
     "backfill:status-v2": "tsx scripts/backfill-status-v2.ts"
