@@ -5,6 +5,7 @@ import {
   dispatchBatches,
   invoices,
   orderPackages,
+  packageImages,
   orders,
   payments,
   shipmentMeasurements,
@@ -50,6 +51,38 @@ export interface IntakeGoodsInput {
   }>
 }
 
+interface ClaimApprovedShipmentInput {
+  shipmentType: ShipmentType
+  d2dDispatchMode?: TransportMode
+  claimantUserId: string
+  claimantFullName?: string | null
+  claimantEmail?: string | null
+  claimantPhone?: string | null
+  itemTrackingNumber: string
+  itemTitle: string
+  itemDescription?: string | null
+  itemType?: string | null
+  quantity?: number | null
+  lengthCm?: number | null
+  widthCm?: number | null
+  heightCm?: number | null
+  weightKg?: number | null
+  cbm?: number | null
+  warehouseReceivedAt?: Date | null
+  supplierId?: string | null
+  imageUrls?: string[]
+  origin?: string | null
+  destination?: string | null
+  createdBy: string
+}
+
+interface ClaimApprovedShipmentResult {
+  orderId: string
+  orderTrackingNumber: string
+  dispatchBatchId: string
+  dispatchMasterTrackingNumber: string
+}
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
@@ -59,6 +92,18 @@ function inferShipmentType(mode: TransportMode, requestedType?: ShipmentType): S
   if (requestedType === ShipmentType.AIR) return ShipmentType.AIR
   if (requestedType === ShipmentType.OCEAN) return ShipmentType.OCEAN
   return mode === TransportMode.AIR ? ShipmentType.AIR : ShipmentType.OCEAN
+}
+
+function resolveModeForClaimShipment(
+  shipmentType: ShipmentType,
+  d2dDispatchMode?: TransportMode,
+): TransportMode {
+  if (shipmentType === ShipmentType.AIR) return TransportMode.AIR
+  if (shipmentType === ShipmentType.OCEAN) return TransportMode.SEA
+  if (!d2dDispatchMode) {
+    throw new Error('d2dDispatchMode is required when shipmentType is d2d.')
+  }
+  return d2dDispatchMode
 }
 
 function toNumericString(value: number | null | undefined, decimals = 2): string | null {
@@ -110,8 +155,12 @@ function formatUserDisplayName(row: {
 }
 
 export class DispatchBatchesService {
-  async getOrCreateOpenBatch(mode: TransportMode, actorId: string) {
-    const [existing] = await db
+  private async getOrCreateOpenBatchOnExecutor(
+    executor: Pick<typeof db, 'select' | 'insert'>,
+    mode: TransportMode,
+    actorId: string,
+  ) {
+    const [existing] = await executor
       .select()
       .from(dispatchBatches)
       .where(
@@ -121,13 +170,12 @@ export class DispatchBatchesService {
           isNull(dispatchBatches.deletedAt),
         ),
       )
-      // "Current" batch = oldest open batch in this mode.
       .orderBy(dispatchBatches.createdAt)
       .limit(1)
 
     if (existing) return existing
 
-    const [created] = await db
+    const [created] = await executor
       .insert(dispatchBatches)
       .values({
         masterTrackingNumber: generateMasterTrackingNumber(),
@@ -138,6 +186,111 @@ export class DispatchBatchesService {
       .returning()
 
     return created
+  }
+
+  async getOrCreateOpenBatch(mode: TransportMode, actorId: string) {
+    return this.getOrCreateOpenBatchOnExecutor(db, mode, actorId)
+  }
+
+  async createShipmentFromApprovedGalleryClaim(
+    input: ClaimApprovedShipmentInput,
+    tx: Pick<typeof db, 'select' | 'insert'> = db,
+  ): Promise<ClaimApprovedShipmentResult> {
+    const mode = resolveModeForClaimShipment(input.shipmentType, input.d2dDispatchMode)
+    const batch = await this.getOrCreateOpenBatchOnExecutor(tx, mode, input.createdBy)
+
+    const safeFullName = input.claimantFullName?.trim() || 'Claimant'
+    const safePhone = input.claimantPhone?.trim() || '+2340000000000'
+    const safeRecipientAddress =
+      'Address to be confirmed after anonymous goods claim approval'
+
+    const trackingNumber = generateTrackingNumber()
+    const weightText = toNumericString(input.weightKg ?? null, 3)
+    const quantity = input.quantity && input.quantity > 0 ? input.quantity : 1
+    const packageDescription = input.itemDescription?.trim() || input.itemTitle
+
+    let supplierId: string | null = null
+    if (input.supplierId) {
+      const [supplier] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(
+          and(
+            eq(users.id, input.supplierId),
+            eq(users.role, UserRole.SUPPLIER),
+            isNull(users.deletedAt),
+          ),
+        )
+        .limit(1)
+
+      supplierId = supplier?.id ?? null
+    }
+
+    const [order] = await tx
+      .insert(orders)
+      .values({
+        trackingNumber,
+        senderId: input.claimantUserId,
+        recipientName: encrypt(safeFullName),
+        recipientAddress: encrypt(safeRecipientAddress),
+        recipientPhone: encrypt(safePhone),
+        recipientEmail: input.claimantEmail?.trim() ? encrypt(input.claimantEmail.trim()) : null,
+        origin: input.origin?.trim() || 'South Korea',
+        destination: input.destination?.trim() || 'Lagos, Nigeria',
+        orderDirection: 'outbound',
+        weight: weightText,
+        description: `Claim-approved anonymous goods: ${input.itemTrackingNumber} - ${packageDescription}`,
+        shipmentType: input.shipmentType,
+        shipmentPayer: ShipmentPayer.USER,
+        billingSupplierId: null,
+        transportMode: mode,
+        statusV2: ShipmentStatusV2.CLAIM_APPROVED_PENDING_BULK_PROCESSING,
+        customerStatusV2: ShipmentStatusV2.CLAIM_APPROVED_PENDING_BULK_PROCESSING,
+        createdBy: input.createdBy,
+        dispatchBatchId: batch.id,
+        isPreorder: false,
+        packageCount: quantity,
+      })
+      .returning({
+        id: orders.id,
+        trackingNumber: orders.trackingNumber,
+        dispatchBatchId: orders.dispatchBatchId,
+      })
+
+    await tx.insert(orderPackages).values({
+      orderId: order.id,
+      description: packageDescription,
+      itemType: input.itemType ?? 'anonymous_goods',
+      quantity,
+      lengthCm: toNumericString(input.lengthCm ?? null, 2),
+      widthCm: toNumericString(input.widthCm ?? null, 2),
+      heightCm: toNumericString(input.heightCm ?? null, 2),
+      weightKg: weightText,
+      cbm: toNumericString(input.cbm ?? null, 6),
+      supplierId,
+      arrivalAt: input.warehouseReceivedAt ?? new Date(),
+      createdBy: input.createdBy,
+      updatedBy: input.createdBy,
+    })
+
+    const uniqueImageUrls = [...new Set((input.imageUrls ?? []).filter((url) => url.trim().length > 0))]
+    if (uniqueImageUrls.length > 0) {
+      await tx.insert(packageImages).values(
+        uniqueImageUrls.map((url, idx) => ({
+          orderId: order.id,
+          r2Key: `gallery-claims/${order.trackingNumber}/reference-${idx + 1}`,
+          r2Url: url,
+          uploadedBy: input.createdBy,
+        })),
+      )
+    }
+
+    return {
+      orderId: order.id,
+      orderTrackingNumber: order.trackingNumber,
+      dispatchBatchId: order.dispatchBatchId as string,
+      dispatchMasterTrackingNumber: batch.masterTrackingNumber,
+    }
   }
 
   async canActorManageShipmentBatches(actorId: string, actorRole: UserRole): Promise<boolean> {

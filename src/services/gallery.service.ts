@@ -8,6 +8,8 @@ import {
   GalleryClaimType,
   GalleryItemStatus,
   GalleryItemType,
+  ShipmentType,
+  TransportMode,
   UserRole,
 } from '../types/enums'
 import { generateTrackingNumber } from '../utils/tracking'
@@ -15,6 +17,7 @@ import { uploadsService } from './uploads.service'
 import { supportService } from './support.service'
 import { notificationsService, notifyUser } from './notifications.service'
 import { env } from '../config/env'
+import { dispatchBatchesService } from './dispatch-batches.service'
 
 const ALLOWED_PROOF_CONTENT_TYPES = new Set([
   'application/pdf',
@@ -135,7 +138,76 @@ interface ResolvedClaimant {
   phone: string
 }
 
+interface ParsedAnonymousShipmentMetadata {
+  description: string | null
+  itemType: string | null
+  quantity: number | null
+  lengthCm: number | null
+  widthCm: number | null
+  heightCm: number | null
+  weightKg: number | null
+  cbm: number | null
+  warehouseReceivedAt: Date | null
+  supplierId: string | null
+  origin: string | null
+  destination: string | null
+}
+
+interface ReviewClaimShipmentResult {
+  orderId: string
+  orderTrackingNumber: string
+  dispatchBatchId: string
+  dispatchMasterTrackingNumber: string
+}
+
 export class GalleryService {
+  private asRecord(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    return value as Record<string, unknown>
+  }
+
+  private toOptionalNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value)
+      return Number.isFinite(parsed) ? parsed : null
+    }
+    return null
+  }
+
+  private toOptionalString(value: unknown): string | null {
+    if (typeof value !== 'string') return null
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+  }
+
+  private toOptionalDate(value: unknown): Date | null {
+    const candidate = this.toOptionalString(value)
+    if (!candidate) return null
+    const date = new Date(candidate)
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+
+  private parseAnonymousShipmentMetadata(raw: unknown): ParsedAnonymousShipmentMetadata {
+    const metadata = this.asRecord(raw)
+    const dimensions = this.asRecord(metadata.dimensionsCm)
+
+    return {
+      description: this.toOptionalString(metadata.description),
+      itemType: this.toOptionalString(metadata.itemType),
+      quantity: this.toOptionalNumber(metadata.quantity),
+      lengthCm: this.toOptionalNumber(dimensions.length),
+      widthCm: this.toOptionalNumber(dimensions.width),
+      heightCm: this.toOptionalNumber(dimensions.height),
+      weightKg: this.toOptionalNumber(metadata.weightKg),
+      cbm: this.toOptionalNumber(metadata.cbm),
+      warehouseReceivedAt: this.toOptionalDate(metadata.warehouseReceivedAt),
+      supplierId: this.toOptionalString(metadata.supplierId),
+      origin: this.toOptionalString(metadata.origin),
+      destination: this.toOptionalString(metadata.destination),
+    }
+  }
+
   private formatPublicItem(item: typeof galleryItems.$inferSelect) {
     return {
       id: item.id,
@@ -964,6 +1036,9 @@ export class GalleryService {
     reviewerId: string
     decision: 'approve' | 'reject'
     note?: string
+    postApprovalAction?: 'create_shipment' | 'approve_only'
+    shipmentType?: 'air' | 'ocean' | 'd2d'
+    d2dDispatchMode?: 'air' | 'sea'
   }) {
     const [row] = await db
       .select({
@@ -984,66 +1059,131 @@ export class GalleryService {
     }
 
     const isApproved = input.decision === 'approve'
+    const postApprovalAction = input.postApprovalAction ?? 'approve_only'
+
+    if (!isApproved && postApprovalAction === 'create_shipment') {
+      throw httpError('postApprovalAction=create_shipment is only allowed when approving a claim.', 422)
+    }
+
+    if (isApproved && postApprovalAction === 'create_shipment') {
+      if (row.claim.claimType !== GalleryClaimType.OWNERSHIP) {
+        throw httpError('Shipment creation from review is only supported for ownership claims.', 422)
+      }
+      if (!row.claim.claimantUserId) {
+        throw httpError('Claimant account is required before creating shipment from claim approval.', 422)
+      }
+      if (!input.shipmentType) {
+        throw httpError('shipmentType is required when postApprovalAction is create_shipment.', 422)
+      }
+      if (input.shipmentType === ShipmentType.D2D && !input.d2dDispatchMode) {
+        throw httpError('d2dDispatchMode is required when shipmentType is d2d.', 422)
+      }
+    }
+
     const reviewedAt = new Date()
+    const txResult = await db.transaction(async (tx) => {
+      let shipment: ReviewClaimShipmentResult | null = null
 
-    const [updatedClaim] = await db
-      .update(galleryClaims)
-      .set({
-        status: isApproved ? GalleryClaimStatus.APPROVED : GalleryClaimStatus.REJECTED,
-        reviewedBy: input.reviewerId,
-        reviewedAt,
-        reviewNote: input.note ?? null,
-        updatedAt: reviewedAt,
-      })
-      .where(eq(galleryClaims.id, row.claim.id))
-      .returning()
+      if (isApproved && postApprovalAction === 'create_shipment') {
+        const parsedMetadata = this.parseAnonymousShipmentMetadata(row.item.metadata)
+        shipment = await dispatchBatchesService.createShipmentFromApprovedGalleryClaim(
+          {
+            shipmentType: input.shipmentType as ShipmentType,
+            d2dDispatchMode:
+              input.shipmentType === ShipmentType.D2D
+                ? (input.d2dDispatchMode as TransportMode)
+                : undefined,
+            claimantUserId: row.claim.claimantUserId as string,
+            claimantFullName: safeDecrypt(row.claim.claimantFullName),
+            claimantEmail: safeDecrypt(row.claim.claimantEmail),
+            claimantPhone: safeDecrypt(row.claim.claimantPhone),
+            itemTrackingNumber: row.item.trackingNumber,
+            itemTitle: row.item.title,
+            itemDescription: parsedMetadata.description ?? row.item.description,
+            itemType: parsedMetadata.itemType,
+            quantity: parsedMetadata.quantity,
+            lengthCm: parsedMetadata.lengthCm,
+            widthCm: parsedMetadata.widthCm,
+            heightCm: parsedMetadata.heightCm,
+            weightKg: parsedMetadata.weightKg,
+            cbm: parsedMetadata.cbm,
+            warehouseReceivedAt: parsedMetadata.warehouseReceivedAt,
+            supplierId: parsedMetadata.supplierId,
+            imageUrls: [row.item.previewImageUrl, ...row.item.mediaUrls].filter(
+              (value): value is string => Boolean(value),
+            ),
+            origin: parsedMetadata.origin,
+            destination: parsedMetadata.destination,
+            createdBy: input.reviewerId,
+          },
+          tx,
+        )
+      }
 
-    const nextItemStatus = (() => {
-      if (!isApproved) return GalleryItemStatus.PUBLISHED
-      if (row.claim.claimType === GalleryClaimType.OWNERSHIP) return GalleryItemStatus.CLAIMED
-      return GalleryItemStatus.CAR_SOLD
-    })()
+      const [updatedClaim] = await tx
+        .update(galleryClaims)
+        .set({
+          status: isApproved ? GalleryClaimStatus.APPROVED : GalleryClaimStatus.REJECTED,
+          reviewedBy: input.reviewerId,
+          reviewedAt,
+          reviewNote: input.note ?? null,
+          updatedAt: reviewedAt,
+        })
+        .where(eq(galleryClaims.id, row.claim.id))
+        .returning()
 
-    const [updatedItem] = await db
-      .update(galleryItems)
-      .set({
-        status: nextItemStatus,
-        isPublished: nextItemStatus === GalleryItemStatus.PUBLISHED,
-        assignedUserId: isApproved ? row.claim.claimantUserId : null,
-        updatedBy: input.reviewerId,
-        updatedAt: reviewedAt,
-      })
-      .where(eq(galleryItems.id, row.item.id))
-      .returning()
+      const nextItemStatus = (() => {
+        if (!isApproved) return GalleryItemStatus.PUBLISHED
+        if (row.claim.claimType === GalleryClaimType.OWNERSHIP) return GalleryItemStatus.CLAIMED
+        return GalleryItemStatus.CAR_SOLD
+      })()
 
-    if (updatedClaim.claimantUserId) {
+      const [updatedItem] = await tx
+        .update(galleryItems)
+        .set({
+          status: nextItemStatus,
+          isPublished: nextItemStatus === GalleryItemStatus.PUBLISHED,
+          assignedUserId: isApproved ? row.claim.claimantUserId : null,
+          updatedBy: input.reviewerId,
+          updatedAt: reviewedAt,
+        })
+        .where(eq(galleryItems.id, row.item.id))
+        .returning()
+
+      return { updatedClaim, updatedItem, shipment }
+    })
+
+    if (txResult.updatedClaim.claimantUserId) {
       await notifyUser({
-        userId: updatedClaim.claimantUserId,
+        userId: txResult.updatedClaim.claimantUserId,
         type: 'system_announcement',
         title: isApproved ? 'Gallery Request Approved' : 'Gallery Request Rejected',
-        subtitle: updatedItem.trackingNumber,
+        subtitle: txResult.updatedItem.trackingNumber,
         body: isApproved
           ? 'Your gallery request has been approved. Our team will contact you with next steps.'
           : 'Your gallery request was not approved at this time.',
         createdBy: input.reviewerId,
         metadata: {
-          claimId: updatedClaim.id,
-          trackingNumber: updatedItem.trackingNumber,
+          claimId: txResult.updatedClaim.id,
+          trackingNumber: txResult.updatedItem.trackingNumber,
           decision: input.decision,
+          postApprovalAction,
+          shipmentOrderId: txResult.shipment?.orderId ?? null,
         },
       })
     }
 
     return {
-      item: this.formatPublicItem(updatedItem),
+      item: this.formatPublicItem(txResult.updatedItem),
       claim: this.formatClaim({
-        claim: updatedClaim,
+        claim: txResult.updatedClaim,
         item: {
-          trackingNumber: updatedItem.trackingNumber,
-          itemType: updatedItem.itemType,
-          title: updatedItem.title,
+          trackingNumber: txResult.updatedItem.trackingNumber,
+          itemType: txResult.updatedItem.itemType,
+          title: txResult.updatedItem.title,
         },
       }),
+      shipment: txResult.shipment,
     }
   }
 }

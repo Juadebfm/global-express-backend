@@ -48,87 +48,118 @@ function daysFromNow(days: number): Date {
   return value
 }
 
-const GALLERY_ITEMS: GallerySeedItem[] = [
-  {
-    trackingNumber: `${TRACKING_PREFIX}AG-001`,
-    itemType: GalleryItemType.ANONYMOUS_GOODS,
-    title: 'Unclaimed iPhone + Accessories',
-    description:
-      'Packed at Lagos office from mixed parcel lot. Claimant should provide invoice or matching IMEI proof.',
-    previewImageUrl: 'https://source.unsplash.com/1200x800/?package,warehouse,logistics&sig=101',
-    mediaUrls: [
-      'https://source.unsplash.com/1200x800/?parcel,shipment,box&sig=102',
-      'https://source.unsplash.com/1200x800/?delivery,warehouse,package&sig=103',
-    ],
-    startsAtDaysAgo: 8,
-    endsAtDaysFromNow: 30,
-    metadata: {
-      category: 'electronics',
-      foundAt: 'Lagos warehouse',
-      claimWindowDays: 30,
-      condition: 'good',
-    },
-  },
-  {
-    trackingNumber: `${TRACKING_PREFIX}AG-002`,
-    itemType: GalleryItemType.ANONYMOUS_GOODS,
-    title: 'Unclaimed Laptop Bag + Documents',
-    description:
-      'Unclaimed package with office documents and laptop sleeve. Proof of ownership required before release.',
-    previewImageUrl: 'https://source.unsplash.com/1200x800/?documents,package,desk&sig=104',
-    mediaUrls: [
-      'https://source.unsplash.com/1200x800/?paperwork,parcel,office&sig=105',
-      'https://source.unsplash.com/1200x800/?box,storage,facility&sig=106',
-    ],
-    startsAtDaysAgo: 6,
-    endsAtDaysFromNow: 28,
-    metadata: {
-      category: 'documents',
-      foundAt: 'Abuja transit hub',
-      claimWindowDays: 28,
-      condition: 'sealed',
-    },
-  },
-  {
-    trackingNumber: `${TRACKING_PREFIX}AG-003`,
-    itemType: GalleryItemType.ANONYMOUS_GOODS,
-    title: 'Unclaimed Baby Care Box',
-    description:
-      'Carton includes infant clothing and care supplies. Owner should submit a matching shipment receipt.',
-    previewImageUrl: 'https://source.unsplash.com/1200x800/?baby,package,delivery&sig=107',
-    mediaUrls: [
-      'https://source.unsplash.com/1200x800/?infant,parcel,box&sig=108',
-      'https://source.unsplash.com/1200x800/?family,shipment,goods&sig=109',
-    ],
-    startsAtDaysAgo: 5,
-    endsAtDaysFromNow: 25,
-    metadata: {
-      category: 'personal_items',
-      foundAt: 'Lagos sorting desk',
-      claimWindowDays: 25,
-      condition: 'excellent',
-    },
-  },
-  {
-    trackingNumber: `${TRACKING_PREFIX}AG-004`,
-    itemType: GalleryItemType.ANONYMOUS_GOODS,
-    title: 'Unclaimed Kitchen Appliances Bundle',
-    description:
-      'Two compact appliances in a single parcel. Claim requires photo proof and recipient contact details.',
-    previewImageUrl: 'https://source.unsplash.com/1200x800/?kitchen,appliance,box&sig=110',
-    mediaUrls: [
-      'https://source.unsplash.com/1200x800/?home,appliance,delivery&sig=111',
-      'https://source.unsplash.com/1200x800/?warehouse,carton,inventory&sig=112',
-    ],
-    startsAtDaysAgo: 3,
-    endsAtDaysFromNow: 21,
-    metadata: {
-      category: 'home_appliances',
-      foundAt: 'Ikeja warehouse shelf B3',
-      claimWindowDays: 21,
-      condition: 'new',
-    },
-  },
+const ANONYMOUS_SHIPMENT_TYPES = [
+  'air',
+  'air',
+  'air',
+  'air',
+  'air',
+  'air',
+  'air',
+  'air',
+  'ocean',
+  'ocean',
+  'ocean',
+  'ocean',
+  'ocean',
+  'ocean',
+  'ocean',
+  'ocean',
+  'd2d',
+  'd2d',
+  'd2d',
+  'd2d',
+  'd2d',
+  'd2d',
+  'd2d',
+  'd2d',
+] as const
+
+const ANONYMOUS_GOODS_LABELS = [
+  'Mobile Accessories Carton',
+  'Clothing Bundle Parcel',
+  'Kitchen Essentials Package',
+  'Beauty Products Mix Box',
+  'Office Gadgets Pouch',
+  'Books and Study Materials',
+  'Footwear Carton',
+  'Small Electronics Bundle',
+  'Home Decor Carton',
+  'Fitness Accessories Parcel',
+  'Auto Parts Lite Package',
+  'Toy Set Bundle',
+  'Laptop Peripherals Box',
+  'Camera Gear Parcel',
+  'Medical Supplies Carton',
+  'Household Utility Pack',
+  'D2D Family Goods Bundle',
+  'D2D Business Samples Box',
+  'D2D Textile Parcel',
+  'D2D Food-safe Containers',
+  'D2D Personal Effects',
+  'D2D Beauty Retail Stock',
+  'D2D Stationery Carton',
+  'D2D Mixed Consumer Goods',
+]
+
+function buildAnonymousGoodsItems(supplierIds: string[]): GallerySeedItem[] {
+  const fallbackSupplierHints = [
+    '00000000-0000-0000-0000-00000000A111',
+    '00000000-0000-0000-0000-00000000B222',
+  ]
+  const supplierHints = supplierIds.length > 0 ? supplierIds : fallbackSupplierHints
+  const receivedDaysAgo = [
+    7, 12, 16, 22, 28, 34, 42, 56,
+    18, 27, 36, 45, 59, 73, 88, 110,
+    10, 21, 33, 47, 61, 79, 102, 135,
+  ]
+
+  return ANONYMOUS_SHIPMENT_TYPES.map((shipmentType, idx) => {
+    const modeCode = shipmentType === 'air' ? 'AIR' : shipmentType === 'ocean' ? 'OCN' : 'D2D'
+    const seq = String(idx + 1).padStart(3, '0')
+    const length = 28 + (idx % 6) * 5
+    const width = 20 + (idx % 5) * 4
+    const height = 16 + (idx % 4) * 3
+    const cbm = Number(((length * width * height) / 1_000_000).toFixed(6))
+    const weightBase = shipmentType === 'ocean' ? 1.2 : shipmentType === 'd2d' ? 0.9 : 0.6
+    const weightKg = Number((weightBase + (idx % 7) * 0.22).toFixed(3))
+    const qty = 1 + (idx % 3)
+    const supplierId = idx % 3 === 0 ? supplierHints[idx % supplierHints.length] : null
+    const label = ANONYMOUS_GOODS_LABELS[idx]
+    const warehouseReceivedAt = daysAgo(receivedDaysAgo[idx]).toISOString()
+
+    return {
+      trackingNumber: `${TRACKING_PREFIX}AG-${modeCode}-${seq}`,
+      itemType: GalleryItemType.ANONYMOUS_GOODS,
+      title: `Unclaimed ${label}`,
+      description:
+        `Unclaimed warehouse goods (${shipmentType.toUpperCase()}) pending rightful ownership verification.`,
+      previewImageUrl: `https://source.unsplash.com/1200x800/?package,warehouse,${shipmentType}&sig=${200 + idx * 3}`,
+      mediaUrls: [
+        `https://source.unsplash.com/1200x800/?parcel,logistics,${shipmentType}&sig=${201 + idx * 3}`,
+        `https://source.unsplash.com/1200x800/?shipment,box,${shipmentType}&sig=${202 + idx * 3}`,
+      ],
+      startsAtDaysAgo: Math.max(receivedDaysAgo[idx] - 2, 1),
+      endsAtDaysFromNow: 180,
+      metadata: {
+        shipmentType,
+        description: `Claim intake for ${label}`,
+        itemType: 'anonymous_goods',
+        quantity: qty,
+        dimensionsCm: { length, width, height },
+        weightKg,
+        cbm,
+        warehouseReceivedAt,
+        supplierId,
+        origin: 'South Korea',
+        destination: 'Lagos, Nigeria',
+        warehouseStatus: 'WAREHOUSE_RECEIVED',
+      },
+    }
+  })
+}
+
+const MARKET_ITEMS: GallerySeedItem[] = [
   {
     trackingNumber: `${TRACKING_PREFIX}CAR-001`,
     itemType: GalleryItemType.CAR,
@@ -181,7 +212,7 @@ const GALLERY_ITEMS: GallerySeedItem[] = [
       'Book priority cargo lanes for urgent parcels with predictable weekly departures to Lagos.',
     previewImageUrl: 'https://source.unsplash.com/1200x800/?air,cargo,logistics&sig=119',
     mediaUrls: ['https://source.unsplash.com/1200x800/?freight,airplane,cargo&sig=120'],
-    ctaUrl: 'https://zikel-solutions.vercel.app/services/air-freight',
+    ctaUrl: 'https://global-express.vercel.app/services/air-freight',
     startsAtDaysAgo: 2,
     endsAtDaysFromNow: 60,
     metadata: {
@@ -198,7 +229,7 @@ const GALLERY_ITEMS: GallerySeedItem[] = [
       'Enjoy reduced handling fees this month on qualified door-to-door shipments into major Nigerian cities.',
     previewImageUrl: 'https://source.unsplash.com/1200x800/?delivery,truck,logistics&sig=121',
     mediaUrls: ['https://source.unsplash.com/1200x800/?shipping,courier,route&sig=122'],
-    ctaUrl: 'https://zikel-solutions.vercel.app/services/d2d',
+    ctaUrl: 'https://global-express.vercel.app/services/d2d',
     startsAtDaysAgo: 1,
     endsAtDaysFromNow: 45,
     metadata: {
@@ -215,7 +246,7 @@ const GALLERY_ITEMS: GallerySeedItem[] = [
       'Our Lagos operations team can handle customs and same-week pickup coordination for businesses.',
     previewImageUrl: 'https://source.unsplash.com/1200x800/?customs,warehouse,operations&sig=123',
     mediaUrls: ['https://source.unsplash.com/1200x800/?office,logistics,support&sig=124'],
-    ctaUrl: 'https://zikel-solutions.vercel.app/contact',
+    ctaUrl: 'https://global-express.vercel.app/contact',
     startsAtDaysAgo: 4,
     endsAtDaysFromNow: 50,
     metadata: {
@@ -240,6 +271,17 @@ async function main() {
     process.exit(1)
   }
 
+  const supplierRows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.role, UserRole.SUPPLIER), isNull(users.deletedAt)))
+    .limit(5)
+
+  const galleryItemsToSeed = [
+    ...buildAnonymousGoodsItems(supplierRows.map((row) => row.id)),
+    ...MARKET_ITEMS,
+  ]
+
   const deleted = await db
     .delete(galleryItems)
     .where(like(galleryItems.trackingNumber, `${TRACKING_PREFIX}%`))
@@ -253,7 +295,7 @@ async function main() {
   const seededRows = await db
     .insert(galleryItems)
     .values(
-      GALLERY_ITEMS.map((item, idx) => ({
+      galleryItemsToSeed.map((item, idx) => ({
         trackingNumber: item.trackingNumber,
         itemType: item.itemType,
         status: GalleryItemStatus.PUBLISHED,

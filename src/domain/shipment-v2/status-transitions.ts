@@ -8,6 +8,7 @@ export const COMMON_FLOW: readonly ShipmentStatusV2[] = [
   ShipmentStatusV2.PREORDER_SUBMITTED,
   ShipmentStatusV2.AWAITING_WAREHOUSE_RECEIPT,
   ShipmentStatusV2.WAREHOUSE_RECEIVED,
+  ShipmentStatusV2.CLAIM_APPROVED_PENDING_BULK_PROCESSING,
   ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED,
 ]
 

@@ -78,6 +78,13 @@ const claimActionResponseSchema = z.object({
   ticket: supportTicketSchema,
 })
 
+const reviewClaimShipmentSchema = z.object({
+  orderId: z.string().uuid(),
+  orderTrackingNumber: z.string(),
+  dispatchBatchId: z.string().uuid(),
+  dispatchMasterTrackingNumber: z.string(),
+})
+
 export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
@@ -326,16 +333,43 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
       summary: 'Approve or reject a claim/purchase attempt',
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid() }),
-      body: z.object({
-        decision: z.enum(['approve', 'reject']),
-        note: z.string().optional(),
-      }),
+      body: z
+        .object({
+          decision: z.enum(['approve', 'reject']),
+          note: z.string().optional(),
+          postApprovalAction: z.enum(['create_shipment', 'approve_only']).optional(),
+          shipmentType: z.enum(['air', 'ocean', 'd2d']).optional(),
+          d2dDispatchMode: z.enum(['air', 'sea']).optional(),
+        })
+        .superRefine((value, ctx) => {
+          if (value.decision !== 'approve') return
+
+          const action = value.postApprovalAction ?? 'approve_only'
+          if (action === 'approve_only') return
+
+          if (!value.shipmentType) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'shipmentType is required when postApprovalAction is create_shipment.',
+              path: ['shipmentType'],
+            })
+          }
+
+          if (value.shipmentType === 'd2d' && !value.d2dDispatchMode) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'd2dDispatchMode is required when shipmentType is d2d.',
+              path: ['d2dDispatchMode'],
+            })
+          }
+        }),
       response: {
         200: z.object({
           success: z.literal(true),
           data: z.object({
             item: publicGalleryItemSchema,
             claim: claimSchema,
+            shipment: reviewClaimShipmentSchema.nullable(),
           }),
         }),
       },

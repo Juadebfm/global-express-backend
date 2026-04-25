@@ -368,7 +368,13 @@ export const galleryController = {
   async reviewClaim(
     request: FastifyRequest<{
       Params: { id: string }
-      Body: { decision: 'approve' | 'reject'; note?: string }
+      Body: {
+        decision: 'approve' | 'reject'
+        note?: string
+        postApprovalAction?: 'create_shipment' | 'approve_only'
+        shipmentType?: 'air' | 'ocean' | 'd2d'
+        d2dDispatchMode?: 'air' | 'sea'
+      }
     }>,
     reply: FastifyReply,
   ) {
@@ -377,6 +383,9 @@ export const galleryController = {
       reviewerId: request.user.id,
       decision: request.body.decision,
       note: request.body.note,
+      postApprovalAction: request.body.postApprovalAction,
+      shipmentType: request.body.shipmentType,
+      d2dDispatchMode: request.body.d2dDispatchMode,
     })
 
     return reply.send(successResponse(payload))

@@ -2,6 +2,7 @@ export const STATUS_LABELS: Record<string, string> = {
   PREORDER_SUBMITTED: 'Pre-Order Submitted',
   AWAITING_WAREHOUSE_RECEIPT: 'Awaiting Warehouse Receipt',
   WAREHOUSE_RECEIVED: 'Received at Warehouse',
+  CLAIM_APPROVED_PENDING_BULK_PROCESSING: 'Claim Approved — Pending Bulk Processing',
   WAREHOUSE_VERIFIED_PRICED: 'Verified & Priced',
   DISPATCHED_TO_ORIGIN_AIRPORT: 'Dispatched to Airport',
   AT_ORIGIN_AIRPORT: 'At Origin Airport',

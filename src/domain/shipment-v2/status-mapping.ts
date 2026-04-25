@@ -24,6 +24,7 @@ export function mapV2StatusToLegacy(v2Status: ShipmentStatusV2): OrderStatus {
     case ShipmentStatusV2.PREORDER_SUBMITTED:
     case ShipmentStatusV2.AWAITING_WAREHOUSE_RECEIPT:
     case ShipmentStatusV2.WAREHOUSE_RECEIVED:
+    case ShipmentStatusV2.CLAIM_APPROVED_PENDING_BULK_PROCESSING:
     case ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED:
       return OrderStatus.PENDING
 
