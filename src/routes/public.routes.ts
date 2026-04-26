@@ -20,7 +20,6 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
 
   const publicGalleryItemSchema = z.object({
     id: z.string().uuid(),
-    trackingNumber: z.string(),
     trackingNumberMasked: z.string(),
     itemType: galleryItemTypeSchema,
     title: z.string(),
@@ -320,6 +319,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
       summary: 'Submit ownership claim for anonymous goods (public)',
       params: z.object({ trackingNumber: z.string().min(1) }),
       body: z.object({
+        itemId: z.string().uuid(),
         fullName: z.string().min(2),
         email: z.string().email(),
         phone: z.string().min(5),

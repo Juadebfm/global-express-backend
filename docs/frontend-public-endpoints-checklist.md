@@ -9,7 +9,8 @@ This guide is the FE checklist for consuming all public/no-auth endpoints in thi
 - [ ] Use backend base URL + `/api/v1` prefix.
 - [ ] Send `Content-Type: application/json` for JSON requests.
 - [ ] Do not send auth headers for endpoints listed as public.
-- [ ] For gallery UIs, render `trackingNumberMasked` in UI and keep raw `trackingNumber` only for API actions.
+- [ ] For gallery UIs, render only `trackingNumberMasked` from API.
+- [ ] Require user to manually type full tracking number before claim submission.
 - [ ] Handle both response envelopes:
   - Success: `{ "success": true, "data": ... }`
   - Error: `{ "success": false, "message": "..." }`
@@ -268,7 +269,6 @@ Response (`200`) shape:
     "anonymousGoods": [
       {
         "id": "uuid",
-        "trackingNumber": "GEX-20260425-A3F9C21B",
         "trackingNumberMasked": "GEX-20260425-****C21B",
         "itemType": "anonymous_goods",
         "title": "Unclaimed Mobile Accessories Carton",
@@ -305,7 +305,6 @@ Response (`200`):
   "data": [
     {
       "id": "uuid",
-      "trackingNumber": "GEX-20260425-B90D7712",
       "trackingNumberMasked": "GEX-20260425-****7712",
       "itemType": "advert",
       "title": "Need Fast Air Freight from Korea?",
@@ -360,6 +359,8 @@ Response (`200`):
 ### 2.8 `POST /api/v1/public/gallery/anonymous/:trackingNumber/claim`
 
 - [ ] Step 2 after uploading proof files.
+- [ ] User must type full tracking number; FE sends that typed value as `:trackingNumber` path param.
+- [ ] FE must also send selected `itemId`; backend verifies the entered tracking number belongs to that item.
 - [ ] `proofR2Keys` must come from presign step and match prefix `gallery-claims/<uploadToken>/`.
 - [ ] Min 1 and max 5 proof keys.
 
@@ -367,6 +368,7 @@ Request body:
 
 ```json
 {
+  "itemId": "uuid",
   "fullName": "Jane Doe",
   "email": "jane@example.com",
   "phone": "+2348012345678",
@@ -388,7 +390,6 @@ Response (`201`) shape:
   "data": {
     "item": {
       "id": "uuid",
-      "trackingNumber": "GEX-20260425-A3F9C21B",
       "trackingNumberMasked": "GEX-20260425-****C21B",
       "itemType": "anonymous_goods",
       "title": "string",
@@ -635,7 +636,10 @@ Response (`200`):
 - [ ] User selects an item; FE collects contact data + proof files.
 - [ ] For each file, call `POST /api/v1/public/gallery/claims/presign`.
 - [ ] Upload each file with `PUT` to `uploadUrl`.
+- [ ] Ask user to enter full tracking number manually.
 - [ ] Submit `POST /api/v1/public/gallery/anonymous/:trackingNumber/claim` with:
+  - `:trackingNumber` from user input (not from list API)
+  - selected `itemId` from list response
   - `uploadToken` returned by presign
   - `proofR2Keys` returned by presign
 - [ ] Show claim + ticket number from response.

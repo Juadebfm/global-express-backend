@@ -68,6 +68,7 @@ export const galleryController = {
     request: FastifyRequest<{
       Params: { trackingNumber: string }
       Body: {
+        itemId: string
         fullName: string
         email: string
         phone: string
@@ -82,6 +83,7 @@ export const galleryController = {
   ) {
     const payload = await galleryService.submitAnonymousGoodsClaim({
       trackingNumber: request.params.trackingNumber,
+      expectedItemId: request.body.itemId,
       publicContact: {
         fullName: request.body.fullName,
         email: request.body.email,
@@ -100,7 +102,7 @@ export const galleryController = {
   async submitAuthenticatedAnonymousClaim(
     request: FastifyRequest<{
       Params: { trackingNumber: string }
-      Body: { message?: string; uploadToken: string; proofR2Keys: string[] }
+      Body: { itemId: string; message?: string; uploadToken: string; proofR2Keys: string[] }
     }>,
     reply: FastifyReply,
   ) {
@@ -113,6 +115,7 @@ export const galleryController = {
 
     const payload = await galleryService.submitAnonymousGoodsClaim({
       trackingNumber: request.params.trackingNumber,
+      expectedItemId: request.body.itemId,
       authClaimant: {
         id: request.user.id,
         role: request.user.role as UserRole,

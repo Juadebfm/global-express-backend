@@ -736,6 +736,7 @@ export class GalleryService {
 
   async submitAnonymousGoodsClaim(input: {
     trackingNumber: string
+    expectedItemId?: string
     message?: string
     uploadToken: string
     proofR2Keys: string[]
@@ -754,10 +755,12 @@ export class GalleryService {
       proofR2Keys: input.proofR2Keys,
     })
 
+    const normalizedTrackingNumber = input.trackingNumber.trim().toUpperCase()
+
     const [target] = await db
       .select()
       .from(galleryItems)
-      .where(eq(galleryItems.trackingNumber, input.trackingNumber))
+      .where(eq(galleryItems.trackingNumber, normalizedTrackingNumber))
       .limit(1)
 
     if (!target) {
@@ -766,6 +769,10 @@ export class GalleryService {
 
     if (target.itemType !== GalleryItemType.ANONYMOUS_GOODS) {
       throw httpError('This item is not claimable as anonymous goods', 422)
+    }
+
+    if (input.expectedItemId && input.expectedItemId !== target.id) {
+      throw httpError('Tracking number does not match the selected gallery item', 422)
     }
 
     const now = new Date()

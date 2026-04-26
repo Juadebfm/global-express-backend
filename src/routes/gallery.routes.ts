@@ -18,7 +18,6 @@ const galleryItemStatusSchema = z.enum([
 
 const publicGalleryItemSchema = z.object({
   id: z.string().uuid(),
-  trackingNumber: z.string(),
   trackingNumberMasked: z.string(),
   itemType: galleryItemTypeSchema,
   title: z.string(),
@@ -175,6 +174,7 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
       security: [{ bearerAuth: [] }],
       params: z.object({ trackingNumber: z.string().min(1) }),
       body: z.object({
+        itemId: z.string().uuid(),
         message: z.string().optional(),
         uploadToken: z.string().min(1),
         proofR2Keys: z.array(z.string().min(1)).min(1).max(5),
