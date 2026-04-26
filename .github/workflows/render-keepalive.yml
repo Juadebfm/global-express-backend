@@ -2,7 +2,9 @@ name: Render Keepalive
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Weekdays, 09:00-19:50 Korea Standard Time (KST, UTC+9)
+    # GitHub Actions cron uses UTC, so this is 00:00-10:50 UTC, Mon-Fri.
+    - cron: "*/10 0-10 * * 1-5"
   workflow_dispatch:
 
 jobs:
