@@ -1,0 +1,37 @@
+name: Render Keepalive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping Render Health Endpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate healthcheck URL secret
+        env:
+          HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
+        run: |
+          if [ -z "${HEALTHCHECK_URL}" ]; then
+            echo "Missing secret: RENDER_HEALTHCHECK_URL"
+            echo "Set it to your Render health endpoint, e.g. https://<service>.onrender.com/health"
+            exit 1
+          fi
+
+      - name: Ping endpoint
+        env:
+          HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
+        run: |
+          set -euo pipefail
+          code="$(curl -sS --max-time 30 --retry 2 --retry-delay 2 -o /tmp/health_response.txt -w "%{http_code}" "${HEALTHCHECK_URL}")"
+          echo "HTTP ${code}"
+
+          if [ "${code}" -lt 200 ] || [ "${code}" -ge 400 ]; then
+            echo "Healthcheck failed. Response body:"
+            cat /tmp/health_response.txt
+            exit 1
+          fi
+
+          echo "Keepalive ping successful."

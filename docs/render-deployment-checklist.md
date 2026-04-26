@@ -79,3 +79,12 @@ Set these in Render service env vars (or during blueprint creation):
 - [ ] If deployment fails on migrate, verify `DATABASE_URL` connectivity and credentials.
 - [ ] If FE gets CORS errors, confirm exact protocol/domain in `CORS_ORIGINS`.
 - [ ] If file uploads fail, re-check `R2_*` credentials and bucket/public URL.
+
+## 9) Free-Tier Cold Start Mitigation (Optional)
+
+- [ ] Configure GitHub Actions secret `RENDER_HEALTHCHECK_URL` with:
+  - `https://<your-render-service>.onrender.com/health`
+- [ ] Ensure workflow file exists:
+  - `.github/workflows/render-keepalive.yml`
+- [ ] Run it once manually via Actions tab (`Render Keepalive` -> `Run workflow`).
+- [ ] Confirm scheduled pings run every 10 minutes.
