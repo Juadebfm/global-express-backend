@@ -8,18 +8,18 @@
 import { config } from 'dotenv'
 config({ path: '.env' })
 
-import { like } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import { db } from '../src/config/db'
 import { galleryItems } from '../drizzle/schema'
 
-const TRACKING_PREFIX = 'SEED-GALLERY-V1-'
+const SEED_SOURCE = 'scripts/seed-gallery.ts'
 
 async function main() {
   console.log('\n🧹  Removing temporary public gallery seed rows...\n')
 
   const deleted = await db
     .delete(galleryItems)
-    .where(like(galleryItems.trackingNumber, `${TRACKING_PREFIX}%`))
+    .where(sql`coalesce(${galleryItems.metadata} ->> 'seededBy', '') = ${SEED_SOURCE}`)
     .returning({ id: galleryItems.id })
 
   console.log(`  ✅  Removed rows: ${deleted.length}`)

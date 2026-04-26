@@ -5,7 +5,7 @@
  *   npm run seed:gallery
  *
  * Safe to re-run:
- *   - Deletes previous rows created by this script (via tracking prefix)
+ *   - Deletes previous rows created by this script (via metadata marker)
  *   - Re-inserts a fresh set of anonymous goods, cars, and adverts
  *
  * Cleanup later:
@@ -15,12 +15,13 @@
 import { config } from 'dotenv'
 config({ path: '.env' })
 
-import { and, eq, isNull, like } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { db } from '../src/config/db'
 import { galleryItems, users } from '../drizzle/schema'
 import { GalleryItemStatus, GalleryItemType, UserRole } from '../src/types/enums'
+import { generateTrackingNumber } from '../src/utils/tracking'
 
-const TRACKING_PREFIX = 'SEED-GALLERY-V1-'
+const SEED_SOURCE = 'scripts/seed-gallery.ts'
 
 type GallerySeedItem = {
   trackingNumber: string
@@ -129,7 +130,7 @@ function buildAnonymousGoodsItems(supplierIds: string[]): GallerySeedItem[] {
     const warehouseReceivedAt = daysAgo(receivedDaysAgo[idx]).toISOString()
 
     return {
-      trackingNumber: `${TRACKING_PREFIX}AG-${modeCode}-${seq}`,
+      trackingNumber: `${modeCode}-${seq}`,
       itemType: GalleryItemType.ANONYMOUS_GOODS,
       title: `Unclaimed ${label}`,
       description:
@@ -161,7 +162,7 @@ function buildAnonymousGoodsItems(supplierIds: string[]): GallerySeedItem[] {
 
 const MARKET_ITEMS: GallerySeedItem[] = [
   {
-    trackingNumber: `${TRACKING_PREFIX}CAR-001`,
+    trackingNumber: 'CAR-001',
     itemType: GalleryItemType.CAR,
     title: '2018 Toyota Camry LE',
     description:
@@ -183,7 +184,7 @@ const MARKET_ITEMS: GallerySeedItem[] = [
     },
   },
   {
-    trackingNumber: `${TRACKING_PREFIX}CAR-002`,
+    trackingNumber: 'CAR-002',
     itemType: GalleryItemType.CAR,
     title: '2017 Lexus RX 350',
     description:
@@ -205,7 +206,7 @@ const MARKET_ITEMS: GallerySeedItem[] = [
     },
   },
   {
-    trackingNumber: `${TRACKING_PREFIX}AD-001`,
+    trackingNumber: 'AD-001',
     itemType: GalleryItemType.ADVERT,
     title: 'Need Fast Air Freight from Korea?',
     description:
@@ -222,7 +223,7 @@ const MARKET_ITEMS: GallerySeedItem[] = [
     },
   },
   {
-    trackingNumber: `${TRACKING_PREFIX}AD-002`,
+    trackingNumber: 'AD-002',
     itemType: GalleryItemType.ADVERT,
     title: 'Door-to-Door Shipping Promo',
     description:
@@ -239,7 +240,7 @@ const MARKET_ITEMS: GallerySeedItem[] = [
     },
   },
   {
-    trackingNumber: `${TRACKING_PREFIX}AD-003`,
+    trackingNumber: 'AD-003',
     itemType: GalleryItemType.ADVERT,
     title: 'Weekly Clearing & Pickup Support',
     description:
@@ -284,7 +285,7 @@ async function main() {
 
   const deleted = await db
     .delete(galleryItems)
-    .where(like(galleryItems.trackingNumber, `${TRACKING_PREFIX}%`))
+    .where(sql`coalesce(${galleryItems.metadata} ->> 'seededBy', '') = ${SEED_SOURCE}`)
     .returning({ id: galleryItems.id })
 
   if (deleted.length > 0) {
@@ -296,7 +297,7 @@ async function main() {
     .insert(galleryItems)
     .values(
       galleryItemsToSeed.map((item, idx) => ({
-        trackingNumber: item.trackingNumber,
+        trackingNumber: generateTrackingNumber(),
         itemType: item.itemType,
         status: GalleryItemStatus.PUBLISHED,
         title: item.title,
@@ -311,7 +312,7 @@ async function main() {
         priceCurrency: 'NGN',
         metadata: {
           ...(item.metadata ?? {}),
-          seededBy: 'scripts/seed-gallery.ts',
+          seededBy: SEED_SOURCE,
           seedVersion: 'v1',
         },
         createdBy: superAdmin.id,

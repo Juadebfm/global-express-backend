@@ -18,6 +18,7 @@ import { supportService } from './support.service'
 import { notificationsService, notifyUser } from './notifications.service'
 import { env } from '../config/env'
 import { dispatchBatchesService } from './dispatch-batches.service'
+import { maskTrackingNumber } from '../utils/tracking'
 
 const ALLOWED_PROOF_CONTENT_TYPES = new Set([
   'application/pdf',
@@ -212,6 +213,7 @@ export class GalleryService {
     return {
       id: item.id,
       trackingNumber: item.trackingNumber,
+      trackingNumberMasked: maskTrackingNumber(item.trackingNumber),
       itemType: item.itemType,
       title: item.title,
       description: item.description,

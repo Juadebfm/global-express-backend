@@ -21,6 +21,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
   const publicGalleryItemSchema = z.object({
     id: z.string().uuid(),
     trackingNumber: z.string(),
+    trackingNumberMasked: z.string(),
     itemType: galleryItemTypeSchema,
     title: z.string(),
     description: z.string().nullable(),
