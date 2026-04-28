@@ -2,8 +2,6 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import rateLimit from '@fastify/rate-limit'
-import swagger from '@fastify/swagger'
-import swaggerUI from '@fastify/swagger-ui'
 import websocketPlugin from '@fastify/websocket'
 import multipart from '@fastify/multipart'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
@@ -39,7 +37,7 @@ export async function buildApp() {
       directives: {
         defaultSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:', 'validator.swagger.io'],
+        imgSrc: ["'self'", 'data:'],
         scriptSrc: ["'self'"],
       },
     },
@@ -76,38 +74,6 @@ export async function buildApp() {
       fileSize: 10 * 1024 * 1024, // 10MB upload cap for import sheets
     },
   })
-
-  // ─── Swagger ──────────────────────────────────────────────────────────────
-  if (true) {
-    await app.register(swagger, {
-      openapi: {
-        info: {
-          title: 'Global Express API',
-          description: 'Shipment Order Tracking System REST API',
-          version: '1.0.0',
-        },
-        servers: [{ url: `http://localhost:${env.PORT}`, description: 'Local' }],
-        components: {
-          securitySchemes: {
-            bearerAuth: {
-              type: 'http',
-              scheme: 'bearer',
-              bearerFormat: 'JWT',
-              description: 'Clerk session JWT',
-            },
-          },
-        },
-      },
-    })
-
-    await app.register(swaggerUI, {
-      routePrefix: '/docs',
-      uiConfig: {
-        docExpansion: 'list',
-        deepLinking: true,
-      },
-    })
-  }
 
   // ─── Webhook raw body capture ─────────────────────────────────────────────
   // Raw body is required for signature verification:

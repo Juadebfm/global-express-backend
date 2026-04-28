@@ -100,18 +100,23 @@ export const paymentsController = {
     request: FastifyRequest<{ Params: { reference: string } }>,
     reply: FastifyReply,
   ) {
-    const payment = await paymentsService.verifyPayment(request.params.reference)
+    const existingPayment = await paymentsService.getPaymentByReference(request.params.reference)
 
-    if (!payment) {
+    if (!existingPayment) {
       return reply.code(404).send({ success: false, message: 'Payment record not found' })
     }
 
     // Customers can only verify their own payments
     if (
       [UserRole.USER, UserRole.SUPPLIER].includes(request.user.role as UserRole) &&
-      payment.userId !== request.user.id
+      existingPayment.userId !== request.user.id
     ) {
       return reply.code(403).send({ success: false, message: 'Forbidden' })
+    }
+
+    const payment = await paymentsService.verifyPayment(request.params.reference)
+    if (!payment) {
+      return reply.code(404).send({ success: false, message: 'Payment record not found' })
     }
 
     return reply.send(successResponse(payment))

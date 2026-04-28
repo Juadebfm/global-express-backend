@@ -233,7 +233,8 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
 - **Staff / Admin** can create on behalf of a customer by providing \`senderId\`.
 - Customers must have a complete profile (name or business name, phone, and full address) before placing an order — returns \`422\` otherwise.
 
-The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destination are set automatically.
+The lane is fixed to **South Korea → Lagos, Nigeria** for air and ocean shipments.
+For **D2D**, the destination defaults to the Lagos office address, but users can provide a specific Nigerian destination.
 
 **Example request body:**
 \`\`\`json
@@ -263,7 +264,10 @@ The lane is fixed to **South Korea → Lagos, Nigeria** — origin and destinati
         .object({
           senderId: z.string().uuid().optional().describe('Customer UUID — staff only, to create on behalf of a customer'),
           recipientName: z.string().min(1).describe('Full name of the recipient'),
-          recipientAddress: z.string().optional().describe('Delivery address — defaults to Global Express Lagos office (58B Awoniyi Elemo Street, Ajao Estate, Lagos)'),
+          recipientAddress: z
+            .string()
+            .optional()
+            .describe('Optional Nigerian destination address. If omitted for D2D, defaults to Lagos office address. If provided with air/ocean, shipment is treated as D2D.'),
           recipientPhone: z.string().min(1).describe('Recipient contact phone number'),
           recipientEmail: z.string().email().optional().describe('Recipient email (optional, for delivery notifications)'),
           orderDirection: z.nativeEnum(OrderDirection).optional().default(OrderDirection.OUTBOUND).describe('outbound = we ship TO customer; inbound = customer ships TO us'),

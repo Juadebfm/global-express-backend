@@ -22,6 +22,15 @@ export const galleryController = {
     return reply.send(successResponse(payload.adverts))
   },
 
+  async getPublicSales(
+    request: FastifyRequest<{ Querystring: { limit?: string } }>,
+    reply: FastifyReply,
+  ) {
+    const limit = Number(request.query.limit) || 20
+    const payload = await galleryService.listPublicGallery(limit)
+    return reply.send(successResponse(payload.sales))
+  },
+
   async getAuthenticatedGallery(
     request: FastifyRequest<{ Querystring: { limitPerSection?: string } }>,
     reply: FastifyReply,
@@ -283,7 +292,6 @@ export const galleryController = {
       itemId: request.params.id,
       actorId: request.user.id,
       actorRole: request.user.role as UserRole,
-      expectedItemType: GalleryItemType.ADVERT,
       title: request.body.title,
       description: request.body.description,
       previewImageUrl: request.body.previewImageUrl,
@@ -322,6 +330,7 @@ export const galleryController = {
       itemId: request.params.id,
       actorId: request.user.id,
       actorRole: request.user.role as UserRole,
+      expectedItemType: GalleryItemType.ADVERT,
       title: request.body.title,
       description: request.body.description,
       previewImageUrl: request.body.previewImageUrl,

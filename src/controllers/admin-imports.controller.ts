@@ -8,10 +8,9 @@ const ALLOWED_IMPORT_MIME_TYPES = new Set([
   'text/csv',
   'application/csv',
   'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ])
 
-const ALLOWED_IMPORT_EXTENSIONS = ['.csv', '.xlsx', '.xls']
+const ALLOWED_IMPORT_EXTENSIONS = ['.csv']
 
 function hasAllowedExtension(filename: string): boolean {
   const lower = filename.trim().toLowerCase()
@@ -34,7 +33,7 @@ export const adminImportsController = {
     if (!file) {
       return reply.code(400).send({
         success: false,
-        message: 'No file found. Upload a CSV or Excel (.xlsx/.xls) file in the file field.',
+        message: 'No file found. Upload a CSV (.csv) file in the file field.',
       })
     }
 
@@ -44,7 +43,7 @@ export const adminImportsController = {
     if (!supportedType) {
       return reply.code(400).send({
         success: false,
-        message: 'Unsupported file type. Upload CSV or Excel (.xlsx/.xls).',
+        message: 'Unsupported file type. Upload CSV (.csv).',
       })
     }
 

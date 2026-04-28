@@ -86,6 +86,16 @@ function getAudienceRolesForTargetRole(targetRole: UserRole): UserRole[] {
   return [UserRole.USER, UserRole.STAFF, UserRole.SUPER_ADMIN]
 }
 
+function canMutateSharedNotification(input: {
+  userRole: UserRole
+  isBroadcast: boolean
+  targetRole: string | null
+}): boolean {
+  if (input.isBroadcast) return true
+  if (!input.targetRole) return false
+  return getVisibleTargetRoles(input.userRole).includes(input.targetRole as UserRole)
+}
+
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 export class NotificationsService {
@@ -314,7 +324,7 @@ export class NotificationsService {
    * Marks a notification as read for a user.
    * Personal: updates isRead on the row. Shared: upserts notification_reads.
    */
-  async markRead(notificationId: string, userId: string): Promise<boolean> {
+  async markRead(notificationId: string, userId: string, userRole: UserRole): Promise<boolean> {
     const [notification] = await db
       .select({
         id: notifications.id,
@@ -329,6 +339,16 @@ export class NotificationsService {
     if (!notification) return false
 
     if (notification.isBroadcast || notification.targetRole) {
+      if (
+        !canMutateSharedNotification({
+          userRole,
+          isBroadcast: notification.isBroadcast,
+          targetRole: notification.targetRole,
+        })
+      ) {
+        return false
+      }
+
       await db
         .insert(notificationReads)
         .values({ notificationId, userId, readAt: new Date() })
@@ -401,7 +421,7 @@ export class NotificationsService {
   /**
    * Toggles saved state for a notification.
    */
-  async toggleSaved(notificationId: string, userId: string): Promise<boolean> {
+  async toggleSaved(notificationId: string, userId: string, userRole: UserRole): Promise<boolean> {
     const [notification] = await db
       .select({
         id: notifications.id,
@@ -417,6 +437,16 @@ export class NotificationsService {
     if (!notification) return false
 
     if (notification.isBroadcast || notification.targetRole) {
+      if (
+        !canMutateSharedNotification({
+          userRole,
+          isBroadcast: notification.isBroadcast,
+          targetRole: notification.targetRole,
+        })
+      ) {
+        return false
+      }
+
       const [existing] = await db
         .select({ isSaved: notificationReads.isSaved })
         .from(notificationReads)
@@ -492,7 +522,7 @@ export class NotificationsService {
    * Deletes a single notification for a user.
    * Personal: hard-delete (must be owner). Shared: soft-delete via notification_reads.
    */
-  async deleteNotification(notificationId: string, userId: string): Promise<boolean> {
+  async deleteNotification(notificationId: string, userId: string, userRole: UserRole): Promise<boolean> {
     const [notification] = await db
       .select({
         id: notifications.id,
@@ -507,6 +537,16 @@ export class NotificationsService {
     if (!notification) return false
 
     if (notification.isBroadcast || notification.targetRole) {
+      if (
+        !canMutateSharedNotification({
+          userRole,
+          isBroadcast: notification.isBroadcast,
+          targetRole: notification.targetRole,
+        })
+      ) {
+        return false
+      }
+
       await db
         .insert(notificationReads)
         .values({ notificationId, userId, isDeleted: true })
@@ -525,7 +565,13 @@ export class NotificationsService {
   /**
    * Deletes multiple notifications for a user. Returns count processed.
    */
-  async bulkDeleteNotifications(notificationIds: string[], userId: string): Promise<number> {
+  async bulkDeleteNotifications(
+    notificationIds: string[],
+    userId: string,
+    userRole: UserRole,
+  ): Promise<number> {
+    const visibleRoles = getVisibleTargetRoles(userRole)
+
     const rows = await db
       .select({
         id: notifications.id,
@@ -540,7 +586,11 @@ export class NotificationsService {
       .filter((n) => !n.isBroadcast && !n.targetRole && n.userId === userId)
       .map((n) => n.id)
     const sharedIds = rows
-      .filter((n) => n.isBroadcast || n.targetRole)
+      .filter(
+        (n) =>
+          n.isBroadcast ||
+          (n.targetRole ? visibleRoles.includes(n.targetRole as UserRole) : false),
+      )
       .map((n) => n.id)
 
     const ops: Promise<unknown>[] = []

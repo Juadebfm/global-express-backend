@@ -5,6 +5,7 @@ import { lt } from 'drizzle-orm'
 import { usersController } from '../controllers/users.controller'
 import { usersService } from '../services/users.service'
 import { authenticate } from '../middleware/authenticate'
+import { requireStaffOrAbove } from '../middleware/requireRole'
 import { internalAuthService } from '../services/internal-auth.service'
 import { passwordResetService } from '../services/password-reset.service'
 import { db } from '../config/db'
@@ -185,7 +186,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
    * Clerk customer tokens are not handled here — use Clerk's signOut() instead.
    */
   app.post('/logout', {
-    preHandler: [authenticate],
+    preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Auth'],
       summary: 'Operator logout',
@@ -197,15 +198,31 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     handler: async (request, reply) => {
-      const token = request.headers.authorization!.slice(7)
-      const parts = token.split('.')
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+      const authHeader = request.headers.authorization
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return reply.code(401).send({ message: 'Unauthorized - missing token' })
+      }
 
-      await db.insert(revokedTokens).values({
-        jti: payload.jti,
-        userId: request.user.id,
-        expiresAt: new Date(payload.exp * 1000),
-      })
+      const token = authHeader.slice(7).trim()
+      let payload: ReturnType<typeof internalAuthService.verifyToken>
+      try {
+        payload = internalAuthService.verifyToken(token)
+      } catch {
+        return reply.code(401).send({ message: 'Unauthorized - invalid or expired token' })
+      }
+
+      if (!payload.jti || payload.sub !== request.user.id) {
+        return reply.code(401).send({ message: 'Unauthorized - invalid token payload' })
+      }
+
+      await db
+        .insert(revokedTokens)
+        .values({
+          jti: payload.jti,
+          userId: request.user.id,
+          expiresAt: new Date(payload.exp * 1000),
+        })
+        .onConflictDoNothing({ target: revokedTokens.jti })
 
       // Lazy cleanup: remove expired entries so the table stays small
       db.delete(revokedTokens)

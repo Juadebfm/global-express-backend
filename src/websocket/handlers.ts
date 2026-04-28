@@ -2,7 +2,7 @@ import type { FastifyRequest } from 'fastify'
 import { verifyToken } from '@clerk/backend'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
-import { users } from '../../drizzle/schema'
+import { revokedTokens, users } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { internalAuthService } from '../services/internal-auth.service'
 import { UserRole } from '../types/enums'
@@ -18,14 +18,16 @@ export const ticketRooms = new Map<string, Set<string>>()
 /**
  * WebSocket connection handler.
  *
- * Supports two token types via the `token` query parameter:
+ * Supports two token types via Authorization header or Sec-WebSocket-Protocol:
  *   1. Clerk JWT    — for customers (role: user)
  *   2. Internal JWT — for staff / superadmin
  *
  * Token type is detected by peeking at the `type` claim in the JWT payload
  * (same strategy as the authenticate middleware).
  *
- * Connect: ws://host/ws?token=<jwt>
+ * Connect using either:
+ *   - `Authorization: Bearer <jwt>`
+ *   - `Sec-WebSocket-Protocol: bearer, <jwt>`
  */
 // Using `any` for the socket type to avoid requiring @types/ws as a direct dependency;
 // the ws types are available through @fastify/websocket's peer dependency.
@@ -34,11 +36,10 @@ export async function handleWebSocketConnection(
   socket: any,
   request: FastifyRequest,
 ): Promise<void> {
-  const query = request.query as Record<string, string>
-  const token = query.token
+  const token = extractWebSocketToken(request)
 
   if (!token) {
-    socket.close(4001, 'Unauthorized — token query parameter is required')
+    socket.close(4001, 'Unauthorized — provide token via Authorization header or websocket protocol')
     return
   }
 
@@ -60,15 +61,42 @@ export async function handleWebSocketConnection(
   if (tokenType === 'internal') {
     try {
       const payload = internalAuthService.verifyToken(token)
+      const [revoked] = await db
+        .select({ id: revokedTokens.id })
+        .from(revokedTokens)
+        .where(eq(revokedTokens.jti, payload.jti))
+        .limit(1)
+
+      if (revoked) {
+        socket.close(4001, 'Unauthorized — token has been revoked')
+        return
+      }
 
       const [user] = await db
-        .select({ id: users.id })
+        .select({
+          id: users.id,
+          role: users.role,
+          isActive: users.isActive,
+          mustChangePassword: users.mustChangePassword,
+          mustCompleteProfile: users.mustCompleteProfile,
+        })
         .from(users)
         .where(and(eq(users.id, payload.sub), isNull(users.deletedAt)))
         .limit(1)
 
       if (!user) {
         socket.close(4001, 'Unauthorized — user not found')
+        return
+      }
+
+      if (![UserRole.STAFF, UserRole.SUPER_ADMIN].includes(user.role as UserRole)) {
+        socket.close(4003, 'Forbidden — internal websocket auth is restricted to staff roles')
+        return
+      }
+
+      const isOnboarding = user.mustChangePassword || user.mustCompleteProfile
+      if (!user.isActive && !isOnboarding) {
+        socket.close(4003, 'Forbidden — account is inactive')
         return
       }
 
@@ -88,7 +116,7 @@ export async function handleWebSocketConnection(
       }
 
       const [user] = await db
-        .select({ id: users.id, role: users.role })
+        .select({ id: users.id, role: users.role, isActive: users.isActive })
         .from(users)
         .where(and(eq(users.clerkId, payload.sub), isNull(users.deletedAt)))
         .limit(1)
@@ -101,6 +129,11 @@ export async function handleWebSocketConnection(
       // Internal operator roles must never authenticate through Clerk.
       if ([UserRole.STAFF, UserRole.SUPER_ADMIN].includes(user.role as UserRole)) {
         socket.close(4003, 'Forbidden — internal roles must sign in via internal auth')
+        return
+      }
+
+      if (!user.isActive) {
+        socket.close(4003, 'Forbidden — account is inactive')
         return
       }
 
@@ -153,6 +186,41 @@ export async function handleWebSocketConnection(
   socket.on('error', (err: unknown) => {
     request.log.error({ err, userId }, 'WebSocket error')
   })
+}
+
+function extractWebSocketToken(request: FastifyRequest): string | null {
+  const authHeader = request.headers.authorization
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim()
+  }
+
+  const protocolHeader = request.headers['sec-websocket-protocol']
+  const protocolValue = Array.isArray(protocolHeader)
+    ? protocolHeader.join(',')
+    : protocolHeader
+
+  if (!protocolValue) return null
+
+  const protocols = protocolValue
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  if (protocols.length >= 2 && /^(bearer|token)$/i.test(protocols[0])) {
+    const candidate = protocols[1]
+    return isJwtLike(candidate) ? candidate : null
+  }
+
+  for (const protocol of protocols) {
+    if (isJwtLike(protocol)) return protocol
+  }
+
+  return null
+}
+
+function isJwtLike(value: string): boolean {
+  const parts = value.split('.')
+  return parts.length === 3 && parts.every((part) => part.length > 0)
 }
 
 /**

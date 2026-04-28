@@ -39,7 +39,11 @@ export const notificationsController = {
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ) {
-    const ok = await notificationsService.markRead(request.params.id, request.user.id)
+    const ok = await notificationsService.markRead(
+      request.params.id,
+      request.user.id,
+      request.user.role as UserRole,
+    )
     if (!ok) {
       return reply.code(404).send({ success: false, message: 'Notification not found or not accessible' })
     }
@@ -50,7 +54,11 @@ export const notificationsController = {
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ) {
-    const ok = await notificationsService.toggleSaved(request.params.id, request.user.id)
+    const ok = await notificationsService.toggleSaved(
+      request.params.id,
+      request.user.id,
+      request.user.role as UserRole,
+    )
     if (!ok) {
       return reply.code(404).send({ success: false, message: 'Notification not found or not accessible' })
     }
@@ -61,7 +69,11 @@ export const notificationsController = {
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ) {
-    const ok = await notificationsService.deleteNotification(request.params.id, request.user.id)
+    const ok = await notificationsService.deleteNotification(
+      request.params.id,
+      request.user.id,
+      request.user.role as UserRole,
+    )
     if (!ok) {
       return reply.code(404).send({ success: false, message: 'Notification not found or not accessible' })
     }
@@ -72,7 +84,11 @@ export const notificationsController = {
     request: FastifyRequest<{ Body: { ids: string[] } }>,
     reply: FastifyReply,
   ) {
-    const deleted = await notificationsService.bulkDeleteNotifications(request.body.ids, request.user.id)
+    const deleted = await notificationsService.bulkDeleteNotifications(
+      request.body.ids,
+      request.user.id,
+      request.user.role as UserRole,
+    )
     return reply.send(successResponse({ deleted }))
   },
 

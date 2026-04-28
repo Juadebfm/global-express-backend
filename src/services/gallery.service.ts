@@ -79,6 +79,8 @@ function parseDisplayName(input: {
 
 export interface GalleryPublicListResult {
   anonymousGoods: Array<ReturnType<GalleryService['formatPublicItem']>>
+  sales: Array<ReturnType<GalleryService['formatPublicItem']>>
+  // Backward-compat alias for existing clients.
   cars: Array<ReturnType<GalleryService['formatPublicItem']>>
   adverts: Array<ReturnType<GalleryService['formatPublicItem']>>
 }
@@ -463,15 +465,18 @@ export class GalleryService {
   async listPublicGallery(limitPerSection = 20): Promise<GalleryPublicListResult> {
     const safeLimit = Math.min(Math.max(limitPerSection, 1), 100)
 
-    const [anonymousGoods, cars, adverts] = await Promise.all([
+    const [anonymousGoods, sales, adverts] = await Promise.all([
       this.getVisibleItemsByType(GalleryItemType.ANONYMOUS_GOODS, safeLimit),
       this.getVisibleItemsByType(GalleryItemType.CAR, safeLimit),
       this.getVisibleItemsByType(GalleryItemType.ADVERT, safeLimit),
     ])
 
+    const formattedSales = sales.map((item) => this.formatPublicItem(item))
+
     return {
       anonymousGoods: anonymousGoods.map((item) => this.formatPublicItem(item)),
-      cars: cars.map((item) => this.formatPublicItem(item)),
+      sales: formattedSales,
+      cars: formattedSales,
       adverts: adverts.map((item) => this.formatPublicItem(item)),
     }
   }

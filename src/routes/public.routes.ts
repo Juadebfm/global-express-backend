@@ -250,7 +250,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
   server.get('/gallery', {
     schema: {
       tags: ['Public'],
-      summary: 'Get public gallery sections (anonymous goods, cars, adverts)',
+      summary: 'Get public gallery sections (anonymous goods, sales, adverts)',
       querystring: z.object({
         limitPerSection: z.coerce.number().int().min(1).max(100).optional().default(20),
       }),
@@ -259,6 +259,8 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: z.object({
             anonymousGoods: z.array(publicGalleryItemSchema),
+            sales: z.array(publicGalleryItemSchema),
+            // Backward-compat alias for existing clients.
             cars: z.array(publicGalleryItemSchema),
             adverts: z.array(publicGalleryItemSchema),
           }),
@@ -284,6 +286,24 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
       },
     },
     handler: galleryController.getPublicAdverts,
+  })
+
+  // GET /gallery/sales — public sales only
+  server.get('/gallery/sales', {
+    schema: {
+      tags: ['Public'],
+      summary: 'Get public sales listings (cars and other sale items)',
+      querystring: z.object({
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.array(publicGalleryItemSchema),
+        }),
+      },
+    },
+    handler: galleryController.getPublicSales,
   })
 
   // POST /gallery/claims/presign — public proof upload URL

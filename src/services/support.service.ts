@@ -58,10 +58,11 @@ function isAdminOrAbove(role: string): boolean {
 }
 
 async function generateTicketNumber(): Promise<string> {
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(supportTickets)
-  return `TKT-${String(count + 1).padStart(4, '0')}`
+  const timestampPart = Date.now().toString().slice(-8)
+  const randomPart = Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, '0')
+  return `TKT-${timestampPart}${randomPart}`
 }
 
 function formatAuthorName(
@@ -105,19 +106,32 @@ export const supportService = {
         ? input.forUserId
         : requestingUser.id
 
-    const ticketNumber = await generateTicketNumber()
+    let ticket: typeof supportTickets.$inferSelect | null = null
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const ticketNumber = await generateTicketNumber()
+      try {
+        const [created] = await db
+          .insert(supportTickets)
+          .values({
+            ticketNumber,
+            userId: targetUserId,
+            orderId: input.orderId ?? null,
+            category: input.category,
+            status: 'open',
+            subject: input.subject,
+          })
+          .returning()
+        ticket = created
+        break
+      } catch (err: any) {
+        if (err?.code === '23505') continue
+        throw err
+      }
+    }
 
-    const [ticket] = await db
-      .insert(supportTickets)
-      .values({
-        ticketNumber,
-        userId: targetUserId,
-        orderId: input.orderId ?? null,
-        category: input.category,
-        status: 'open',
-        subject: input.subject,
-      })
-      .returning()
+    if (!ticket) {
+      throw new Error('Unable to generate support ticket number. Please retry.')
+    }
 
     const [message] = await db
       .insert(supportMessages)

@@ -1217,7 +1217,11 @@ export class UsersService {
       updatedAt: new Date(),
     }
 
-    if (data.email !== undefined) patch.email = encrypt(data.email)
+    if (data.email !== undefined) {
+      const normalizedEmail = data.email.trim().toLowerCase()
+      patch.email = encrypt(normalizedEmail)
+      patch.emailHash = hashEmail(normalizedEmail)
+    }
     if (data.firstName !== undefined) {
       patch.firstName = data.firstName ? encrypt(data.firstName) : null
     }

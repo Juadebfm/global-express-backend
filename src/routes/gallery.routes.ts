@@ -102,6 +102,8 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: z.object({
             anonymousGoods: z.array(publicGalleryItemSchema),
+            sales: z.array(publicGalleryItemSchema),
+            // Backward-compat alias for existing clients.
             cars: z.array(publicGalleryItemSchema),
             adverts: z.array(publicGalleryItemSchema),
             myClaims: z.array(claimSchema),

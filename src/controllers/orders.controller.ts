@@ -15,6 +15,7 @@ import {
 } from '../domain/shipment-v2/customer-tracking-status'
 
 const SEA_CBM_TO_KG_FACTOR = 550
+const FIXED_LAGOS_ADDRESS = '58B Awoniyi Elemo Street, Ajao Estate, Lagos, Nigeria'
 
 function isCustomerRole(role: UserRole): boolean {
   return role === UserRole.USER || role === UserRole.SUPPLIER
@@ -42,6 +43,11 @@ function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0
   const parsed = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeOptionalAddress(value: string | undefined): string | undefined {
+  const normalized = value?.trim()
+  return normalized && normalized.length > 0 ? normalized : undefined
 }
 
 function buildCargoMetrics(goods: Array<{ weightKg: string | null; cbm: string | null }>) {
@@ -187,6 +193,15 @@ export const ordersController = {
     reply: FastifyReply,
   ) {
     const userRole = request.user.role as UserRole
+    const requestedShipmentType = request.body.shipmentType
+    const selectedRecipientAddress = normalizeOptionalAddress(request.body.recipientAddress)
+    const fixedAddressNormalized = FIXED_LAGOS_ADDRESS.toLowerCase()
+    const hasCustomRecipientAddress =
+      Boolean(selectedRecipientAddress) &&
+      selectedRecipientAddress!.toLowerCase() !== fixedAddressNormalized
+    const shipmentType = hasCustomRecipientAddress
+      ? 'd2d'
+      : requestedShipmentType
 
     // Customers always create for themselves — only staff+ can specify a different senderId
     const senderId = isCustomerRole(userRole)
@@ -219,14 +234,16 @@ export const ordersController = {
     const order = await ordersService.createOrder({
       senderId,
       recipientName: request.body.recipientName,
-      recipientAddress: '58B Awoniyi Elemo Street, Ajao Estate, Lagos, Nigeria',
+      recipientAddress: shipmentType === 'd2d'
+        ? (selectedRecipientAddress ?? FIXED_LAGOS_ADDRESS)
+        : FIXED_LAGOS_ADDRESS,
       recipientPhone: request.body.recipientPhone,
       recipientEmail: request.body.recipientEmail,
       orderDirection: request.body.orderDirection,
       weight: request.body.weight,
       declaredValue: request.body.declaredValue,
       description: request.body.description,
-      shipmentType: request.body.shipmentType,
+      shipmentType,
       shipmentPayer,
       billingSupplierId: shipmentPayer === ShipmentPayer.SUPPLIER
         ? request.body.billingSupplierId ?? null

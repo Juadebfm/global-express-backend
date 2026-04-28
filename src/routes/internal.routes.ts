@@ -426,13 +426,23 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       await db
-        .update(appSettings)
-        .set({
+        .insert(appSettings)
+        .values({
+          key: 'require_national_id',
           value: { enabled: request.body.enabled },
+          description: 'Require National ID / Passport during staff profile completion',
           updatedBy: request.user.id,
           updatedAt: new Date(),
         })
-        .where(eq(appSettings.key, 'require_national_id'))
+        .onConflictDoUpdate({
+          target: appSettings.key,
+          set: {
+            value: { enabled: request.body.enabled },
+            description: 'Require National ID / Passport during staff profile completion',
+            updatedBy: request.user.id,
+            updatedAt: new Date(),
+          },
+        })
 
       return reply.send({
         success: true,

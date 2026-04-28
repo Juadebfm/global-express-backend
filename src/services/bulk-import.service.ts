@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx'
 import { eq } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
@@ -88,86 +87,139 @@ function parseRole(value: unknown): ImportRole | undefined {
   return undefined
 }
 
-function inferRoleFromSheetName(sheetName: string): ImportRole | undefined {
-  const normalized = sheetName.trim().toLowerCase()
-  if (normalized.includes('supplier') || normalized.includes('vendor')) return UserRole.SUPPLIER
-  if (normalized.includes('user') || normalized.includes('client') || normalized.includes('customer')) {
-    return UserRole.USER
-  }
-  return undefined
-}
-
 function pickField(
-  row: Record<string, unknown>,
-  normalizedMap: Map<string, string>,
+  row: string[],
+  normalizedMap: Map<string, number>,
   aliases: string[],
 ): unknown {
   for (const alias of aliases) {
     const key = normalizedMap.get(alias)
-    if (!key) continue
+    if (key === undefined) continue
     return row[key]
   }
   return undefined
 }
 
-function parseRowsFromWorkbook(buffer: Buffer): ParsedImportRow[] {
-  let workbook: XLSX.WorkBook
+function parseCsvRecords(buffer: Buffer): string[][] {
+  const content = buffer.toString('utf8')
+  const rows: string[][] = []
+  let currentRow: string[] = []
+  let currentCell = ''
+  let inQuotes = false
 
-  try {
-    workbook = XLSX.read(buffer, { type: 'buffer' })
-  } catch {
-    throw httpError('Unable to parse file. Upload a valid CSV or Excel (.xlsx) sheet.', 400)
+  for (let i = 0; i < content.length; i += 1) {
+    const char = content[i]
+
+    // Ignore UTF-8 BOM.
+    if (i === 0 && char === '\uFEFF') continue
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (content[i + 1] === '"') {
+          currentCell += '"'
+          i += 1
+        } else {
+          inQuotes = false
+        }
+      } else {
+        currentCell += char
+      }
+      continue
+    }
+
+    if (char === '"') {
+      inQuotes = true
+      continue
+    }
+
+    if (char === ',') {
+      currentRow.push(currentCell)
+      currentCell = ''
+      continue
+    }
+
+    if (char === '\r') {
+      // CRLF: let the following '\n' finalize the row.
+      if (content[i + 1] === '\n') continue
+      currentRow.push(currentCell)
+      rows.push(currentRow)
+      currentRow = []
+      currentCell = ''
+      continue
+    }
+
+    if (char === '\n') {
+      currentRow.push(currentCell)
+      rows.push(currentRow)
+      currentRow = []
+      currentCell = ''
+      continue
+    }
+
+    currentCell += char
   }
+
+  if (inQuotes) {
+    throw httpError('Unable to parse CSV file. Unterminated quoted field found.', 400)
+  }
+
+  if (currentCell.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentCell)
+    rows.push(currentRow)
+  }
+
+  return rows
+}
+
+function parseRowsFromCsv(buffer: Buffer): ParsedImportRow[] {
+  const records = parseCsvRecords(buffer)
+  if (records.length === 0) return []
+
+  const [headerRow, ...dataRows] = records
+  const normalizedMap = new Map<string, number>()
+  headerRow.forEach((header, index) => {
+    const normalized = normalizeHeader(header)
+    if (!normalizedMap.has(normalized)) {
+      normalizedMap.set(normalized, index)
+    }
+  })
 
   const parsed: ParsedImportRow[] = []
 
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName]
-    if (!sheet) continue
+  dataRows.forEach((row, index) => {
+    const normalizedRow = headerRow.map((_, columnIndex) => row[columnIndex] ?? '')
+    const hasValues = normalizedRow.some((value) => value.trim().length > 0)
+    if (!hasValues) return
 
-    const roleFromSheet = inferRoleFromSheetName(sheetName)
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-      defval: null,
-      raw: false,
+    const parsedRole = parseRole(
+      pickField(normalizedRow, normalizedMap, ['role', 'type', 'entity', 'entitytype', 'accounttype']),
+    )
+
+    parsed.push({
+      rowNumber: index + 2,
+      role: parsedRole,
+      email: toStringValue(pickField(normalizedRow, normalizedMap, ['email', 'emailaddress'])),
+      firstName: toStringValue(pickField(normalizedRow, normalizedMap, ['firstname', 'fname', 'givenname'])),
+      lastName: toStringValue(pickField(normalizedRow, normalizedMap, ['lastname', 'lname', 'surname'])),
+      businessName: toStringValue(
+        pickField(normalizedRow, normalizedMap, ['businessname', 'company', 'companyname', 'organization']),
+      ),
+      phone: toStringValue(pickField(normalizedRow, normalizedMap, ['phone', 'phonenumber', 'mobile'])),
+      shippingMark: toStringValue(
+        pickField(normalizedRow, normalizedMap, ['shippingmark', 'shippingcode', 'mark']),
+      ),
+      addressStreet: toStringValue(
+        pickField(normalizedRow, normalizedMap, ['addressstreet', 'street', 'streetaddress', 'addressline1']),
+      ),
+      addressCity: toStringValue(pickField(normalizedRow, normalizedMap, ['addresscity', 'city'])),
+      addressState: toStringValue(pickField(normalizedRow, normalizedMap, ['addressstate', 'state', 'province'])),
+      addressCountry: toStringValue(pickField(normalizedRow, normalizedMap, ['addresscountry', 'country'])),
+      addressPostalCode: toStringValue(
+        pickField(normalizedRow, normalizedMap, ['addresspostalcode', 'postalcode', 'zipcode', 'zip']),
+      ),
+      isActive: toBooleanValue(pickField(normalizedRow, normalizedMap, ['isactive', 'active', 'enabled'])),
     })
-
-    rows.forEach((row, index) => {
-      const normalizedMap = new Map<string, string>()
-      for (const key of Object.keys(row)) {
-        normalizedMap.set(normalizeHeader(key), key)
-      }
-
-      const parsedRole =
-        parseRole(
-          pickField(row, normalizedMap, ['role', 'type', 'entity', 'entitytype', 'accounttype']),
-        ) ?? roleFromSheet
-
-      parsed.push({
-        rowNumber: index + 2,
-        role: parsedRole,
-        email: toStringValue(pickField(row, normalizedMap, ['email', 'emailaddress'])),
-        firstName: toStringValue(pickField(row, normalizedMap, ['firstname', 'fname', 'givenname'])),
-        lastName: toStringValue(pickField(row, normalizedMap, ['lastname', 'lname', 'surname'])),
-        businessName: toStringValue(
-          pickField(row, normalizedMap, ['businessname', 'company', 'companyname', 'organization']),
-        ),
-        phone: toStringValue(pickField(row, normalizedMap, ['phone', 'phonenumber', 'mobile'])),
-        shippingMark: toStringValue(
-          pickField(row, normalizedMap, ['shippingmark', 'shippingcode', 'mark']),
-        ),
-        addressStreet: toStringValue(
-          pickField(row, normalizedMap, ['addressstreet', 'street', 'streetaddress', 'addressline1']),
-        ),
-        addressCity: toStringValue(pickField(row, normalizedMap, ['addresscity', 'city'])),
-        addressState: toStringValue(pickField(row, normalizedMap, ['addressstate', 'state', 'province'])),
-        addressCountry: toStringValue(pickField(row, normalizedMap, ['addresscountry', 'country'])),
-        addressPostalCode: toStringValue(
-          pickField(row, normalizedMap, ['addresspostalcode', 'postalcode', 'zipcode', 'zip']),
-        ),
-        isActive: toBooleanValue(pickField(row, normalizedMap, ['isactive', 'active', 'enabled'])),
-      })
-    })
-  }
+  })
 
   return parsed
 }
@@ -178,7 +230,7 @@ export class BulkImportService {
     actorRole: UserRole
     dryRun: boolean
   }): Promise<BulkImportResult> {
-    const rows = parseRowsFromWorkbook(input.buffer)
+    const rows = parseRowsFromCsv(input.buffer)
 
     if (rows.length === 0) {
       throw httpError('No data rows found in file.', 400)
@@ -205,7 +257,7 @@ export class BulkImportService {
           role: null,
           email: email ?? null,
           action: 'error',
-          message: 'Role not found. Provide role/type column or use sheet name users/suppliers.',
+          message: 'Role not found. Provide role/type column values like user or supplier.',
         })
         summary.errors += 1
         continue

@@ -122,12 +122,11 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     preHandler: [authenticate, requireStaffOrAbove],
     schema: {
       tags: ['Admin — Imports'],
-      summary: 'Bulk import users and suppliers from CSV/XLSX (staff+)',
+      summary: 'Bulk import users and suppliers from CSV (staff+)',
       description: `Accepts a **multipart/form-data** upload with one file field named \`file\`.
 
 Supported file formats:
 - CSV (\`.csv\`)
-- Excel (\`.xlsx\`, \`.xls\`)
 
 Use \`dryRun=true\` to validate and preview actions without writing to the database.`,
       consumes: ['multipart/form-data'],
