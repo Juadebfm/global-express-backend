@@ -64,8 +64,6 @@ Set these in Render service env vars (or during blueprint creation):
 ```
 
 - [ ] `GET https://<your-render-service>.onrender.com/api/v1/public/gallery` returns `success: true`.
-- [ ] `GET https://<your-render-service>.onrender.com/docs` loads Swagger UI.
-
 ## 7) Frontend Switch
 
 - [ ] Update frontend API base URL to:
@@ -86,5 +84,9 @@ Set these in Render service env vars (or during blueprint creation):
   - `https://<your-render-service>.onrender.com/health`
 - [ ] Ensure workflow file exists:
   - `.github/workflows/render-keepalive.yml`
+- [ ] Ensure a self-hosted GitHub runner is online for this repository.
+- [ ] Optional setup guide:
+  - `docs/self-hosted-runner-keepalive.md`
 - [ ] Run it once manually via Actions tab (`Render Keepalive` -> `Run workflow`).
-- [ ] Confirm scheduled pings run every 10 minutes.
+- [ ] Confirm scheduled pings run every 30 minutes.
+- [ ] Note: Free Render services idle after ~15 minutes of no traffic, so 30/60-minute schedules are for periodic health checks, not full keep-awake behavior.

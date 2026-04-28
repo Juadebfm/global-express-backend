@@ -2,16 +2,28 @@ name: Render Keepalive
 
 on:
   schedule:
-    # Weekdays, 09:00-19:50 Korea Standard Time (KST, UTC+9)
-    # GitHub Actions cron uses UTC, so this is 00:00-10:50 UTC, Mon-Fri.
-    - cron: "*/10 0-10 * * 1-5"
+    # Weekdays, 09:00-19:30 Korea Standard Time (KST, UTC+9)
+    # GitHub Actions cron uses UTC, so this is 00:00-10:30 UTC, Mon-Fri.
+    - cron: "*/30 0-10 * * 1-5"
   workflow_dispatch:
+
+concurrency:
+  group: render-keepalive
+  cancel-in-progress: true
 
 jobs:
   ping:
-    name: Ping Render Health Endpoint
-    runs-on: ubuntu-latest
+    name: Ping Render Health Endpoint (Self-hosted)
+    runs-on: self-hosted
+    timeout-minutes: 5
     steps:
+      - name: Verify runner dependencies
+        run: |
+          if ! command -v curl >/dev/null 2>&1; then
+            echo "Missing dependency: curl"
+            exit 1
+          fi
+
       - name: Validate healthcheck URL secret
         env:
           HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}
