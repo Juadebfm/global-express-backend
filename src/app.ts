@@ -14,14 +14,26 @@ export async function buildApp() {
   const app = Fastify({
     logger: {
       level: env.NODE_ENV === 'production' ? 'info' : 'debug',
-      // Never log authorization headers or any sensitive request fields
+      // Never log authorization headers, credentials, or PII fields.
       redact: [
         'req.headers.authorization',
         'req.headers.cookie',
+        'req.headers["x-paystack-signature"]',
+        'req.headers["svix-signature"]',
         'req.body.password',
+        'req.body.newPassword',
+        'req.body.currentPassword',
         'req.body.token',
+        'req.body.otp',
         'req.body.cardNumber',
         'req.body.cvv',
+        'req.body.email',
+        'req.body.phone',
+        'req.body.whatsappNumber',
+        'req.body.firstName',
+        'req.body.lastName',
+        'req.body.nationalId',
+        'req.body.dateOfBirth',
       ],
     },
     trustProxy: true, // Required for correct req.ip on Render (behind a load balancer)
@@ -40,6 +52,14 @@ export async function buildApp() {
         imgSrc: ["'self'", 'data:'],
         scriptSrc: ["'self'"],
       },
+    },
+    // Explicit HSTS — 2 years, include subdomains, eligible for preload list.
+    // Set explicitly (rather than relying on helmet defaults) so it's reviewable
+    // and survives helmet major-version bumps.
+    strictTransportSecurity: {
+      maxAge: 63072000,
+      includeSubDomains: true,
+      preload: true,
     },
   })
 
@@ -112,6 +132,31 @@ export async function buildApp() {
         done(err as Error, undefined)
       }
     }
+  })
+
+  // ─── Cache-Control on PII / authenticated responses (ASVS 8.2.1) ──────────
+  // Prevent intermediate caches from storing user-scoped or admin data.
+  // Applies to every endpoint that returns PII or privileged data.
+  const noStorePathPrefixes = [
+    '/api/v1/users/',
+    '/api/v1/auth/',
+    '/api/v1/admin/',
+    '/api/v1/internal/',
+    '/api/v1/payments/',
+    '/api/v1/orders/',
+    '/api/v1/dashboard',
+    '/api/v1/notifications',
+    '/api/v1/shipments',
+    '/api/v1/team',
+    '/api/v1/support/',
+    '/api/v1/reports/',
+  ]
+  app.addHook('onSend', async (request, reply, payload) => {
+    if (noStorePathPrefixes.some((prefix) => request.url.startsWith(prefix))) {
+      reply.header('Cache-Control', 'no-store, private')
+      reply.header('Pragma', 'no-cache')
+    }
+    return payload
   })
 
   // ─── Centralized error handler ────────────────────────────────────────────

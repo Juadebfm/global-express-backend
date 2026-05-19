@@ -157,16 +157,16 @@ async function main() {
         .where(eq(orders.id, payload.shipment!.orderId))
         .limit(1)
       assertCondition(orderRow, 'Air scenario order not found.')
-      assertCondition(orderRow!.transportMode === TransportMode.AIR, 'Air scenario transportMode mismatch.')
+      assertCondition(orderRow.transportMode === TransportMode.AIR, 'Air scenario transportMode mismatch.')
       assertCondition(
-        orderRow!.statusV2 === 'CLAIM_APPROVED_PENDING_BULK_PROCESSING',
+        orderRow.statusV2 === 'CLAIM_APPROVED_PENDING_BULK_PROCESSING',
         'Air scenario status mismatch.',
       )
 
       const [batch] = await db
         .select({ id: dispatchBatches.id, transportMode: dispatchBatches.transportMode })
         .from(dispatchBatches)
-        .where(eq(dispatchBatches.id, orderRow!.dispatchBatchId!))
+        .where(eq(dispatchBatches.id, orderRow.dispatchBatchId!))
         .limit(1)
       assertCondition(batch?.transportMode === TransportMode.AIR, 'Air scenario batch mode mismatch.')
 
@@ -212,7 +212,7 @@ async function main() {
       const [batch] = await db
         .select({ id: dispatchBatches.id, transportMode: dispatchBatches.transportMode })
         .from(dispatchBatches)
-        .where(eq(dispatchBatches.id, orderRow!.dispatchBatchId!))
+        .where(eq(dispatchBatches.id, orderRow.dispatchBatchId!))
         .limit(1)
       assertCondition(batch?.transportMode === TransportMode.SEA, 'Ocean scenario batch mode mismatch.')
 
@@ -248,7 +248,7 @@ async function main() {
           shipmentType: ShipmentType.D2D,
         })
       } catch (err: any) {
-        missingModeFailed = Boolean(err?.statusCode === 422)
+        missingModeFailed = err?.statusCode === 422
       }
       assertCondition(missingModeFailed, 'D2D scenario should fail without dispatch mode.')
 
@@ -309,7 +309,7 @@ async function main() {
         .from(orderPackages)
         .where(eq(orderPackages.orderId, payload.shipment!.orderId))
         .limit(1)
-      assertCondition(pkg && pkg.supplierId === null, 'Expected null supplierId when metadata supplier is missing.')
+      assertCondition(pkg?.supplierId === null, 'Expected null supplierId when metadata supplier is missing.')
 
       createdOrderIds.push(payload.shipment!.orderId)
       results.push({ name: 'missing_supplier', ok: true, detail: 'Shipment created with null supplier package.' })

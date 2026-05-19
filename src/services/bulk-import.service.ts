@@ -57,6 +57,9 @@ function normalizeHeader(value: string): string {
 
 function toStringValue(value: unknown): string | undefined {
   if (value === null || value === undefined) return undefined
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+    return undefined
+  }
   const text = String(value).trim()
   return text.length > 0 ? text : undefined
 }
@@ -64,6 +67,7 @@ function toStringValue(value: unknown): string | undefined {
 function toBooleanValue(value: unknown): boolean | undefined {
   if (value === null || value === undefined) return undefined
   if (typeof value === 'boolean') return value
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined
 
   const text = String(value).trim().toLowerCase()
   if (!text) return undefined

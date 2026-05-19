@@ -154,7 +154,7 @@ export class DashboardService {
           ? this.resolveFxRate()
           : Promise.resolve({
               rate: OFFICIAL_FX_FALLBACK_NGN_PER_USD,
-              source: 'official_fallback' as FxRateSource,
+              source: 'official_fallback',
             }),
         countQuery,
         deliveredTodayQuery,

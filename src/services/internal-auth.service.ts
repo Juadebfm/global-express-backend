@@ -9,6 +9,10 @@ import { hashEmail } from '../utils/hash'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
 
+// Login lockout policy (ASVS 2.2.3)
+const MAX_FAILED_ATTEMPTS = 5
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000 // 15 minutes
+
 export interface CreateInternalUserInput {
   email: string
   password?: string
@@ -64,7 +68,13 @@ export class InternalAuthService {
 
   /**
    * Validates email + password for an internal user.
-   * Returns the user on success, null on bad credentials or inactive account.
+   * Returns:
+   *   - { ok: true, user }         on success
+   *   - { ok: false, reason: 'invalid' }  on bad credentials / inactive account
+   *   - { ok: false, reason: 'locked', lockedUntil }  if account is locked out
+   *
+   * Side effect: increments failedLoginCount on bad password and locks the account
+   * for LOCKOUT_DURATION_MS after MAX_FAILED_ATTEMPTS. Resets the counter on success.
    */
   async validateCredentials(email: string, password: string) {
     const emailHash = hashEmail(email)
@@ -75,16 +85,52 @@ export class InternalAuthService {
       .where(and(eq(users.emailHash, emailHash), isNull(users.deletedAt)))
       .limit(1)
 
-    if (!user || !user.passwordHash) return null
-    // Allow login during onboarding (password change + profile completion)
-    // even though isActive is still false
+    if (!user?.passwordHash) return { ok: false as const, reason: 'invalid' as const }
+
+    // Allow login during onboarding even though isActive is still false
     const isOnboarding = user.mustChangePassword || user.mustCompleteProfile
-    if (!user.isActive && !isOnboarding) return null
+    if (!user.isActive && !isOnboarding) {
+      return { ok: false as const, reason: 'invalid' as const }
+    }
+
+    // Reject (without bcrypt-compare) if the account is currently locked.
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      return { ok: false as const, reason: 'locked' as const, lockedUntil: user.lockedUntil }
+    }
 
     const valid = await bcrypt.compare(password, user.passwordHash)
-    if (!valid) return null
 
-    return this.decryptUser(user)
+    if (!valid) {
+      const nextCount = (user.failedLoginCount ?? 0) + 1
+      const shouldLock = nextCount >= MAX_FAILED_ATTEMPTS
+      await db
+        .update(users)
+        .set({
+          failedLoginCount: nextCount,
+          lockedUntil: shouldLock ? new Date(Date.now() + LOCKOUT_DURATION_MS) : user.lockedUntil,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id))
+
+      if (shouldLock) {
+        return {
+          ok: false as const,
+          reason: 'locked' as const,
+          lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS),
+        }
+      }
+      return { ok: false as const, reason: 'invalid' as const }
+    }
+
+    // Successful login — clear any failure state.
+    if (user.failedLoginCount > 0 || user.lockedUntil) {
+      await db
+        .update(users)
+        .set({ failedLoginCount: 0, lockedUntil: null, updatedAt: new Date() })
+        .where(eq(users.id, user.id))
+    }
+
+    return { ok: true as const, user: this.decryptUser(user) }
   }
 
   /**

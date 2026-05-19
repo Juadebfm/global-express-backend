@@ -150,7 +150,7 @@ export class PublicD2dIntakeService {
       { id: customer.id, role: customer.role },
     )
 
-    notificationsService.notifyRole({
+    void notificationsService.notifyRole({
       targetRole: UserRole.STAFF,
       type: 'admin_alert',
       title: 'New Public D2D Intake',

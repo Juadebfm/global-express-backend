@@ -425,6 +425,72 @@ export class UsersService {
     return deleted ?? null
   }
 
+  /**
+   * GDPR right-to-erasure (V8.3.4).
+   *
+   * Scrubs all PII columns and rotates the email to a tombstone value so the
+   * account row remains as a foreign-key anchor for orders, payments, and audit
+   * logs (financial / regulatory retention) while the personal data itself is
+   * removed. Also clears credentials and revokes any active sessions implicitly
+   * (the user is also marked inactive).
+   *
+   * The row is NOT physically deleted because doing so would break referential
+   * integrity for retained business records. This is the standard GDPR
+   * pseudonymization pattern.
+   */
+  async eraseUserPersonalData(id: string): Promise<{ id: string } | null> {
+    const tombstoneEmail = `erased-${id}@deleted.invalid`
+    const tombstoneEmailHash = hashEmail(tombstoneEmail)
+
+    const [erased] = await db
+      .update(users)
+      .set({
+        // Identity
+        email: encrypt(tombstoneEmail),
+        emailHash: tombstoneEmailHash,
+        firstName: null,
+        lastName: null,
+        businessName: null,
+
+        // Contact
+        phone: null,
+        whatsappNumber: null,
+        shippingMark: null,
+
+        // Staff profile fields
+        gender: null,
+        dateOfBirth: null,
+        emergencyContactName: null,
+        emergencyContactPhone: null,
+        emergencyContactRelationship: null,
+        nationalId: null,
+
+        // Address
+        addressStreet: null,
+        addressCity: null,
+        addressState: null,
+        addressCountry: null,
+        addressPostalCode: null,
+
+        // Credentials & flags
+        passwordHash: null,
+        clerkId: null,
+        isActive: false,
+        consentMarketing: false,
+        notifyEmailAlerts: false,
+        notifySmsAlerts: false,
+        notifyInAppAlerts: false,
+
+        // Tombstone markers
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id))
+      .returning({ id: users.id })
+
+    return erased ?? null
+  }
+
   async listUsers(
     params: PaginationParams & { role?: UserRole; search?: string; isActive?: boolean },
   ) {
@@ -876,7 +942,7 @@ export class UsersService {
         createdSupplier = true
       } catch {
         supplier = await this.findUserByEmailHash(targetEmailHash)
-        if (!supplier || supplier.role !== UserRole.SUPPLIER) {
+        if (supplier?.role !== UserRole.SUPPLIER) {
           return {
             status: 'conflict',
             message: 'Unable to create supplier with the provided email',
@@ -975,7 +1041,7 @@ export class UsersService {
       .where(and(eq(users.id, input.supplierId), isNull(users.deletedAt)))
       .limit(1)
 
-    if (!supplier || supplier.role !== UserRole.SUPPLIER) {
+    if (supplier?.role !== UserRole.SUPPLIER) {
       throw httpError('Supplier not found', 404)
     }
 

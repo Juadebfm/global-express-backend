@@ -162,7 +162,7 @@ export class ClientsService {
       .where(and(eq(users.id, actorId), isNull(users.deletedAt)))
       .limit(1)
 
-    return Boolean(actor && actor.role === UserRole.STAFF && actor.canProvisionClientLogin)
+    return actor?.role === UserRole.STAFF && actor.canProvisionClientLogin
   }
 
   async provisionClientAndShareLoginLink(input: {
@@ -196,7 +196,7 @@ export class ClientsService {
 
     const emailHash = hashEmail(normalizedEmail)
 
-    let [existing] = await db
+    const [existing] = await db
       .select()
       .from(users)
       .where(eq(users.emailHash, emailHash))

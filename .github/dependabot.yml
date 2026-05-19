@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Africa/Lagos
+    open-pull-requests-limit: 10
+    groups:
+      fastify:
+        patterns:
+          - fastify
+          - "@fastify/*"
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      types:
+        patterns:
+          - "@types/*"
+    ignore:
+      # Major version bumps require manual review.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

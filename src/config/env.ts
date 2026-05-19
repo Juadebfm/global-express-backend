@@ -6,7 +6,7 @@ config({ path: '.env' })
 
 const envSchema = z.object({
   // ─── App ──────────────────────────────────────────────────────────────────
-  NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
+  NODE_ENV: z.enum(['development', 'staging', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default('0.0.0.0'),
 
@@ -60,6 +60,10 @@ const envSchema = z.object({
     .length(64, 'ENCRYPTION_KEY must be a 64-character hex string (32 bytes)'),
   // Comma-separated allowed CORS origins
   CORS_ORIGINS: z.string().min(1, 'CORS_ORIGINS is required'),
+
+  // Optional: comma-separated list of IPs/CIDRs allowed to reach admin/internal-auth endpoints.
+  // Leave blank/unset to disable IP filtering (development default).
+  ADMIN_IP_WHITELIST: z.string().optional(),
 
   // ─── Web Push (VAPID) ────────────────────────────────────────────────────
   // Generated via: npx web-push generate-vapid-keys

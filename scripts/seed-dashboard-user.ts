@@ -297,9 +297,9 @@ async function main() {
   console.log(`  ✅  Payments: ${ordersWithPayment.length} successful payments`)
 
   // ── Summary ────────────────────────────────────────────────────────────────
-  const statusSummary = TEMPLATES.reduce(
-    (acc, t) => { const k = String(t.statusV2); acc[k] = (acc[k] ?? 0) + 1; return acc },
-    {} as Record<string, number>,
+  const statusSummary = TEMPLATES.reduce<Record<string, number>>(
+    (acc, t) => { const k = t.statusV2; acc[k] = (acc[k] ?? 0) + 1; return acc },
+    {},
   )
 
   console.log('\n✅  Done!\n')

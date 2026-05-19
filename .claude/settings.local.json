@@ -3,7 +3,30 @@
     "allow": [
       "Bash(fly logs --app your-app-name-snowy-waterfall-9062 --no-tail)",
       "Bash(fly deploy --app your-app-name-snowy-waterfall-9062)",
-      "Bash(psql \"$DATABASE_URL\" -f drizzle/migrations/2026-03-07_add_special_packaging_surcharge.sql)"
+      "Bash(psql \"$DATABASE_URL\" -f drizzle/migrations/2026-03-07_add_special_packaging_surcharge.sql)",
+      "Bash(dig globalexpress.kr +short)",
+      "Bash(whois 216.150.1.1)",
+      "Bash(grep -r \"sql\\\\`\\\\|raw\\\\|SQL\" /Users/macbookpro/Documents/GitHub/global-express-backend/src --include=\"*.ts\")",
+      "Bash(grep -n \"sql\\\\`\" /Users/macbookpro/Documents/GitHub/global-express-backend/src/services/dashboard.service.ts)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(grep -c \"^### \\\\`\" /Users/macbookpro/Documents/GitHub/global-express-backend/API_ENDPOINTS.md)",
+      "Bash(python3 -c \"import json,sys; print\\('\\\\n'.join\\(json.load\\(sys.stdin\\)['scripts'].keys\\(\\)\\)\\)\")",
+      "Bash(npx biome *)",
+      "Bash(grep -rE \"^\\\\s+[a-zA-Z].*;$\" src/routes/auth.routes.ts)",
+      "Bash(grep -rE \"^\\\\s+[a-zA-Z].*[a-zA-Z\\\\\\)\\\\}\\\\]\\\\?\\\\!\\\\>\\\\,]$\" src/routes/auth.routes.ts)",
+      "Bash(npm uninstall *)",
+      "Bash(grep -oE \"[a-z@/-]+/[a-z-]+$\")",
+      "Bash(awk '/^\\\\//{f=$1} /no-floating-promises/{split\\($1,a,\":\"\\); print f\":\"a[1]}')",
+      "Bash(awk 'NR>=847 && NR<=851' src/services/gallery.service.ts)",
+      "Bash(awk 'NR>=977 && NR<=981' src/services/gallery.service.ts)",
+      "Bash(awk 'NR>=430 && NR<=446' src/services/orders.service.ts)",
+      "Bash(awk 'NR>=705 && NR<=727' src/services/payments.service.ts)",
+      "Bash(awk 'NR>=151 && NR<=155' src/services/public-d2d-intake.service.ts)",
+      "Bash(awk '/^\\\\//{f=$1} /error/ && !/warning/{print f\":\"$1, $0}')",
+      "Bash(awk 'NR>=298 && NR<=303' scripts/seed-dashboard-user.ts)",
+      "Bash(awk 'NR>=296 && NR<=301' scripts/seed-gabriel2.ts)",
+      "Bash(awk 'NR>=247 && NR<=253' scripts/verify-gallery-claim-review-flow.ts)",
+      "Bash(npx prettier *)"
     ]
   }
 }

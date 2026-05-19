@@ -46,7 +46,7 @@ function mapTemplateRow(
     id: row.id,
     templateKey: row.templateKey,
     locale: row.locale as PreferredLanguage,
-    channel: row.channel as NotificationTemplateChannel,
+    channel: row.channel,
     subject: row.subject,
     body: row.body,
     isActive: row.isActive,

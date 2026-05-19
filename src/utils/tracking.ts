@@ -16,7 +16,7 @@ export function generateTrackingNumber(): string {
  * Example: GEX-20260219-A3F9C21B -> GEX-20260219-****C21B
  */
 export function maskTrackingNumber(trackingNumber: string): string {
-  const match = trackingNumber.match(/^([A-Z]+-\d{8}-)([A-Z0-9]{8})$/)
+  const match = /^([A-Z]+-\d{8}-)([A-Z0-9]{8})$/.exec(trackingNumber)
   if (match) {
     const [, prefix, tail] = match
     return `${prefix}****${tail.slice(-4)}`

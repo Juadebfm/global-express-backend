@@ -91,14 +91,21 @@ export const usersController = {
   },
 
   async deleteMe(request: FastifyRequest, reply: FastifyReply) {
-    // GDPR: soft delete — data is retained per retention policy but marked as deleted
-    const deleted = await usersService.softDeleteUser(request.user.id)
+    // GDPR right-to-erasure (V8.3.4): scrub PII while leaving an anonymized
+    // tombstone row so foreign-key references (orders, payments, audit logs)
+    // remain valid for the required financial/regulatory retention period.
+    const erased = await usersService.eraseUserPersonalData(request.user.id)
 
-    if (!deleted) {
+    if (!erased) {
       return reply.code(404).send({ success: false, message: 'User not found' })
     }
 
-    return reply.send(successResponse({ message: 'Account deleted successfully' }))
+    return reply.send(
+      successResponse({
+        message:
+          'Account erased. Personal data has been removed; transaction records are retained under our retention policy.',
+      }),
+    )
   },
 
   async exportMyData(request: FastifyRequest, reply: FastifyReply) {
@@ -313,8 +320,8 @@ export const usersController = {
     reply: FastifyReply,
   ) {
     const result = await usersService.listUsers({
-      page: Number(request.query.page) || 1,
-      limit: Number(request.query.limit) || 20,
+      page: request.query.page || 1,
+      limit: request.query.limit || 20,
       role: request.query.role as UserRole | undefined,
       isActive: request.query.isActive,
     })

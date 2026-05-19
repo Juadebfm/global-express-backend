@@ -429,7 +429,7 @@ export class OrdersService {
             }
             const render = (s: string) =>
               s.replace(/\{\{(\w+)\}\}/g, (_, k: string) => vars[k] ?? `{{${k}}}`)
-            notifyUser({
+            void notifyUser({
               userId: updated.senderId,
               orderId: updated.id,
               type: 'order_status_update',
@@ -441,7 +441,7 @@ export class OrdersService {
           })
           .catch((err) => {
             console.error('Failed to look up in-app template, using fallback', err)
-            notifyUser({
+            void notifyUser({
               userId: updated.senderId,
               orderId: updated.id,
               type: 'order_status_update',
@@ -530,10 +530,7 @@ export class OrdersService {
           shipmentType: row.shipmentType,
           transportMode: row.transportMode,
           paymentCollectionStatus: row.paymentCollectionStatus,
-        } as Pick<
-          typeof orders.$inferSelect,
-          'statusV2' | 'shipmentType' | 'transportMode' | 'paymentCollectionStatus'
-        >,
+        },
         input.statusV2,
         { requiresExtraTruckMovement: row.requiresExtraTruckMovement },
       )
@@ -595,7 +592,7 @@ export class OrdersService {
     }
 
     // ── Look up special packaging surcharge types from app_settings ──
-    let surchargeMap = new Map<string, number>()
+    const surchargeMap = new Map<string, number>()
     const packagesHaveSpecialType = input.packages.some((p) => p.specialPackagingType)
     if (packagesHaveSpecialType) {
       const [setting] = await db
@@ -897,7 +894,7 @@ export class OrdersService {
         mode,
         existing.statusV2 as ShipmentStatusV2 | null,
         nextStatus,
-        existing.shipmentType as ShipmentType | null,
+        existing.shipmentType,
         { allowSkipExtraTruckMovement },
       )) {
         throw new Error(
@@ -916,7 +913,7 @@ export class OrdersService {
           TransportMode.AIR,
           existing.statusV2 as ShipmentStatusV2 | null,
           nextStatus,
-          existing.shipmentType as ShipmentType | null,
+          existing.shipmentType,
           { allowSkipExtraTruckMovement },
         )
       ) {
@@ -1164,7 +1161,7 @@ export class OrdersService {
         origin: o.origin,
         destination: o.destination,
         statusV2: o.statusV2,
-        orderDirection: o.orderDirection as string,
+        orderDirection: o.orderDirection,
         recipientName: decrypt(o.recipientName),
         recipientAddress: decrypt(o.recipientAddress),
         recipientPhone: decrypt(o.recipientPhone),

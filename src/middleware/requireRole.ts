@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { UserRole } from '../types/enums'
+import { createAuditLog } from '../utils/audit'
 
 type RolePreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<void>
 
@@ -8,12 +9,31 @@ type RolePreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<
  * allowed roles. Must be used **after** the `authenticate` middleware.
  *
  * Role guards live exclusively at middleware level — never inside controllers or services.
+ * Denials are recorded in the audit log (fire-and-forget) for security review (ASVS 4.1.5).
  */
 export function requireRole(...allowedRoles: UserRole[]): RolePreHandler {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const userRole = request.user?.role as UserRole
 
     if (!userRole || !allowedRoles.includes(userRole)) {
+      const userId = request.user?.id
+      if (userId) {
+        createAuditLog({
+          userId,
+          action: 'access_denied',
+          resourceType: 'route',
+          request,
+          metadata: {
+            method: request.method,
+            url: request.url,
+            actualRole: userRole ?? null,
+            allowedRoles,
+          },
+        }).catch(() => {
+          // Never let audit failure block the 403 response.
+        })
+      }
+
       return reply.code(403).send({
         success: false,
         message: 'Forbidden — you do not have permission to access this resource',

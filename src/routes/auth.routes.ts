@@ -6,7 +6,9 @@ import { usersController } from '../controllers/users.controller'
 import { usersService } from '../services/users.service'
 import { authenticate } from '../middleware/authenticate'
 import { requireStaffOrAbove } from '../middleware/requireRole'
+import { enforceAdminIpAllowlist } from '../middleware/ipAllowlist'
 import { internalAuthService } from '../services/internal-auth.service'
+import { mfaService } from '../services/mfa.service'
 import { passwordResetService } from '../services/password-reset.service'
 import { db } from '../config/db'
 import { revokedTokens } from '../../drizzle/schema'
@@ -20,6 +22,9 @@ const operatorSchema = z.object({
   role: z.string(),
   mustChangePassword: z.boolean(),
   mustCompleteProfile: z.boolean(),
+  // Set when policy requires MFA for this role and the user hasn't enrolled yet.
+  // FE should redirect to enrollment UI after login.
+  mustEnrollMfa: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -98,6 +103,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
    * Returns { user, tokens: { accessToken } } — matches frontend operator dashboard contract.
    */
   app.post('/login', {
+    preHandler: [enforceAdminIpAllowlist],
     config: {
       rateLimit: { max: 5, timeWindow: '1 minute' },
     },
@@ -110,23 +116,57 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         password: z.string().min(1).describe('Operator password'),
       }),
       response: {
-        200: z.object({
-          user: operatorSchema,
-          tokens: z.object({ accessToken: z.string() }),
-        }),
+        // 200 with `tokens` = fully authenticated (possibly with mustEnrollMfa flag).
+        // 200 with `mfaRequired: true` = need to call /mfa/verify or /mfa/recovery to complete.
+        200: z.union([
+          z.object({
+            user: operatorSchema,
+            tokens: z.object({ accessToken: z.string() }),
+          }),
+          z.object({
+            mfaRequired: z.literal(true),
+            mfaToken: z.string(),
+            userId: z.string().uuid(),
+          }),
+        ]),
         401: z.object({ message: z.string() }),
+        423: z.object({ message: z.string(), lockedUntil: z.string() }),
       },
     },
     handler: async (request, reply) => {
-      const user = await internalAuthService.validateCredentials(
+      const result = await internalAuthService.validateCredentials(
         request.body.email,
         request.body.password,
       )
 
-      if (!user) {
+      if (!result.ok) {
+        if (result.reason === 'locked') {
+          return reply.code(423).send({
+            message: 'Account locked due to too many failed attempts. Try again later.',
+            lockedUntil: result.lockedUntil.toISOString(),
+          })
+        }
         return reply.code(401).send({ message: 'Invalid email or password' })
       }
 
+      const user = result.user
+
+      // ─── MFA gate ───────────────────────────────────────────────────────────
+      const mfaEnabled = await mfaService.isEnabled(user.id)
+
+      if (mfaEnabled) {
+        // Issue a short-lived challenge token; client must exchange via /mfa/verify.
+        const mfaToken = mfaService.issueChallengeToken(user.id)
+        return reply.send({
+          mfaRequired: true as const,
+          mfaToken,
+          userId: user.id,
+        })
+      }
+
+      // MFA not enabled. If role policy requires enrollment, surface the flag and
+      // let the FE redirect to /me/mfa/enroll (mirrors mustChangePassword pattern).
+      const mustEnrollMfa = mfaService.isMfaRequiredForRole(user.role)
       const accessToken = internalAuthService.generateToken(user.id, user.role)
 
       return reply.send({
@@ -138,10 +178,134 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
           role: user.role,
           mustChangePassword: user.mustChangePassword,
           mustCompleteProfile: user.mustCompleteProfile,
+          mustEnrollMfa,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
         tokens: { accessToken },
+      })
+    },
+  })
+
+  /**
+   * POST /api/v1/auth/mfa/verify
+   * Exchange an mfaToken + TOTP code for a real access token.
+   */
+  app.post('/mfa/verify', {
+    preHandler: [enforceAdminIpAllowlist],
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    schema: {
+      tags: ['Auth'],
+      summary: 'Verify MFA challenge and exchange for access token',
+      body: z.object({
+        mfaToken: z.string().min(1),
+        code: z.string().regex(/^\d{6}$/, '6-digit code required'),
+      }),
+      response: {
+        200: z.object({
+          user: operatorSchema,
+          tokens: z.object({ accessToken: z.string() }),
+        }),
+        401: z.object({ message: z.string() }),
+      },
+    },
+    handler: async (request, reply) => {
+      let payload
+      try {
+        payload = mfaService.verifyChallengeToken(request.body.mfaToken)
+      } catch {
+        return reply.code(401).send({ message: 'MFA challenge expired or invalid' })
+      }
+
+      const verified = await mfaService.verifyUserTotp(payload.sub, request.body.code)
+      if (!verified) {
+        return reply.code(401).send({ message: 'Invalid verification code' })
+      }
+
+      const userRow = await usersService.getUserById(payload.sub)
+      if (!userRow) {
+        return reply.code(401).send({ message: 'User not found' })
+      }
+
+      const accessToken = internalAuthService.generateToken(userRow.id, userRow.role)
+      return reply.send({
+        user: {
+          id: userRow.id,
+          email: userRow.email,
+          firstName: userRow.firstName,
+          lastName: userRow.lastName,
+          role: userRow.role,
+          mustChangePassword: userRow.mustChangePassword ?? false,
+          mustCompleteProfile: userRow.mustCompleteProfile ?? false,
+          createdAt: userRow.createdAt,
+          updatedAt: userRow.updatedAt,
+        },
+        tokens: { accessToken },
+      })
+    },
+  })
+
+  /**
+   * POST /api/v1/auth/mfa/recovery
+   * Exchange an mfaToken + single-use recovery code for an access token.
+   * The recovery code is consumed on success.
+   */
+  app.post('/mfa/recovery', {
+    preHandler: [enforceAdminIpAllowlist],
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    schema: {
+      tags: ['Auth'],
+      summary: 'Use a single-use recovery code instead of TOTP',
+      body: z.object({
+        mfaToken: z.string().min(1),
+        recoveryCode: z.string().min(1),
+      }),
+      response: {
+        200: z.object({
+          user: operatorSchema,
+          tokens: z.object({ accessToken: z.string() }),
+          remainingRecoveryCodes: z.number(),
+        }),
+        401: z.object({ message: z.string() }),
+      },
+    },
+    handler: async (request, reply) => {
+      let payload
+      try {
+        payload = mfaService.verifyChallengeToken(request.body.mfaToken)
+      } catch {
+        return reply.code(401).send({ message: 'MFA challenge expired or invalid' })
+      }
+
+      const consumed = await mfaService.consumeRecoveryCodeForUser(
+        payload.sub,
+        request.body.recoveryCode,
+      )
+      if (!consumed) {
+        return reply.code(401).send({ message: 'Invalid recovery code' })
+      }
+
+      const userRow = await usersService.getUserById(payload.sub)
+      if (!userRow) {
+        return reply.code(401).send({ message: 'User not found' })
+      }
+
+      const status = await mfaService.getStatus(userRow.id)
+      const accessToken = internalAuthService.generateToken(userRow.id, userRow.role)
+      return reply.send({
+        user: {
+          id: userRow.id,
+          email: userRow.email,
+          firstName: userRow.firstName,
+          lastName: userRow.lastName,
+          role: userRow.role,
+          mustChangePassword: userRow.mustChangePassword ?? false,
+          mustCompleteProfile: userRow.mustCompleteProfile ?? false,
+          createdAt: userRow.createdAt,
+          updatedAt: userRow.updatedAt,
+        },
+        tokens: { accessToken },
+        remainingRecoveryCodes: status.remainingRecoveryCodes,
       })
     },
   })
@@ -199,7 +363,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const authHeader = request.headers.authorization
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      if (!authHeader?.startsWith('Bearer ')) {
         return reply.code(401).send({ message: 'Unauthorized - missing token' })
       }
 
@@ -293,7 +457,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       description: 'Resets the operator password. Requires a verified OTP (from /verify-otp) within the last 15 minutes.',
       body: z.object({
         email: z.string().email().describe('Operator email address'),
-        password: z.string().min(8).describe('New password (min 8 characters)'),
+        password: z.string().min(12).describe('New password (min 12 characters)'),
       }),
       response: {
         200: z.object({ message: z.string() }),

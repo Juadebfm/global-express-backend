@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, pgEnum, boolean } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, timestamp, pgEnum, boolean, integer, jsonb } from 'drizzle-orm/pg-core'
 
 export const userRoleEnum = pgEnum('user_role', ['superadmin', 'staff', 'user', 'supplier'])
 export const preferredLanguageEnum = pgEnum('preferred_language', ['en', 'ko'])
@@ -62,6 +62,21 @@ export const users = pgTable('users', {
   mustChangePassword: boolean('must_change_password').notNull().default(false),
   // Internal users must complete profile after password change
   mustCompleteProfile: boolean('must_complete_profile').notNull().default(false),
+
+  // ─── Login lockout (ASVS 2.2.3) ───────────────────────────────────────────
+  // Failed-password counter — reset to 0 on successful login
+  failedLoginCount: integer('failed_login_count').notNull().default(0),
+  // If set and in the future, login is rejected; cleared on successful login
+  lockedUntil: timestamp('locked_until'),
+
+  // ─── TOTP MFA (ASVS 4.3.1) — internal users only ──────────────────────────
+  // AES-256-GCM encrypted base32 TOTP shared secret. Null = MFA not enrolled.
+  totpSecret: text('totp_secret'),
+  // Timestamp when enrollment was completed. Null until first verify succeeds.
+  totpEnabledAt: timestamp('totp_enabled_at'),
+  // Array of HMAC-SHA256 hashes of one-time recovery codes. Each code is removed
+  // when used. Empty array after all codes are consumed.
+  mfaRecoveryCodes: jsonb('mfa_recovery_codes').$type<string[]>(),
   // Superadmin-granted privilege: allows specific staff to provision client login links
   canProvisionClientLogin: boolean('can_provision_client_login').notNull().default(false),
   // Superadmin-granted privilege: allows specific staff to manage dispatch batch status/movements

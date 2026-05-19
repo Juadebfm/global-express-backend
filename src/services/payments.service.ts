@@ -89,10 +89,47 @@ function httpError(message: string, statusCode: number): Error & { statusCode: n
   return Object.assign(new Error(message), { statusCode })
 }
 
+/**
+ * Open-redirect guard for the Paystack `callback_url`. Paystack will redirect the
+ * customer's browser to this URL after payment, so an unvalidated value lets an
+ * attacker host a phishing page that looks like it came from our domain.
+ *
+ * We only accept URLs whose origin matches one of the entries in CORS_ORIGINS.
+ */
+function assertCallbackUrlIsAllowed(callbackUrl: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(callbackUrl)
+  } catch {
+    throw httpError('callbackUrl is not a valid URL', 422)
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw httpError('callbackUrl must use http(s)', 422)
+  }
+
+  const allowedOrigins = env.CORS_ORIGINS.split(',')
+    .map((o) => o.trim())
+    .filter(Boolean)
+
+  if (!allowedOrigins.includes(parsed.origin)) {
+    throw httpError(
+      `callbackUrl origin "${parsed.origin}" is not in the allowed list`,
+      422,
+    )
+  }
+}
+
 export class PaymentsService {
   async initializePayment(input: InitializePaymentInput) {
     const { userId, requesterRole, amount, email, callbackUrl, metadata } = input
     const currency = input.currency ?? 'NGN'
+
+    // Open-redirect guard — Paystack redirects the browser here after payment.
+    if (callbackUrl) {
+      assertCallbackUrlIsAllowed(callbackUrl)
+    }
+
     const target = await this.resolvePaymentTarget({
       orderId: input.orderId,
     })
@@ -224,7 +261,7 @@ export class PaymentsService {
       })
       .where(eq(orders.id, target.orderId))
 
-    notificationsService.notifyRole({
+    void notificationsService.notifyRole({
       targetRole: UserRole.STAFF,
       type: 'payment_event',
       title: 'Payment Receipt Submitted',
@@ -294,7 +331,7 @@ export class PaymentsService {
         paidAt: updated.paidAt,
       })
 
-      notificationsService.notifyRole({
+      void notificationsService.notifyRole({
         targetRole: UserRole.STAFF,
         type: 'payment_received',
         title: 'Payment Receipt Approved',
@@ -322,7 +359,7 @@ export class PaymentsService {
         .set({ paymentCollectionStatus: nextStatus, updatedAt: now })
         .where(eq(orders.id, payment.orderId))
 
-      notificationsService.notifyRole({
+      void notificationsService.notifyRole({
         targetRole: UserRole.STAFF,
         type: 'payment_failed',
         title: 'Payment Receipt Rejected',
@@ -482,12 +519,37 @@ export class PaymentsService {
 
     const paystackData = response.data.data
     const newStatus = this.mapPaystackStatus(paystackData.status)
+    const transactionId = String(paystackData.id)
+
+    // Idempotency (V11.1.4): if the payment is already SUCCESSFUL with the same
+    // transaction id, return it without re-firing downstream side effects.
+    const [existing] = await db
+      .select({
+        id: payments.id,
+        status: payments.status,
+        paystackTransactionId: payments.paystackTransactionId,
+      })
+      .from(payments)
+      .where(eq(payments.paystackReference, reference))
+      .limit(1)
+
+    if (
+      existing?.status === PaymentStatus.SUCCESSFUL &&
+      existing.paystackTransactionId === transactionId
+    ) {
+      const [current] = await db
+        .select()
+        .from(payments)
+        .where(eq(payments.id, existing.id))
+        .limit(1)
+      return current ?? null
+    }
 
     const [updated] = await db
       .update(payments)
       .set({
         status: newStatus,
-        paystackTransactionId: String(paystackData.id),
+        paystackTransactionId: transactionId,
         paidAt: paystackData.paid_at ? new Date(paystackData.paid_at) : null,
         updatedAt: new Date(),
       })
@@ -602,11 +664,28 @@ export class PaymentsService {
     }
 
     if (event.event === 'charge.success') {
+      // Idempotency: Paystack's signing scheme has no timestamp, so a replayed
+      // signature is indistinguishable from a fresh one. Reject if we've already
+      // recorded a SUCCESSFUL payment for this transaction id.
+      const transactionId = String(event.data.id)
+      const [existing] = await db
+        .select({ id: payments.id, status: payments.status, paystackTransactionId: payments.paystackTransactionId })
+        .from(payments)
+        .where(eq(payments.paystackReference, event.data.reference))
+        .limit(1)
+
+      if (
+        existing?.status === PaymentStatus.SUCCESSFUL &&
+        existing.paystackTransactionId === transactionId
+      ) {
+        return { processed: false, paymentId: existing.id, reason: 'duplicate_event' }
+      }
+
       const [payment] = await db
         .update(payments)
         .set({
           status: PaymentStatus.SUCCESSFUL,
-          paystackTransactionId: String(event.data.id),
+          paystackTransactionId: transactionId,
           paidAt: event.data.paid_at ? new Date(event.data.paid_at) : new Date(),
           updatedAt: new Date(),
         })
@@ -625,7 +704,7 @@ export class PaymentsService {
       }
 
       // Fire-and-forget: notify superadmin of successful payment
-      notificationsService.notifyRole({
+      void notificationsService.notifyRole({
         targetRole: UserRole.STAFF,
         type: 'payment_received',
         title: 'Payment Received',
@@ -643,7 +722,7 @@ export class PaymentsService {
         .where(eq(payments.paystackReference, event.data.reference))
 
       // Fire-and-forget: notify superadmin of failed payment
-      notificationsService.notifyRole({
+      void notificationsService.notifyRole({
         targetRole: UserRole.STAFF,
         type: 'payment_failed',
         title: 'Payment Failed',

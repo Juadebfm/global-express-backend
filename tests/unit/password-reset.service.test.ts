@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { UserRole } from '../../src/types/enums'
 
 const {
@@ -80,7 +80,6 @@ describe('PasswordResetService.sendOtp', () => {
         role: UserRole.SUPER_ADMIN,
       },
     ])
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
 
     const service = new PasswordResetService()
     await service.sendOtp('juadebgabriel@gmail.com')
@@ -88,15 +87,15 @@ describe('PasswordResetService.sendOtp', () => {
     expect(insertValues).toHaveBeenCalledWith(
       expect.objectContaining({
         email: 'juadebgabriel@gmail.com',
-        otp: '1000',
+        otp: expect.stringMatching(/^\d{4}$/),
       }),
     )
+    const insertedOtp = insertValues.mock.calls[0][0].otp as string
+    expect(insertedOtp).not.toBe('4321') // never the static one for non-allowlisted users
     expect(sendPasswordResetOtpEmail).toHaveBeenCalledWith({
       to: 'juadebgabriel@gmail.com',
-      otp: '1000',
+      otp: insertedOtp,
     })
-
-    randomSpy.mockRestore()
   })
 
   it('does not enable the static OTP for non-superadmin accounts', async () => {
@@ -107,7 +106,6 @@ describe('PasswordResetService.sendOtp', () => {
         role: UserRole.STAFF,
       },
     ])
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
 
     const service = new PasswordResetService()
     await service.sendOtp('staff@example.com')
@@ -115,14 +113,14 @@ describe('PasswordResetService.sendOtp', () => {
     expect(insertValues).toHaveBeenCalledWith(
       expect.objectContaining({
         email: 'staff@example.com',
-        otp: '1000',
+        otp: expect.stringMatching(/^\d{4}$/),
       }),
     )
+    const insertedOtp = insertValues.mock.calls[0][0].otp as string
+    expect(insertedOtp).not.toBe('4321')
     expect(sendPasswordResetOtpEmail).toHaveBeenCalledWith({
       to: 'staff@example.com',
-      otp: '1000',
+      otp: insertedOtp,
     })
-
-    randomSpy.mockRestore()
   })
 })

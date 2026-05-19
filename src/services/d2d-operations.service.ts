@@ -471,7 +471,7 @@ export class D2dOperationsService {
       .where(eq(users.id, invoice.billToSupplierId))
       .limit(1)
 
-    if (!supplier || supplier.role !== UserRole.SUPPLIER || supplier.deletedAt || !supplier.isActive) {
+    if (supplier?.role !== UserRole.SUPPLIER || supplier.deletedAt || !supplier.isActive) {
       throw new Error('Billed supplier account is unavailable.')
     }
 

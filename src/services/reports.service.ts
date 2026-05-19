@@ -424,7 +424,7 @@ export class ReportsService {
 
     const pipeline = rows.map((r) => {
       const key = r.status ?? 'UNKNOWN'
-      const meta = STATUS_METADATA[key] ?? { label: 'Unknown', phase: 'pre_transit' as Phase }
+      const meta = STATUS_METADATA[key] ?? { label: 'Unknown', phase: 'pre_transit' }
       return {
         status: key,
         label: meta.label,

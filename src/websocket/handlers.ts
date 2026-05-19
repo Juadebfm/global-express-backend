@@ -2,10 +2,14 @@ import type { FastifyRequest } from 'fastify'
 import { verifyToken } from '@clerk/backend'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
-import { revokedTokens, users } from '../../drizzle/schema'
+import { revokedTokens, users, supportTickets } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { internalAuthService } from '../services/internal-auth.service'
 import { UserRole } from '../types/enums'
+
+function isStaffRole(role: string): boolean {
+  return role === UserRole.STAFF || role === UserRole.SUPER_ADMIN
+}
 
 /** Maps DB userId → set of open WebSocket connections for that user. */
 // WebSocket type comes from the ws package bundled with @fastify/websocket
@@ -31,7 +35,7 @@ export const ticketRooms = new Map<string, Set<string>>()
  */
 // Using `any` for the socket type to avoid requiring @types/ws as a direct dependency;
 // the ws types are available through @fastify/websocket's peer dependency.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 export async function handleWebSocketConnection(
   socket: any,
   request: FastifyRequest,
@@ -56,6 +60,7 @@ export async function handleWebSocketConnection(
   }
 
   let userId: string
+  let userRole: string
 
   // ─── Branch 1: Internal JWT (staff / superadmin) ─────────────────
   if (tokenType === 'internal') {
@@ -101,6 +106,7 @@ export async function handleWebSocketConnection(
       }
 
       userId = user.id
+      userRole = user.role
     } catch {
       socket.close(4001, 'Unauthorized — invalid or expired token')
       return
@@ -138,6 +144,7 @@ export async function handleWebSocketConnection(
       }
 
       userId = user.id
+      userRole = user.role
     } catch {
       socket.close(4001, 'Authentication failed')
       return
@@ -168,18 +175,38 @@ export async function handleWebSocketConnection(
     request.log.info({ userId }, 'WebSocket client disconnected')
   })
 
-  socket.on('message', (raw: Buffer | string) => {
+  socket.on('message', async (raw: Buffer | string) => {
     try {
       const msg = JSON.parse(raw.toString())
       if (msg.type === 'support:join' && typeof msg.ticketId === 'string') {
+        // BOLA guard: staff/superadmin can watch any ticket; customers only their own.
+        if (!isStaffRole(userRole)) {
+          const [ticket] = await db
+            .select({ userId: supportTickets.userId })
+            .from(supportTickets)
+            .where(eq(supportTickets.id, msg.ticketId))
+            .limit(1)
+
+          if (ticket?.userId !== userId) {
+            socket.send(
+              JSON.stringify({
+                type: 'support:join:denied',
+                ticketId: msg.ticketId,
+                message: 'Forbidden',
+              }),
+            )
+            return
+          }
+        }
+
         if (!ticketRooms.has(msg.ticketId)) ticketRooms.set(msg.ticketId, new Set())
         ticketRooms.get(msg.ticketId)!.add(userId)
       } else if (msg.type === 'support:leave' && typeof msg.ticketId === 'string') {
         ticketRooms.get(msg.ticketId)?.delete(userId)
         if (ticketRooms.get(msg.ticketId)?.size === 0) ticketRooms.delete(msg.ticketId)
       }
-    } catch {
-      // ignore malformed messages
+    } catch (err) {
+      request.log.warn({ err, userId }, 'WebSocket message handling failed')
     }
   })
 

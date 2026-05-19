@@ -4,6 +4,10 @@
  */
 import { readFileSync } from 'fs'
 import postgres from 'postgres'
+import { config } from 'dotenv'
+
+// Load .env so DATABASE_URL is available without manual export.
+config({ path: '.env' })
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {

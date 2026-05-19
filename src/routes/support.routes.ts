@@ -46,6 +46,13 @@ export async function supportRoutes(fastify: FastifyInstance): Promise<void> {
 
   app.post('/tickets', {
     preHandler: [authenticate],
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+        keyGenerator: (req) => req.user?.id ?? req.ip,
+      },
+    },
     schema: {
       tags: ['Support'],
       summary: 'Create a support ticket',

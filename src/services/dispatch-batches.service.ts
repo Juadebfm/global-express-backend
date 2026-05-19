@@ -288,7 +288,7 @@ export class DispatchBatchesService {
     return {
       orderId: order.id,
       orderTrackingNumber: order.trackingNumber,
-      dispatchBatchId: order.dispatchBatchId as string,
+      dispatchBatchId: order.dispatchBatchId!,
       dispatchMasterTrackingNumber: batch.masterTrackingNumber,
     }
   }
@@ -306,7 +306,7 @@ export class DispatchBatchesService {
       .where(and(eq(users.id, actorId), isNull(users.deletedAt)))
       .limit(1)
 
-    return Boolean(actor && actor.role === UserRole.STAFF && actor.canManageShipmentBatches)
+    return actor?.role === UserRole.STAFF && actor.canManageShipmentBatches
   }
 
   async getOrCreateFutureBatch(mode: TransportMode, actorId: string, currentBatchId: string) {
@@ -475,7 +475,7 @@ export class DispatchBatchesService {
       .where(eq(invoices.orderId, params.orderId))
       .limit(1)
 
-    let fxRate = 1500
+    let fxRate: number
     try {
       fxRate = await settingsFxRateService.getEffectiveRate()
     } catch {
@@ -651,7 +651,7 @@ export class DispatchBatchesService {
           eq(orders.shipmentType, shipmentType),
           eq(orders.shipmentPayer, shipmentPayer),
           shipmentPayer === ShipmentPayer.SUPPLIER
-            ? eq(orders.billingSupplierId, billingSupplierId as string)
+            ? eq(orders.billingSupplierId, billingSupplierId!)
             : isNull(orders.billingSupplierId),
           isNull(orders.deletedAt),
         ),
@@ -749,7 +749,7 @@ export class DispatchBatchesService {
     const seaChargeableWeightKg = round2(totalCbm * SEA_CBM_TO_KG_FACTOR)
     const rateOwnerId =
       shipmentPayer === ShipmentPayer.SUPPLIER
-        ? (billingSupplierId as string)
+        ? (billingSupplierId!)
         : input.customerId
 
     const pricing = await pricingV2Service.calculatePricing({

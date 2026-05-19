@@ -127,7 +127,7 @@ export async function authenticate(
 ): Promise<void> {
   const authHeader = request.headers.authorization
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!authHeader?.startsWith('Bearer ')) {
     reply
       .code(401)
       .send({ success: false, message: 'Unauthorized - missing or invalid Authorization header' })
@@ -280,8 +280,8 @@ export async function authenticate(
     }
 
     const signupMetadata = {
-      ...((clerkUser.publicMetadata ?? {}) as SignupMetadata),
-      ...((clerkUser.unsafeMetadata ?? {}) as SignupMetadata),
+      ...((clerkUser.publicMetadata ?? {})),
+      ...((clerkUser.unsafeMetadata ?? {})),
     }
     const customerName = clerkUser.fullName ?? [clerkUser.firstName, clerkUser.lastName]
       .filter(Boolean)
@@ -453,7 +453,7 @@ export async function authenticate(
     }
 
     // Fire-and-forget: notify superadmin of new customer signup
-    notificationsService.notifyRole({
+    void notificationsService.notifyRole({
       targetRole: UserRole.STAFF,
       type: 'new_customer',
       title: 'New Customer Signup',

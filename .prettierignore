@@ -1,0 +1,7 @@
+dist/
+node_modules/
+coverage/
+drizzle/migrations/
+assets/
+*.md
+package-lock.json

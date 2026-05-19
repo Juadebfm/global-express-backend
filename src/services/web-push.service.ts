@@ -118,7 +118,7 @@ export class WebPushService {
         webpush.sendNotification(
           {
             endpoint: sub.endpoint,
-            keys: sub.keys as { p256dh: string; auth: string },
+            keys: sub.keys,
           },
           jsonPayload,
         ),

@@ -846,7 +846,7 @@ export class GalleryService {
         .where(eq(galleryClaims.id, claim.id))
         .returning()
 
-      notificationsService.notifyRole({
+      void notificationsService.notifyRole({
         targetRole: UserRole.STAFF,
         type: 'admin_alert',
         title: 'New Anonymous Goods Claim',
@@ -976,7 +976,7 @@ export class GalleryService {
         .where(eq(galleryClaims.id, claim.id))
         .returning()
 
-      notificationsService.notifyRole({
+      void notificationsService.notifyRole({
         targetRole: UserRole.STAFF,
         type: 'admin_alert',
         title: 'New Car Purchase Attempt',
@@ -1054,24 +1054,6 @@ export class GalleryService {
     shipmentType?: 'air' | 'ocean' | 'd2d'
     d2dDispatchMode?: 'air' | 'sea'
   }) {
-    const [row] = await db
-      .select({
-        claim: galleryClaims,
-        item: galleryItems,
-      })
-      .from(galleryClaims)
-      .innerJoin(galleryItems, eq(galleryItems.id, galleryClaims.itemId))
-      .where(eq(galleryClaims.id, input.claimId))
-      .limit(1)
-
-    if (!row) {
-      throw httpError('Claim not found', 404)
-    }
-
-    if (row.claim.status !== GalleryClaimStatus.PENDING) {
-      throw httpError('Only pending claims can be reviewed', 409)
-    }
-
     const isApproved = input.decision === 'approve'
     const postApprovalAction = input.postApprovalAction ?? 'approve_only'
 
@@ -1079,23 +1061,44 @@ export class GalleryService {
       throw httpError('postApprovalAction=create_shipment is only allowed when approving a claim.', 422)
     }
 
-    if (isApproved && postApprovalAction === 'create_shipment') {
-      if (row.claim.claimType !== GalleryClaimType.OWNERSHIP) {
-        throw httpError('Shipment creation from review is only supported for ownership claims.', 422)
-      }
-      if (!row.claim.claimantUserId) {
-        throw httpError('Claimant account is required before creating shipment from claim approval.', 422)
-      }
-      if (!input.shipmentType) {
-        throw httpError('shipmentType is required when postApprovalAction is create_shipment.', 422)
-      }
-      if (input.shipmentType === ShipmentType.D2D && !input.d2dDispatchMode) {
-        throw httpError('d2dDispatchMode is required when shipmentType is d2d.', 422)
-      }
-    }
-
     const reviewedAt = new Date()
     const txResult = await db.transaction(async (tx) => {
+      // TOCTOU guard (V11.1.4): row-lock the claim inside the transaction so two
+      // reviewers approving simultaneously serialize instead of double-processing.
+      const [row] = await tx
+        .select({
+          claim: galleryClaims,
+          item: galleryItems,
+        })
+        .from(galleryClaims)
+        .innerJoin(galleryItems, eq(galleryItems.id, galleryClaims.itemId))
+        .where(eq(galleryClaims.id, input.claimId))
+        .for('update', { of: galleryClaims })
+        .limit(1)
+
+      if (!row) {
+        throw httpError('Claim not found', 404)
+      }
+
+      if (row.claim.status !== GalleryClaimStatus.PENDING) {
+        throw httpError('Only pending claims can be reviewed', 409)
+      }
+
+      if (isApproved && postApprovalAction === 'create_shipment') {
+        if (row.claim.claimType !== GalleryClaimType.OWNERSHIP) {
+          throw httpError('Shipment creation from review is only supported for ownership claims.', 422)
+        }
+        if (!row.claim.claimantUserId) {
+          throw httpError('Claimant account is required before creating shipment from claim approval.', 422)
+        }
+        if (!input.shipmentType) {
+          throw httpError('shipmentType is required when postApprovalAction is create_shipment.', 422)
+        }
+        if (input.shipmentType === ShipmentType.D2D && !input.d2dDispatchMode) {
+          throw httpError('d2dDispatchMode is required when shipmentType is d2d.', 422)
+        }
+      }
+
       let shipment: ReviewClaimShipmentResult | null = null
 
       if (isApproved && postApprovalAction === 'create_shipment') {
@@ -1107,7 +1110,7 @@ export class GalleryService {
               input.shipmentType === ShipmentType.D2D
                 ? (input.d2dDispatchMode as TransportMode)
                 : undefined,
-            claimantUserId: row.claim.claimantUserId as string,
+            claimantUserId: row.claim.claimantUserId!,
             claimantFullName: safeDecrypt(row.claim.claimantFullName),
             claimantEmail: safeDecrypt(row.claim.claimantEmail),
             claimantPhone: safeDecrypt(row.claim.claimantPhone),

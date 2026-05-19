@@ -6,7 +6,7 @@ const ALGORITHM = 'aes-256-gcm'
 // without triggering the full Zod env validation in config/env.ts.
 function getKey(): Buffer {
   const keyHex = process.env.ENCRYPTION_KEY
-  if (!keyHex || keyHex.length !== 64) {
+  if (keyHex?.length !== 64) {
     throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes)')
   }
   return Buffer.from(keyHex, 'hex')

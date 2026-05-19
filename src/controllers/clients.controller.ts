@@ -241,7 +241,7 @@ export const clientsController = {
     reply: FastifyReply,
   ) {
     const client = await usersService.getUserById(request.params.id)
-    if (!client || client.role !== UserRole.USER) {
+    if (client?.role !== UserRole.USER) {
       return reply.code(404).send({ success: false, message: 'Client not found' })
     }
 

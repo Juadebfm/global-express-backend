@@ -85,7 +85,7 @@ function mapTrackingTimeline(
     const previous = timeline.at(-1)
 
     // Collapse repeated internal transitions into one customer-facing timeline status.
-    if (previous && previous.status === mappedStatus) {
+    if (previous?.status === mappedStatus) {
       continue
     }
 
@@ -264,7 +264,7 @@ export const ordersController = {
     })
 
     // Fire-and-forget: notify superadmin of new order
-    notificationsService.notifyRole({
+    void notificationsService.notifyRole({
       targetRole: UserRole.STAFF,
       type: 'new_order',
       title: 'New Order Created',

@@ -224,6 +224,13 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
 
   app.post('/', {
     preHandler: [authenticate],
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: '1 minute',
+        keyGenerator: (req) => req.user?.id ?? req.ip,
+      },
+    },
     schema: {
       tags: ['Orders'],
       summary: 'Create a new shipment order',

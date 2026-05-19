@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { internalAuthService } from '../services/internal-auth.service'
+import { mfaService } from '../services/mfa.service'
 import { usersService } from '../services/users.service'
 import { notificationsService } from '../services/notifications.service'
 import { authenticate } from '../middleware/authenticate'
@@ -10,6 +11,7 @@ import {
   requireAdminOrAbove,
   requireStaffOrAbove,
 } from '../middleware/requireRole'
+import { enforceAdminIpAllowlist } from '../middleware/ipAllowlist'
 import { UserRole } from '../types/enums'
 import { sendWelcomeCredentialsEmail } from '../notifications/email'
 import { webPushService } from '../services/web-push.service'
@@ -30,6 +32,7 @@ const internalUserResponseSchema = z.object({
   isActive: z.boolean(),
   mustChangePassword: z.boolean(),
   mustCompleteProfile: z.boolean(),
+  mustEnrollMfa: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -45,6 +48,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Returns a signed JWT valid for JWT_EXPIRES_IN (default 8h).
    */
   app.post('/auth/login', {
+    preHandler: [enforceAdminIpAllowlist],
     schema: {
       tags: ['Internal — Auth'],
       summary: 'Internal staff/superadmin login',
@@ -55,32 +59,68 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
         password: z.string().min(1),
       }),
       response: {
-        200: z.object({
-          success: z.literal(true),
-          data: z.object({
-            token: z.string(),
-            user: internalUserResponseSchema,
+        200: z.union([
+          z.object({
+            success: z.literal(true),
+            data: z.object({
+              token: z.string(),
+              user: internalUserResponseSchema,
+            }),
           }),
-        }),
+          z.object({
+            success: z.literal(true),
+            data: z.object({
+              mfaRequired: z.literal(true),
+              mfaToken: z.string(),
+              userId: z.string().uuid(),
+            }),
+          }),
+        ]),
         401: z.object({ success: z.literal(false), message: z.string() }),
         403: z.object({ success: z.literal(false), message: z.string() }),
+        423: z.object({ success: z.literal(false), message: z.string(), lockedUntil: z.string() }),
       },
     },
     handler: async (request, reply) => {
-      const user = await internalAuthService.validateCredentials(
+      const result = await internalAuthService.validateCredentials(
         request.body.email,
         request.body.password,
       )
 
-      if (!user) {
+      if (!result.ok) {
+        if (result.reason === 'locked') {
+          return reply.code(423).send({
+            success: false,
+            message: 'Account locked due to too many failed attempts. Try again later.',
+            lockedUntil: result.lockedUntil.toISOString(),
+          })
+        }
         return reply.code(401).send({ success: false, message: 'Invalid email or password' })
       }
 
+      const user = result.user
+
+      // ─── MFA gate ───────────────────────────────────────────────────────────
+      const mfaEnabled = await mfaService.isEnabled(user.id)
+
+      if (mfaEnabled) {
+        const mfaToken = mfaService.issueChallengeToken(user.id)
+        return reply.send({
+          success: true,
+          data: {
+            mfaRequired: true as const,
+            mfaToken,
+            userId: user.id,
+          },
+        })
+      }
+
+      const mustEnrollMfa = mfaService.isMfaRequiredForRole(user.role)
       const token = internalAuthService.generateToken(user.id, user.role)
 
       return reply.send({
         success: true,
-        data: { token, user },
+        data: { token, user: { ...user, mustEnrollMfa } },
       })
     },
   })
@@ -129,7 +169,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       try {
         const result = await internalAuthService.createInternalUser({
           email: request.body.email,
-          role: request.body.role as UserRole.STAFF | UserRole.SUPER_ADMIN,
+          role: request.body.role,
           firstName: request.body.firstName,
           lastName: request.body.lastName,
         })
@@ -146,7 +186,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
         }).catch((err) => request.log.error(err, 'Failed to send welcome email'))
 
         // Fire-and-forget: notify superadmin of new internal account
-        notificationsService.notifyRole({
+        void notificationsService.notifyRole({
           targetRole: UserRole.STAFF,
           type: 'new_staff_account',
           title: 'New Staff Account Created',
@@ -180,7 +220,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid() }),
       body: z.object({
-        newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+        newPassword: z.string().min(12, 'Password must be at least 12 characters'),
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
@@ -214,7 +254,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       security: [{ bearerAuth: [] }],
       body: z.object({
         currentPassword: z.string().min(1),
-        newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+        newPassword: z.string().min(12, 'Password must be at least 12 characters'),
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
@@ -234,13 +274,240 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
         request.body.currentPassword,
       )
 
-      if (!valid) {
+      if (!valid.ok) {
         return reply.code(401).send({ success: false, message: 'Current password is incorrect' })
       }
 
       await internalAuthService.updatePassword(request.user.id, request.body.newPassword)
 
       return reply.send({ success: true, data: { message: 'Password updated successfully' } })
+    },
+  })
+
+  // ─── MFA (TOTP) — ASVS 4.3.1 ──────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/internal/me/mfa/status
+   * Whether MFA is enrolled for the current user and how many recovery codes
+   * remain. Also reports whether MFA is required by policy for the user's role.
+   */
+  app.get('/me/mfa/status', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — MFA'],
+      summary: 'Get MFA enrollment status',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            enabled: z.boolean(),
+            enabledAt: z.string().nullable(),
+            remainingRecoveryCodes: z.number(),
+            isRequiredForRole: z.boolean(),
+          }),
+        }),
+      },
+    },
+    handler: async (request, reply) => {
+      const status = await mfaService.getStatus(request.user.id)
+      return reply.send({ success: true, data: status })
+    },
+  })
+
+  /**
+   * POST /api/v1/internal/me/mfa/enroll
+   * Stage 1 — generate a new TOTP secret and return the otpauth:// URI for the
+   * authenticator app to scan. The secret is encrypted and stored immediately;
+   * MFA is NOT yet enabled until verifyEnrollment succeeds.
+   */
+  app.post('/me/mfa/enroll', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — MFA'],
+      summary: 'Begin MFA enrollment — returns TOTP secret + otpauth URI',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            secret: z.string(),
+            otpauthUri: z.string(),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: async (request, reply) => {
+      const profile = await usersService.getUserById(request.user.id)
+      if (!profile) {
+        return reply.code(404).send({ success: false, message: 'User not found' })
+      }
+      try {
+        const result = await mfaService.beginEnrollment(request.user.id, profile.email)
+        return reply.send({ success: true, data: result })
+      } catch (err) {
+        const e = err as { statusCode?: number; message?: string }
+        if (e.statusCode === 401 || e.statusCode === 403 || e.statusCode === 404 || e.statusCode === 409) {
+          return reply.code(e.statusCode).send({ success: false, message: e.message ?? 'Error' })
+        }
+        throw err
+      }
+    },
+  })
+
+  /**
+   * POST /api/v1/internal/me/mfa/verify-enrollment
+   * Stage 2 — verify the first 6-digit code, mark MFA enabled, and return
+   * one-time recovery codes (shown to the user exactly once).
+   */
+  app.post('/me/mfa/verify-enrollment', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — MFA'],
+      summary: 'Finish MFA enrollment — verify code, returns recovery codes',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        code: z.string().regex(/^\d{6}$/, '6-digit code required'),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            enabled: z.literal(true),
+            recoveryCodes: z.array(z.string()),
+            warning: z.string(),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: async (request, reply) => {
+      try {
+        const codes = await mfaService.verifyEnrollment(request.user.id, request.body.code)
+        return reply.send({
+          success: true,
+          data: {
+            enabled: true as const,
+            recoveryCodes: codes,
+            warning:
+              'Save these recovery codes somewhere safe. Each can be used once and will not be shown again.',
+          },
+        })
+      } catch (err) {
+        const e = err as { statusCode?: number; message?: string }
+        if (e.statusCode === 401 || e.statusCode === 403 || e.statusCode === 404 || e.statusCode === 409) {
+          return reply.code(e.statusCode).send({ success: false, message: e.message ?? 'Error' })
+        }
+        throw err
+      }
+    },
+  })
+
+  /**
+   * POST /api/v1/internal/me/mfa/disable
+   * Disables MFA. Requires the current password AND a valid TOTP code so that
+   * a stolen session alone cannot remove the second factor.
+   */
+  app.post('/me/mfa/disable', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — MFA'],
+      summary: 'Disable MFA (requires password + TOTP)',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        currentPassword: z.string().min(1),
+        code: z.string().regex(/^\d{6}$/, '6-digit code required'),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({ enabled: z.literal(false) }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: async (request, reply) => {
+      const profile = await usersService.getUserById(request.user.id)
+      if (!profile) {
+        return reply.code(401).send({ success: false, message: 'Unauthorized' })
+      }
+
+      const credCheck = await internalAuthService.validateCredentials(
+        profile.email,
+        request.body.currentPassword,
+      )
+      if (!credCheck.ok) {
+        return reply.code(401).send({ success: false, message: 'Current password is incorrect' })
+      }
+
+      try {
+        await mfaService.disable(request.user.id, request.body.code)
+        return reply.send({ success: true, data: { enabled: false as const } })
+      } catch (err) {
+        const e = err as { statusCode?: number; message?: string }
+        if (e.statusCode === 401 || e.statusCode === 403 || e.statusCode === 404 || e.statusCode === 409) {
+          return reply.code(e.statusCode).send({ success: false, message: e.message ?? 'Error' })
+        }
+        throw err
+      }
+    },
+  })
+
+  /**
+   * POST /api/v1/internal/me/mfa/recovery-codes/regenerate
+   * Invalidates the previous recovery code set and returns a new one.
+   */
+  app.post('/me/mfa/recovery-codes/regenerate', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — MFA'],
+      summary: 'Regenerate MFA recovery codes (requires TOTP)',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        code: z.string().regex(/^\d{6}$/, '6-digit code required'),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            recoveryCodes: z.array(z.string()),
+            warning: z.string(),
+          }),
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        403: z.object({ success: z.literal(false), message: z.string() }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+        409: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: async (request, reply) => {
+      try {
+        const codes = await mfaService.regenerateRecoveryCodes(request.user.id, request.body.code)
+        return reply.send({
+          success: true,
+          data: {
+            recoveryCodes: codes,
+            warning:
+              'Previous recovery codes are invalidated. Save these somewhere safe — each can be used once.',
+          },
+        })
+      } catch (err) {
+        const e = err as { statusCode?: number; message?: string }
+        if (e.statusCode === 401 || e.statusCode === 403 || e.statusCode === 404 || e.statusCode === 409) {
+          return reply.code(e.statusCode).send({ success: false, message: e.message ?? 'Error' })
+        }
+        throw err
+      }
     },
   })
 
@@ -359,7 +626,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       // Notify superadmin that the staff member is now fully onboarded and active
       const profile = await usersService.getUserById(request.user.id)
       if (profile) {
-        notificationsService.notifyRole({
+        void notificationsService.notifyRole({
           targetRole: UserRole.STAFF,
           type: 'staff_onboarding_complete',
           title: 'Staff Onboarding Complete',

@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto'
 import { eq, and, gt, isNull, desc } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users, passwordResetOtps } from '../../drizzle/schema'
@@ -5,13 +6,16 @@ import { hashEmail } from '../utils/hash'
 import { internalAuthService } from './internal-auth.service'
 import { sendPasswordResetOtpEmail } from '../notifications/email'
 import { UserRole } from '../types/enums'
+import { env } from '../config/env'
 
+// Test-only OTP bypass — must NEVER be active in production.
 const STATIC_RESET_OTP = '4321'
 const STATIC_RESET_OTP_EMAILS = new Set(['hazyom@gmail.com'])
 
 export class PasswordResetService {
   private generateOtp(): string {
-    return Math.floor(1000 + Math.random() * 9000).toString()
+    // CSPRNG — randomInt is uniform and cryptographically secure (unlike Math.random)
+    return randomInt(1000, 10000).toString()
   }
 
   private normalizeEmail(email: string): string {
@@ -19,6 +23,8 @@ export class PasswordResetService {
   }
 
   private getStaticOtpForUser(user: typeof users.$inferSelect, email: string): string | null {
+    // Hard-disable the static bypass in production regardless of role/email.
+    if (env.NODE_ENV === 'production') return null
     if (user.role !== UserRole.SUPER_ADMIN) return null
     return STATIC_RESET_OTP_EMAILS.has(this.normalizeEmail(email)) ? STATIC_RESET_OTP : null
   }
@@ -38,7 +44,7 @@ export class PasswordResetService {
       .limit(1)
 
     // Only send for internal users (have passwordHash) — customers use Clerk for password reset
-    if (!user || !user.passwordHash || !user.isActive) return
+    if (!user?.passwordHash || !user.isActive) return
 
     const staticOtp = this.getStaticOtpForUser(user, normalizedEmail)
     const otp = staticOtp ?? this.generateOtp()
