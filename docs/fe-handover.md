@@ -71,6 +71,8 @@ The `Content-Type` header is `application/problem+json; charset=utf-8` (not `app
 
 **FE action — write one error parser and use it everywhere:**
 
+> **Important:** every successful response is wrapped in `{ success: true, data: T }`. The helper below auto-unwraps `.data` so `result.data` holds the real payload — but this means the type parameter `T` should be the **inner** type (e.g. `{ user, tokens }`), NOT the envelope.
+
 ```ts
 export interface Problem {
   type: string
@@ -80,7 +82,15 @@ export interface Problem {
   instance: string
   requestId: string
   errors?: Array<{ path: (string | number)[]; message: string; code?: string }>
-  [extension: string]: unknown // e.g. lockedUntil on 423, code on 422 CAPTCHA
+  // Extension fields appear at the top level (not nested), e.g.
+  //   `code: "captcha_failed"` on 422 CAPTCHA failures
+  //   `lockedUntil: "<ISO 8601>"` on 423 account lockouts
+  [extension: string]: unknown
+}
+
+interface Envelope<T> {
+  success: true
+  data: T
 }
 
 export async function callApi<T>(
@@ -88,14 +98,19 @@ export async function callApi<T>(
   init?: RequestInit,
 ): Promise<{ ok: true; data: T } | { ok: false; problem: Problem }> {
   const res = await fetch(url, init)
+  const body = await res.json()
   if (!res.ok) {
-    const problem = (await res.json()) as Problem
-    return { ok: false, problem }
+    return { ok: false, problem: body as Problem }
   }
-  return { ok: true, data: (await res.json()) as T }
+  // Every success response uses { success: true, data: T }; auto-unwrap.
+  return { ok: true, data: (body as Envelope<T>).data }
 }
 
 // Usage in a component
+type LoginResponse =
+  | { user: Operator; tokens: { accessToken: string } }
+  | { mfaRequired: true; mfaToken: string; userId: string }
+
 const result = await callApi<LoginResponse>('/api/v1/auth/login', { ... })
 if (!result.ok) {
   showError(result.problem.detail)               // human-readable message
@@ -108,7 +123,12 @@ if (!result.ok) {
   }
   return
 }
-const { user, tokens } = result.data            // success branch
+// Success: result.data is the INNER payload (already unwrapped).
+if ('mfaRequired' in result.data) {
+  // → MFA challenge flow
+} else {
+  const { user, tokens } = result.data
+}
 ```
 
 **Known `type` URIs you can switch on:**
@@ -152,16 +172,20 @@ These used to return flat shapes; they now wrap in `{ success: true, data: ... }
 | `POST /auth/sync` | already `{ success, data }` | unchanged |
 | `POST /auth/register` | `{ message, clerkSignUpUrl }` | `{ message, clerkSignUpUrl }` |
 
-**FE action:** unwrap `.data` after every `/auth/*` response.
+**FE action:** if you use the `callApi` helper above (which auto-unwraps), no extra work — `result.data` is the inner payload. If you parse responses directly, remember to access `body.data` instead of `body` (one extra hop).
 
 ```ts
 // Before
 const { user, tokens } = await fetch('/api/v1/auth/login', ...).then(r => r.json())
 
-// After
+// After (with the helper)
 const result = await callApi<{ user: Operator; tokens: { accessToken: string } }>('/api/v1/auth/login', ...)
-if (!result.ok) { /* ...handle problem... */ return }
+if (!result.ok) { /* handle problem */ return }
 const { user, tokens } = result.data
+
+// After (without the helper)
+const body = await fetch('/api/v1/auth/login', ...).then(r => r.json())
+const { user, tokens } = body.data
 ```
 
 **Acceptance:**
@@ -431,20 +455,20 @@ if (user.mustEnrollMfa) {
 
 ---
 
-### 8 — `?sort=` query parameter (optional)
+### 8 — `?sort=` query parameter (not yet wired — informational only)
 
-**Where:** list endpoints — adopt only on the lists where the UX needs sortable columns.
+**Status:** the `parseSortQuery` utility is implemented on the server, but **no list endpoint has adopted it yet**. Sending `?sort=…` today does nothing — the parameter is silently ignored and the endpoint's default ordering is used.
 
-Syntax: `?sort=field` (ascending) or `?sort=-field` (descending). Multi-field with commas: `?sort=-createdAt,name`.
+When the FE has a screen that needs sortable columns, raise it with the backend so we wire it into that specific endpoint with an explicit allowlist of sortable fields. Once wired, the contract will be:
 
-```ts
-fetch('/api/v1/orders?sort=-createdAt&page=1&limit=20')
-```
+- `?sort=field` — ascending
+- `?sort=-field` — descending
+- `?sort=-status,createdAt` — multi-field with commas (primary desc, tiebreak asc)
 
-Allowed sort fields are enforced per endpoint server-side; unknown fields are silently dropped (no error). Per-endpoint sort allowlists are TBD as endpoints adopt this — for now, omit `?sort=` to use the endpoint's default ordering.
+Allowed fields will be server-enforced per endpoint; unknown field names will be silently dropped.
 
 **Acceptance:**
-- [ ] Not blocking — add when a list UI grows column-sort affordances.
+- [ ] Not currently actionable — flag in standup if/when a sortable list UI is queued.
 
 ---
 
