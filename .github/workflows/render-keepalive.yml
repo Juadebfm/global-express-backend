@@ -1,5 +1,11 @@
 name: Render Keepalive
 
+# Pings the Render health endpoint during Korean business hours to keep
+# the free-tier instance warm. Runs on GitHub-hosted runner (ASVS V10.3.1).
+#
+# Free tier cost: ~21 ubuntu-latest minutes per week × 4.3 weeks/month ≈ 90 min,
+# well inside the 2000-min/month GitHub Free quota.
+
 on:
   schedule:
     # Weekdays, 09:00-19:30 Korea Standard Time (KST, UTC+9)
@@ -11,19 +17,15 @@ concurrency:
   group: render-keepalive
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   ping:
-    name: Ping Render Health Endpoint (Self-hosted)
-    runs-on: self-hosted
+    name: Ping Render Health Endpoint
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify runner dependencies
-        run: |
-          if ! command -v curl >/dev/null 2>&1; then
-            echo "Missing dependency: curl"
-            exit 1
-          fi
-
       - name: Validate healthcheck URL secret
         env:
           HEALTHCHECK_URL: ${{ secrets.RENDER_HEALTHCHECK_URL }}

@@ -6,6 +6,7 @@ import { users, revokedTokens } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
 import { encrypt, decrypt, hashEmail } from '../utils/encryption'
+import { logSecurityEvent } from '../utils/security-events'
 import { internalAuthService } from '../services/internal-auth.service'
 import { notificationsService } from '../services/notifications.service'
 
@@ -157,6 +158,7 @@ export async function authenticate(
     try {
       payload = internalAuthService.verifyToken(token)
     } catch {
+      logSecurityEvent({ type: 'token_verification_failure', request, metadata: { tokenType: 'internal' } })
       reply.code(401).send({ success: false, message: 'Unauthorized - invalid or expired token' })
       return
     }
@@ -188,6 +190,7 @@ export async function authenticate(
         .limit(1)
 
       if (revoked) {
+        logSecurityEvent({ type: 'token_revoked', request, userId: payload.sub })
         reply.code(401).send({ success: false, message: 'Unauthorized — token has been revoked' })
         return
       }

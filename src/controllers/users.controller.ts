@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { usersService } from '../services/users.service'
 import { generateGdprExportPdf } from '../services/pdf-export.service'
 import { createAuditLog } from '../utils/audit'
+import { logSecurityEvent } from '../utils/security-events'
 import { successResponse } from '../utils/response'
 import { PreferredLanguage, SupplierUpdateRequestStatus, UserRole } from '../types/enums'
 import type { PaginationParams } from '../types'
@@ -99,6 +100,8 @@ export const usersController = {
     if (!erased) {
       return reply.code(404).send({ success: false, message: 'User not found' })
     }
+
+    logSecurityEvent({ type: 'account_erased', request, userId: request.user.id })
 
     return reply.send(
       successResponse({

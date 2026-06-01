@@ -4,6 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { supportController } from '../controllers/support.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireStaffOrAbove } from '../middleware/requireRole'
+import { checkIdempotencyKey } from '../middleware/idempotency'
 
 const ticketStatusEnum = z.enum(['open', 'in_progress', 'resolved', 'closed'])
 const ticketCategoryEnum = z.enum([
@@ -45,7 +46,7 @@ export async function supportRoutes(fastify: FastifyInstance): Promise<void> {
   // ─── POST /support/tickets — Create ticket ────────────────────────────────
 
   app.post('/tickets', {
-    preHandler: [authenticate],
+    preHandler: [authenticate, checkIdempotencyKey],
     config: {
       rateLimit: {
         max: 10,

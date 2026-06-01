@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { UserRole } from '../types/enums'
 import { createAuditLog } from '../utils/audit'
+import { logSecurityEvent } from '../utils/security-events'
 
 type RolePreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<void>
 
@@ -33,6 +34,18 @@ export function requireRole(...allowedRoles: UserRole[]): RolePreHandler {
           // Never let audit failure block the 403 response.
         })
       }
+
+      logSecurityEvent({
+        type: 'permission_denied',
+        request,
+        userId: userId ?? null,
+        metadata: {
+          method: request.method,
+          url: request.url,
+          actualRole: userRole ?? null,
+          allowedRoles,
+        },
+      })
 
       return reply.code(403).send({
         success: false,

@@ -4,6 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { paymentsController } from '../controllers/payments.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireSuperAdmin, requireStaffOrAbove } from '../middleware/requireRole'
+import { checkIdempotencyKey } from '../middleware/idempotency'
 import { PaymentStatus, PaymentType } from '../types/enums'
 
 const paymentResponseSchema = z.object({
@@ -37,7 +38,7 @@ export async function paymentsRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
   app.post('/initialize', {
-    preHandler: [authenticate],
+    preHandler: [authenticate, checkIdempotencyKey],
     config: {
       // Stricter rate limit on payment init
       rateLimit: { max: 10, timeWindow: '1 minute' },

@@ -2,10 +2,12 @@
 
 Complete inventory of every HTTP and WebSocket endpoint, with payloads, success responses, error bodies, expected request headers, and FE usage notes.
 
-- **Total HTTP endpoints:** 163
+- **Total HTTP endpoints:** 168 (163 application routes + `/health`, `/readiness`, `/metrics`, `/docs`, `/openapi.json`)
 - **WebSocket endpoints:** 1 (`/ws`)
-- **All routes mounted under `/api/v1`** except `/health`, `/webhooks/*`, and `/ws`.
+- **All routes mounted under `/api/v1`** except `/health`, `/readiness`, `/metrics`, `/docs`, `/openapi.json`, `/webhooks/*`, and `/ws`.
 - **All authenticated endpoints expect `Authorization: Bearer <token>`** unless noted.
+- **Interactive explorer:** `GET /docs` — Swagger UI auto-generated from Zod schemas.
+- **Raw spec:** `GET /openapi.json` — OpenAPI 3 for SDK generation (`openapi-generator-cli`).
 
 ---
 
@@ -17,68 +19,33 @@ Complete inventory of every HTTP and WebSocket endpoint, with payloads, success 
 |---|---|---|
 | `Content-Type` | `application/json` | Any request with a JSON body. Empty bodies on PATCH/DELETE are accepted with this header. |
 | `Authorization` | `Bearer <jwt>` | Authenticated endpoints. Token is either a Clerk JWT (customers) or in-house JWT (staff/superadmin). |
-| `Accept` | `application/json` | Recommended; the API only emits JSON except for the PDF export. |
+| `Accept` | `application/json` | Recommended; the API emits JSON except for the PDF export and `/metrics`. |
+
+### Optional headers the FE may send
+
+| Header | When | Effect |
+|---|---|---|
+| `Idempotency-Key` | `POST /payments/initialize`, `POST /orders`, `POST /support/tickets` | Replay-safe creates. Same key + same body → cached response with `Idempotent-Replayed: true`. Same key + different body → 422. 24h TTL. Use a UUID per logical user action; reuse on retries. |
+| `cf-turnstile-response` | 5 public mutation endpoints (see [Public](#public)) | Cloudflare Turnstile CAPTCHA token. Required in production; in dev the middleware no-ops when `TURNSTILE_SECRET_KEY` is unset. |
+| `If-None-Match` | Any GET | Conditional GET — server returns `304 Not Modified` (empty body) when the `ETag` matches. Saves bandwidth on re-fetches. SWR / TanStack-Query handle this automatically. |
 
 ### Response headers stamped by the server
 
 | Header | Value | Where |
 |---|---|---|
+| `X-Request-ID` | Per-request UUID | **Every response** — exposed via CORS so the FE can read it. **Quote it in error UIs ("ref: …") for support correlation.** |
+| `ETag` | `W/"<sha1>"` (weak) | Every GET response. Send back in `If-None-Match` to get 304. |
 | `Cache-Control` | `no-store, private` | All authenticated/PII routes (auth, users, admin, internal, payments, orders, dashboard, notifications, shipments, team, support, reports) |
-| `Pragma` | `no-cache` | Same routes as above |
+| `Cache-Control` | `public, max-age=300, stale-while-revalidate=60` | Public catalog GETs: `/public/shipment-types`, `/public/calculator/rates`, `/public/gallery` |
+| `Pragma` | `no-cache` | Same routes as `no-store` Cache-Control |
+| `Vary` | `Accept, Accept-Encoding` | Cacheable public GETs |
 | `Strict-Transport-Security` | `max-age=63072000; includeSubDomains; preload` | All responses |
 | `X-Content-Type-Options` | `nosniff` | All responses (via helmet) |
 | `Content-Security-Policy` | strict, self-only | All responses (via helmet) |
 | `Content-Disposition` | `attachment; filename=...` | `GET /users/me/export` (PDF download) only |
-
-### Webhook-specific headers (inbound)
-
-| Endpoint | Required header | Purpose |
-|---|---|---|
-| `POST /api/v1/payments/webhook` | `x-paystack-signature` | HMAC-SHA512 of raw body, signed with PAYSTACK_SECRET_KEY |
-| `POST /webhooks/clerk` | `svix-id`, `svix-timestamp`, `svix-signature` | Svix-standard webhook signing for Clerk |
-
-### Success response envelope
-
-Most endpoints wrap data:
-
-```json
-{ "success": true, "data": <T> }
-```
-
-The few legacy `auth` endpoints (`/auth/login`, `/auth/me`, `/auth/forgot-password/*`, `/auth/mfa/verify`, `/auth/mfa/recovery`) return a flat shape without the envelope (matches the operator-dashboard contract).
-
-### Error response envelope
-
-Standard error body:
-
-```json
-{ "success": false, "message": "<human-readable>" }
-```
-
-Validation failures additionally include the failure list:
-
-```json
-{ "success": false, "message": "Validation failed", "errors": [ { "instancePath": "...", "message": "..." } ] }
-```
-
-Legacy `auth/*` endpoints return `{ "message": "..." }` without `success`.
-
-### HTTP status codes used
-
-| Code | Meaning in this API |
-|---|---|
-| 200 | Success (GET/PATCH/PUT/DELETE) |
-| 201 | Created (POST that creates a resource) |
-| 400 | Validation failed (Zod schema rejected the payload) |
-| 401 | Missing or invalid token; bad credentials |
-| 403 | Authenticated but not permitted (wrong role, BOLA, IP allowlist) |
-| 404 | Resource not found |
-| 409 | Conflict (duplicate email, state-machine violation, already enrolled) |
-| 422 | Semantic validation failure (profile incomplete, callbackUrl not in allowlist, missing payer) |
-| 423 | Locked — account locked-out after 5 failed logins; includes `lockedUntil` ISO timestamp |
-| 429 | Rate limit exceeded; includes a human-readable retry hint |
-| 500 | Internal server error (in production the message is generic) |
-| 503 | Service unavailable (e.g. webhook secret not configured) |
+| `Idempotent-Replayed` | `true` | Set on a cached Idempotency-Key replay |
+| `Content-Type` | `application/problem+json; charset=utf-8` | **All error responses** (per RFC 7807) |
+| `Deprecation` / `Sunset` / `Link` | RFC 8594 / 9745 | On endpoints marked deprecated. No endpoints are currently deprecated, but the mechanism is in place. |
 
 ### Rate-limit headers (on every response)
 
@@ -91,6 +58,112 @@ Legacy `auth/*` endpoints return `{ "message": "..." }` without `success`.
 
 Global default: **100 requests / minute / IP**. Per-route overrides are called out in each endpoint's FE notes.
 
+### Webhook-specific headers (inbound)
+
+| Endpoint | Required header | Purpose |
+|---|---|---|
+| `POST /api/v1/payments/webhook` | `x-paystack-signature` | HMAC-SHA512 of raw body, signed with PAYSTACK_SECRET_KEY |
+| `POST /webhooks/clerk` | `svix-id`, `svix-timestamp`, `svix-signature` | Svix-standard webhook signing for Clerk |
+
+### Success response envelope
+
+**Every endpoint** returns the same shape:
+
+```json
+{ "success": true, "data": <T> }
+```
+
+This includes `/auth/*` routes — they previously returned a flat shape; that's been normalized.
+
+The exceptions:
+- Webhook endpoints (`/webhooks/clerk`, `/payments/webhook`) — return `{ "received": true }` or `{ "success": true }` per provider convention.
+- `GET /health` and `GET /readiness` — return liveness/readiness shapes (not auth-context).
+- `GET /metrics` — returns Prometheus text format, not JSON.
+- `GET /users/me/export` — returns binary PDF.
+- `GET /docs`, `GET /openapi.json` — HTML / JSON spec documents.
+
+### Error response envelope — RFC 7807 Problem Details
+
+**Every error response** uses `application/problem+json` content type and this shape:
+
+```json
+{
+  "type": "/problems/validation",
+  "title": "Validation failed",
+  "status": 400,
+  "detail": "One or more request fields failed validation.",
+  "instance": "/api/v1/orders",
+  "requestId": "req-7",
+  "errors": [
+    { "path": ["body", "recipientName"], "message": "Required", "code": "invalid_type" }
+  ]
+}
+```
+
+| Field | Always present | Description |
+|---|---|---|
+| `type` | yes | URI identifying the problem class — switch on this. See "Known problem types" below. |
+| `title` | yes | Short human-readable summary (does not vary per occurrence). |
+| `status` | yes | HTTP status code (mirrors the response). |
+| `detail` | yes | Explanation specific to this occurrence. **Show this in the error UI.** |
+| `instance` | yes | The request path (URI of the specific occurrence). |
+| `requestId` | yes | Fastify request id. **Show in error UI ("ref: …") for support correlation.** |
+| `errors` | only on 400 from Zod validation | Per-field issues with `path` (JSON-pointer segments), `message`, optional `code`. |
+| extension fields | sometimes | E.g. `lockedUntil` on 423, `code: "captcha_failed"` on 422 CAPTCHA, others marked per endpoint. |
+
+#### Known problem types
+
+| `type` URI | Typical status | When |
+|---|---|---|
+| `/problems/validation` | 400 | Zod validation failed |
+| `/problems/unauthorized` | 401 | Missing/invalid/revoked token |
+| `/problems/forbidden` | 403 | Wrong role, BOLA, IP allowlist denial |
+| `/problems/not-found` | 404 | Resource not found |
+| `/problems/conflict` | 409 | State-machine violation, duplicate email, already enrolled |
+| `/problems/unprocessable` | 422 | Semantic validation (profile incomplete, callback origin not allowed, CAPTCHA failed, etc.) |
+| `/problems/locked` | 423 | Account locked after 5 failed login attempts (extension: `lockedUntil` ISO) |
+| `/problems/rate-limited` | 429 | Per-route or global rate limit exceeded |
+| `/problems/internal` | 500 | Unhandled error (in production, `detail` is generic) |
+| `/problems/service-unavailable` | 503 | Webhook secret not configured, DB unreachable, etc. |
+| `about:blank` | various | Catch-all (used when no specific type applies) |
+
+#### Minimal FE error parser
+
+```ts
+async function parseProblem(response: Response) {
+  if (response.ok) return { ok: true, data: await response.json() }
+  const problem = await response.json() // application/problem+json
+  return { ok: false, problem }
+}
+
+// Usage
+const result = await parseProblem(await fetch('/api/v1/orders', { method: 'POST', ... }))
+if (!result.ok) {
+  showError(result.problem.detail)              // human message
+  showRef(result.problem.requestId)             // for support
+  if (result.problem.type === '/problems/validation') showFieldErrors(result.problem.errors)
+  if (result.problem.type === '/problems/locked') showCountdown(result.problem.lockedUntil)
+}
+```
+
+### HTTP status codes used
+
+| Code | Meaning in this API |
+|---|---|
+| 200 | Success (GET/PATCH/PUT/DELETE) |
+| 201 | Created (POST that creates a resource) |
+| 304 | Not Modified — your `If-None-Match` ETag matched, reuse cached body |
+| 400 | Validation failed (Zod schema rejected the payload) |
+| 401 | Missing or invalid token; bad credentials |
+| 403 | Authenticated but not permitted (wrong role, BOLA, IP allowlist) |
+| 404 | Resource not found |
+| 409 | Conflict (duplicate email, state-machine violation, already enrolled) |
+| 422 | Semantic validation failure (profile incomplete, callbackUrl not in allowlist, CAPTCHA failed) |
+| 423 | Locked — account locked-out after 5 failed logins; includes `lockedUntil` ISO timestamp as Problem extension |
+| 429 | Rate limit exceeded; includes a human-readable retry hint in `detail` |
+| 500 | Internal server error (in production, `detail` is generic) |
+| 503 | Service unavailable (e.g. webhook secret not configured, DB unreachable) |
+
 ### Common pagination contract
 
 Endpoints returning lists accept:
@@ -99,6 +172,14 @@ Endpoints returning lists accept:
 |---|---|---|
 | `page` | 1 | — |
 | `limit` | 20 | 100 |
+| `sort` | endpoint-specific default | comma-separated list, prefix with `-` for desc |
+
+Sort examples (only on endpoints that opt in — check the per-endpoint section):
+- `?sort=createdAt` — ascending by createdAt
+- `?sort=-createdAt` — descending by createdAt
+- `?sort=-status,createdAt` — primary desc by status, tiebreak asc by createdAt
+
+Allowed sort fields are restricted per endpoint; unknown fields are silently dropped.
 
 Response shape:
 
@@ -110,23 +191,46 @@ Response shape:
 }
 ```
 
+### Idempotency contract
+
+For the 3 POST endpoints that support it (`/payments/initialize`, `/orders`, `/support/tickets`):
+
+1. FE generates a UUID (e.g. `crypto.randomUUID()`) for the logical operation — typically per submit-button click.
+2. FE sends it as `Idempotency-Key: <uuid>` header.
+3. On the first delivery, the handler runs normally; the response is persisted against `(key, user, method, path, request-hash)` for 24h.
+4. On any retry (network failure, double-click, page reload mid-submit) with **the same key + same body**: server returns the cached response with `Idempotent-Replayed: true` header. No duplicate resources created.
+5. On replay with the same key but **different body**: 422 — pick a fresh key.
+
+Keys are `[A-Za-z0-9_-]{8,255}`. Recommendation: use a UUID v4.
+
+### CAPTCHA contract (public mutation endpoints)
+
+The 5 endpoints marked **CAPTCHA required** need a Cloudflare Turnstile token:
+
+1. FE renders the Turnstile widget with the site key.
+2. On user verification, the widget invokes the callback with a token (5 min validity, single-use).
+3. FE attaches the token as `cf-turnstile-response` header on the next API call.
+4. Server verifies the token with Cloudflare; rejects with 422 + `extensions.code = "captcha_missing"` or `"captcha_failed"` if invalid.
+
+In dev, the middleware no-ops when `TURNSTILE_SECRET_KEY` isn't set — local flows work without setup.
+
 ### MFA login flow (FE must handle)
 
 When an internal user has TOTP MFA enrolled, login does NOT return an access token directly. Two-step flow:
 
-1. `POST /auth/login` (or `/internal/auth/login`) with email + password
-2. If response is `{ mfaRequired: true, mfaToken, userId }`: prompt for 6-digit code, call `POST /auth/mfa/verify` with `{ mfaToken, code }`. Receives the access token.
-3. Recovery alternative: `POST /auth/mfa/recovery` with `{ mfaToken, recoveryCode }`.
+1. `POST /auth/login` (or `/internal/auth/login`) with email + password.
+2. If response shape is `{ success: true, data: { mfaRequired: true, mfaToken, userId } }`: prompt for 6-digit code, call `POST /auth/mfa/verify` with `{ mfaToken, code }`. Receives `{ success: true, data: { user, tokens } }`.
+3. Recovery alternative: `POST /auth/mfa/recovery` with `{ mfaToken, recoveryCode }` — returns the same shape plus `data.remainingRecoveryCodes`.
 
 The `mfaToken` is a short-lived JWT (5 min). If it expires, restart at step 1.
 
-If the login response shape is regular but `user.mustEnrollMfa === true`, the user is logged in but the FE should immediately route them to MFA enrollment (mirrors `mustChangePassword` / `mustCompleteProfile`).
+If the login response is the regular `{ data: { user, tokens } }` shape but `data.user.mustEnrollMfa === true`, the user is logged in but the FE should immediately route them to MFA enrollment (mirrors `mustChangePassword` / `mustCompleteProfile`).
 
 ---
 
 ## Table of Contents
 
-- [Health](#health)
+- [Health & Diagnostics](#health--diagnostics)
 - [Auth — `/api/v1/auth`](#auth)
 - [Users — `/api/v1/users`](#users)
 - [Orders — `/api/v1/orders`](#orders)
@@ -148,28 +252,56 @@ If the login response shape is regular but `user.mustEnrollMfa === true`, the us
 
 ---
 
-## Health
+## Health & Diagnostics
 
 ### `GET /health`
-**Use:** liveness probe — FE doesn't normally call this, but uptime checks and Render rely on it.
+**Use:** liveness probe — returns 200 if the process is responsive. Use for load-balancer **liveness** checks. Does NOT check DB.
 **Auth:** none.
 **Headers:** none required.
 **Payload:** none.
 **Success 200:** `{ "status": "ok", "timestamp": "<ISO 8601>" }`.
 **Errors:** none expected.
 
+### `GET /readiness`
+**Use:** readiness probe — runs `SELECT 1` against the DB. Use for load-balancer **readiness** checks so the LB can route around degraded instances.
+**Auth:** none.
+**Payload:** none.
+**Success 200:** `{ "status": "ready", "timestamp": "<ISO 8601>", "checks": { "database": "ok" } }`.
+**Errors:** 503 `{ "status": "not_ready", "timestamp": "...", "checks": { "database": "unreachable" } }` when DB ping fails.
+
+**FE Notes:** FE doesn't normally call this. It's for the LB / monitoring system.
+
+### `GET /metrics`
+**Use:** Prometheus scrape endpoint — per-route latency histograms + default Node metrics.
+**Auth:** none — **but restrict at LB/firewall in prod** to scraper IPs only.
+**Response:** Prometheus text format (`text/plain; version=0.0.4`).
+**Errors:** none expected.
+
+### `GET /docs`
+**Use:** interactive Swagger UI for browsing the API.
+**Auth:** none.
+**Response:** HTML page rendered from `/openapi.json`.
+
+### `GET /openapi.json`
+**Use:** raw OpenAPI 3 specification. Use to generate FE SDKs:
+```bash
+openapi-generator-cli generate -i https://api.globalexpress.kr/openapi.json -g typescript-fetch -o ./generated
+```
+**Auth:** none.
+**Response:** OpenAPI 3 JSON.
+
 ---
 
 ## Auth
 File: [src/routes/auth.routes.ts](src/routes/auth.routes.ts)
 
-> The `auth/*` endpoints use the **legacy flat envelope** (no `success` wrapper) on responses and errors — matches the operator-dashboard contract.
+> **Envelope:** all `/auth/*` endpoints return `{ success: true, data: ... }` on success and RFC 7807 Problem Details on error. (Previously these used a flat shape — that's been normalized.)
 
 ### `POST /api/v1/auth/register`
 **Use:** informational — directs FE to Clerk SDK. Customers register via Clerk's `useSignUp()` hook.
 **Auth:** none.
 **Payload:** empty `{}`.
-**Success 200:** `{ "message": "...", "clerkSignUpUrl": "https://..." }`.
+**Success 200:** `{ "success": true, "data": { "message": "...", "clerkSignUpUrl": "https://..." } }`.
 **Errors:** none in practice.
 
 ### `POST /api/v1/auth/sync`
@@ -177,7 +309,7 @@ File: [src/routes/auth.routes.ts](src/routes/auth.routes.ts)
 **Auth:** Bearer (Clerk token).
 **Payload:** none.
 **Success 200:** `{ "success": true, "data": <FullUser> }` — see [Users](#users) for the User shape.
-**Errors:** 401 (no token), 409 (race during creation).
+**Errors:** 401, 409.
 
 ### `POST /api/v1/auth/login`
 **Use:** operator (staff/superadmin) sign-in. Customers DO NOT use this — they use Clerk.
@@ -191,25 +323,36 @@ File: [src/routes/auth.routes.ts](src/routes/auth.routes.ts)
 **Success 200 (no MFA):**
 ```json
 {
-  "user": { "id": "...", "email": "...", "firstName": "...", "lastName": "...", "role": "staff|superadmin", "mustChangePassword": false, "mustCompleteProfile": false, "mustEnrollMfa": false, "createdAt": "...", "updatedAt": "..." },
-  "tokens": { "accessToken": "<jwt>" }
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...", "email": "...", "firstName": "...", "lastName": "...",
+      "role": "staff|superadmin",
+      "mustChangePassword": false, "mustCompleteProfile": false, "mustEnrollMfa": false,
+      "createdAt": "...", "updatedAt": "..."
+    },
+    "tokens": { "accessToken": "<jwt>" }
+  }
 }
 ```
 **Success 200 (MFA enrolled — challenge required):**
 ```json
-{ "mfaRequired": true, "mfaToken": "<short-lived jwt>", "userId": "..." }
+{
+  "success": true,
+  "data": { "mfaRequired": true, "mfaToken": "<short-lived jwt>", "userId": "..." }
+}
 ```
-**Errors:**
-- 401 `{ "message": "Invalid email or password" }`
-- 423 `{ "message": "Account locked due to too many failed attempts. Try again later.", "lockedUntil": "<ISO 8601>" }` — after 5 failures
-- 403 (IP allowlist denied) `{ "success": false, "message": "Forbidden — request IP not in admin allowlist" }`
-- 429 (rate limit)
+**Errors (RFC 7807):**
+- 401 — `type: /problems/unauthorized`, `detail: "Invalid email or password"`
+- 423 — `type: /problems/locked`, `detail: "Account locked due to too many failed attempts. Try again later."`, extension `lockedUntil: "<ISO 8601>"`
+- 403 (IP allowlist denied) — `type: /problems/forbidden`
+- 429 — `type: /problems/rate-limited`
 
 **FE Notes:**
-- Branch on `mfaRequired === true` to redirect to MFA verify screen.
-- Branch on `user.mustEnrollMfa === true` to redirect to MFA enrollment.
-- Branch on `mustChangePassword` / `mustCompleteProfile` (existing logic).
-- On 423, show countdown to `lockedUntil`. Do not retry until then.
+- Branch on `data.mfaRequired === true` to redirect to MFA verify screen.
+- Branch on `data.user.mustEnrollMfa === true` to redirect to MFA enrollment.
+- Branch on `data.user.mustChangePassword` / `data.user.mustCompleteProfile`.
+- On 423, show countdown to `problem.lockedUntil`. Do not retry until then.
 
 ### `POST /api/v1/auth/mfa/verify`
 **Use:** exchange the `mfaToken` from `/login` for a real access token using the 6-digit code from the user's authenticator app.
@@ -220,10 +363,10 @@ File: [src/routes/auth.routes.ts](src/routes/auth.routes.ts)
 ```json
 { "mfaToken": "<from /login>", "code": "123456" }
 ```
-**Success 200:** same shape as `POST /auth/login` success-no-MFA.
+**Success 200:** `{ "success": true, "data": { "user": <Operator>, "tokens": { "accessToken": "..." } } }`.
 **Errors:**
-- 401 `{ "message": "MFA challenge expired or invalid" }` — mfaToken bad/expired (>5 min old)
-- 401 `{ "message": "Invalid verification code" }` — wrong/stale TOTP
+- 401 — `detail: "MFA challenge expired or invalid"` (mfaToken bad/expired, >5 min old)
+- 401 — `detail: "Invalid verification code"` (wrong/stale TOTP)
 
 **FE Notes:** if 401 "expired", restart at `/login`. If 401 "Invalid code", clear the input and let the user retry (codes rotate every 30s, drift window is ±30s).
 
@@ -237,28 +380,35 @@ File: [src/routes/auth.routes.ts](src/routes/auth.routes.ts)
 ```
 **Success 200:**
 ```json
-{ "user": <Operator>, "tokens": { "accessToken": "..." }, "remainingRecoveryCodes": 9 }
+{
+  "success": true,
+  "data": {
+    "user": <Operator>,
+    "tokens": { "accessToken": "..." },
+    "remainingRecoveryCodes": 9
+  }
+}
 ```
 **Errors:**
-- 401 `{ "message": "MFA challenge expired or invalid" }`
-- 401 `{ "message": "Invalid recovery code" }`
+- 401 — `detail: "MFA challenge expired or invalid"`
+- 401 — `detail: "Invalid recovery code"`
 
-**FE Notes:** Show `remainingRecoveryCodes`. Warn if ≤ 2 and prompt user to regenerate codes after login.
+**FE Notes:** Show `data.remainingRecoveryCodes`. Warn if ≤ 2 and prompt user to regenerate codes after login.
 
 ### `GET /api/v1/auth/me`
 **Use:** restore operator session on every dashboard page load.
 **Auth:** Bearer (internal JWT).
 **Payload:** none.
-**Success 200:** operator object (id, email, firstName, lastName, role, mustChangePassword, mustCompleteProfile, createdAt, updatedAt).
-**Errors:** 401 `{ "message": "..." }`.
+**Success 200:** `{ "success": true, "data": <Operator> }` — operator object (id, email, firstName, lastName, role, mustChangePassword, mustCompleteProfile, createdAt, updatedAt).
+**Errors:** 401.
 
-**FE Notes:** call this immediately after restoring a stored JWT to validate it before showing the dashboard.
+**FE Notes:** call this immediately after restoring a stored JWT to validate it before showing the dashboard. **Unwrap `.data` to get the operator.**
 
 ### `POST /api/v1/auth/logout`
 **Use:** revoke the current JWT's JTI server-side. Without this, a token remains valid until expiry even after FE clears it.
 **Auth:** Bearer (staff or above).
 **Payload:** none.
-**Success 200:** `{ "message": "Logged out" }`.
+**Success 200:** `{ "success": true, "data": { "message": "Logged out successfully" } }`.
 **Errors:** 401.
 
 ### `POST /api/v1/auth/forgot-password/send-otp`
@@ -266,7 +416,7 @@ File: [src/routes/auth.routes.ts](src/routes/auth.routes.ts)
 **Auth:** none.
 **Rate limit:** 3/min/IP.
 **Payload:** `{ "email": "staff@example.com" }`.
-**Success 200:** `{ "message": "If the account exists, an OTP has been sent." }` — always 200 to prevent enumeration.
+**Success 200:** `{ "success": true, "data": { "message": "Verification code sent to your email" } }` — always 200 to prevent enumeration.
 **Errors:** 429.
 
 ### `POST /api/v1/auth/forgot-password/verify-otp`
@@ -274,16 +424,16 @@ File: [src/routes/auth.routes.ts](src/routes/auth.routes.ts)
 **Auth:** none.
 **Rate limit:** 10/min/IP.
 **Payload:** `{ "email": "...", "otp": "1234" }`.
-**Success 200:** `{ "message": "Code verified successfully" }`.
-**Errors:** 400 `{ "message": "Invalid or expired code" }`.
+**Success 200:** `{ "success": true, "data": { "message": "Code verified successfully" } }`.
+**Errors:** 400 — `detail: "Invalid or expired code"`.
 
 ### `POST /api/v1/auth/forgot-password/reset`
 **Use:** step 3 of reset — set new password. Requires a previously-verified OTP within 15 min.
 **Auth:** none.
 **Rate limit:** 5/min/IP.
 **Payload:** `{ "email": "...", "password": "min 12 chars" }`.
-**Success 200:** `{ "message": "Password reset successfully" }`.
-**Errors:** 400 `{ "message": "User not found or reset session expired. Please request a new code." }`.
+**Success 200:** `{ "success": true, "data": { "message": "Password reset successfully" } }`.
+**Errors:** 400 — `detail: "User not found or reset session expired. Please request a new code."`.
 
 ---
 
@@ -457,7 +607,7 @@ Order object fields: `id, trackingNumber, senderId, recipientName, recipientAddr
 **Use:** **public tracking page** — anyone with a tracking number can view shipment status. No PII.
 **Auth:** none.
 **Success 200:** `{ "success": true, "data": { trackingNumber, status, statusLabel, origin, destination, estimatedDelivery, lastUpdate, lastLocation, paymentStatus('pending'|'completed'), shipmentCost: { usd, ngn, invoiceStatus }, vendorCount, cargoMetrics: { packageCount, totalWeightKg, totalCbm }, timeline: [{ status, statusLabel, timestamp }] } }`.
-**Errors:** 404 `{ success: false, message: "Tracking number not found" }`.
+**Errors:** 404 — Problem Details with `type: /problems/not-found`, `detail: "Tracking number not found"`.
 
 **FE Notes:** safe to embed on marketing pages. No login wall.
 
@@ -472,6 +622,7 @@ Order object fields: `id, trackingNumber, senderId, recipientName, recipientAddr
 **Use:** create a new shipment order (customer or staff-on-behalf-of).
 **Auth:** Bearer.
 **Rate limit:** **20/min/user** (per-user, not per-IP).
+**Idempotency-Key:** ✅ supported. Pass a UUID on submit; retries with same key + same body return the original response with `Idempotent-Replayed: true`.
 **Payload:**
 ```json
 {
@@ -492,8 +643,8 @@ Order object fields: `id, trackingNumber, senderId, recipientName, recipientAddr
 **Errors:**
 - 401
 - 400 (validation)
-- 422 `{ success: false, message: "Profile incomplete — missing: name, phone, addressStreet, ..." }` — customer profile not complete
-- 422 `{ success: false, message: "billingSupplierId required when shipmentPayer=SUPPLIER" }`
+- 422 — `detail: "Profile incomplete — missing: name, phone, addressStreet, ..."` (customer profile not complete)
+- 422 — `detail: "billingSupplierId required when shipmentPayer=SUPPLIER"`
 - 429
 
 **FE Notes:** call `/users/me/completeness` first; if incomplete, route to profile form before opening the wizard to avoid the 422.
@@ -581,6 +732,7 @@ Payment fields: `id, orderId, invoiceId, userId, amount, currency, paystackRefer
 **Use:** start a Paystack checkout. Returns the URL to redirect/iframe.
 **Auth:** Bearer.
 **Rate limit:** 10/min.
+**Idempotency-Key:** ✅ supported — **strongly recommended**. Generate a UUID per checkout click. Replays return the original payment + authorizationUrl, so a network failure or double-click can't create two pending Paystack transactions.
 **Payload:**
 ```json
 {
@@ -596,8 +748,8 @@ Payment fields: `id, orderId, invoiceId, userId, amount, currency, paystackRefer
 **Errors:**
 - 401
 - 400 (validation)
-- 422 `{ success: false, message: "callbackUrl origin \"https://foo\" is not in the allowed list" }` — must be in `CORS_ORIGINS`
-- 422 `{ success: false, message: "callbackUrl must use http(s)" }`
+- 422 — `detail: "callbackUrl origin \"https://foo\" is not in the allowed list"` (must be in `CORS_ORIGINS`)
+- 422 — `detail: "callbackUrl must use http(s)"`
 - 422 (no orderId or invoiceId)
 - 403 (BOLA — not your invoice)
 
@@ -778,7 +930,7 @@ File: [src/routes/webhooks.routes.ts](src/routes/webhooks.routes.ts)
 **Payload:** Clerk lifecycle event (raw body — signature is verified before parsing).
 **Success 200:** `{ "received": true }`.
 **Errors:**
-- 400 `{ success: false, message: "Invalid webhook signature" }`
+- 400 — `detail: "Invalid webhook signature"`
 - 503 (`CLERK_WEBHOOK_SECRET` not configured)
 
 **FE Notes:** FE never calls this. Configure the URL + secret in Clerk dashboard.
@@ -791,23 +943,23 @@ File: [src/routes/internal.routes.ts](src/routes/internal.routes.ts)
 Internal user fields (response): `id, clerkId, email, firstName, lastName, role, isActive, mustChangePassword, mustCompleteProfile, mustEnrollMfa?, createdAt, updatedAt`.
 
 ### `POST /api/v1/internal/auth/login`
-**Use:** alternative internal-operator login (same flow as `/auth/login` but envelope-wrapped). Use whichever your FE prefers — `/auth/login` is the legacy flat shape; this returns `{ success, data }`.
+**Use:** alternative internal-operator login. Same flow + same envelope shape as `/auth/login`. Either endpoint is fine — pick one and stick with it. (`/auth/login` is the more commonly used one; `/internal/auth/login` is kept for parity with the other `/internal/*` admin endpoints.)
 **Auth:** none.
 **Special:** subject to `ADMIN_IP_WHITELIST`.
 **Payload:** `{ "email": "...", "password": "..." }`.
 **Success 200 (no MFA):** `{ "success": true, "data": { "token": "<jwt>", "user": <InternalUser> } }`.
 **Success 200 (MFA challenge):** `{ "success": true, "data": { "mfaRequired": true, "mfaToken": "...", "userId": "..." } }`.
 **Errors:**
-- 401 `{ success: false, message: "Invalid email or password" }`
-- 403 `{ success: false, message: "..." }` (IP allowlist)
-- 423 `{ success: false, message: "...", "lockedUntil": "<ISO>" }`
+- 401 — `detail: "Invalid email or password"`
+- 403 — IP allowlist denied
+- 423 — `detail: "Account locked due to too many failed attempts. Try again later."`, extension `lockedUntil: "<ISO>"`
 
 ### `POST /api/v1/internal/users`
 **Use:** create a new staff or superadmin account. Sends a welcome email with a temp password.
 **Auth:** Bearer (admin+). Staff can only create staff; superadmin can create either.
 **Payload:** `{ "email": "...", "role": "staff|superadmin", "firstName": "...", "lastName": "..." }`.
 **Success 201:** `{ "success": true, "data": <InternalUser> }`.
-**Errors:** 401, 403, 409 `{ success: false, message: "An account with that email already exists" }`.
+**Errors:** 401, 403, 409 — `detail: "An account with that email already exists"`.
 
 ### `PATCH /api/v1/internal/users/:id/password`
 **Use:** superadmin force-resets another internal user's password.
@@ -837,9 +989,9 @@ Internal user fields (response): `id, clerkId, email, firstName, lastName, role,
 **Success 200:** `{ "success": true, "data": { "secret": "BASE32SECRET", "otpauthUri": "otpauth://totp/..." } }`.
 **Errors:**
 - 401
-- 403 `{ success: false, message: "MFA is only available for internal users" }`
+- 403 — `detail: "MFA is only available for internal users"`
 - 404 (user not found)
-- 409 `{ success: false, message: "MFA is already enabled. Disable it first to re-enroll." }`
+- 409 — `detail: "MFA is already enabled. Disable it first to re-enroll."`
 
 **FE Notes:** render `otpauthUri` as a QR code (e.g. with `qrcode` npm package). Also show `secret` as a copy-paste fallback. Both forms encode the same data.
 
@@ -849,7 +1001,7 @@ Internal user fields (response): `id, clerkId, email, firstName, lastName, role,
 **Payload:** `{ "code": "123456" }`.
 **Success 200:** `{ "success": true, "data": { "enabled": true, "recoveryCodes": ["XXXXX-YYYYY", ...10], "warning": "Save these recovery codes somewhere safe. Each can be used once and will not be shown again." } }`.
 **Errors:**
-- 401 `{ success: false, message: "Invalid verification code" }`
+- 401 — `detail: "Invalid verification code"`
 - 409 (no enrollment in progress / already enabled)
 
 **FE Notes:** **make the user actively download or copy the recovery codes** before moving on (e.g. a "I've saved them" checkbox + a download-as-text button). They cannot be retrieved later.
@@ -1340,6 +1492,7 @@ Message fields: `id, ticketId, authorId, authorName, body, isInternal, createdAt
 **Use:** open a new support thread.
 **Auth:** Bearer.
 **Rate limit:** **10/min/user**.
+**Idempotency-Key:** ✅ supported. Useful if the customer double-submits the "open ticket" form.
 **Payload:** `{ "subject": "3-200 chars", "category": "<enum>", "body": "1-5000 chars", "orderId?": "uuid", "forUserId?": "uuid (staff only)" }`.
 **Success 201:** `{ "success": true, "data": { "ticket": <Ticket>, "message": <Message> } }`.
 **Errors:** 401, 400, 403 (customer using forUserId), 429.
@@ -1363,7 +1516,7 @@ Message fields: `id, ticketId, authorId, authorName, body, isInternal, createdAt
 **Auth:** Bearer.
 **Payload:** `{ "body": "1-5000 chars", "isInternal?": bool (staff only) }`.
 **Success 201:** `{ "success": true, "data": <Message> }`.
-**Errors:** 401, 403, 404, 422 `{ success: false, message: "Cannot post to a closed ticket" }`.
+**Errors:** 401, 403, 404, 422 — `detail: "Cannot post to a closed ticket"`.
 
 ### `PATCH /api/v1/support/tickets/:id`
 **Use:** staff updates status/assignee.
@@ -1392,9 +1545,10 @@ File: [src/routes/public.routes.ts](src/routes/public.routes.ts) — All endpoin
 
 ### `POST /api/v1/public/newsletter/subscribe`
 **Use:** newsletter form on marketing site.
+**CAPTCHA:** ✅ required — pass Cloudflare Turnstile token in `cf-turnstile-response` header.
 **Payload:** `{ "email": "..." }`.
 **Success 200:** `{ "success": true, "data": { "message": "Subscribed" } }`.
-**Errors:** 400, 409 (already subscribed).
+**Errors:** 400, 409 (already subscribed), 422 (CAPTCHA missing/failed — `extensions.code = "captcha_missing" | "captcha_failed"`).
 
 ### `GET /api/v1/public/gallery`
 **Use:** marketing-site gallery (anonymous goods awaiting claim + sales + cars + adverts).
@@ -1411,24 +1565,30 @@ File: [src/routes/public.routes.ts](src/routes/public.routes.ts) — All endpoin
 
 ### `POST /api/v1/public/gallery/claims/presign`
 **Use:** anonymous claimant uploads proof — step 1.
+**CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header. Verify once at the start of the claim flow; the same token is **not** reused across the multi-step upload (tokens are single-use).
 **Payload:** `{ "uploadToken?": "string", "contentType": "application/pdf|image/...", "originalFileName?": "string" }`.
 **Success 200:** `{ "success": true, "data": { "uploadUrl", "r2Key", "publicUrl", "expiresInSeconds", "uploadToken" } }`.
+**Errors:** 422 (CAPTCHA).
 
-**FE Notes:** pass the returned `uploadToken` to subsequent presign + claim submission calls so the server can group multiple uploads into one claim.
+**FE Notes:** pass the returned `uploadToken` to subsequent presign + claim submission calls so the server can group multiple uploads into one claim. Re-issue a fresh Turnstile token before each presign call.
 
 ### `POST /api/v1/public/gallery/anonymous/:trackingNumber/claim`
 **Use:** anonymous claimant submits an ownership claim for a gallery item.
+**CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header.
 **Payload:** `{ "itemId": "uuid", "fullName": "≥ 2 chars", "email": "...", "phone": "≥ 5 chars", "city?", "country?", "message?", "uploadToken": "string", "proofR2Keys": ["string", ... (1-5)] }`.
 **Success 201:** `{ "success": true, "data": { "item": <GalleryItem>, "claim": <Claim>, "ticket": <Ticket> } }`.
-**Errors:** 400, 404, 409 `{ success: false, message: "Item already claimed" }`.
+**Errors:** 400, 404, 409 (item already claimed), 422 (CAPTCHA).
 
 ### `POST /api/v1/public/gallery/cars/:trackingNumber/purchase-attempt`
 **Use:** anonymous prospect expresses interest in a car listing (first-come-first-served).
+**CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header.
 **Payload:** `{ "fullName", "email", "phone", "city?", "country?", "message?" }`.
 **Success 201:** `{ "success": true, "data": { "item", "claim", "ticket" } }`.
+**Errors:** 422 (CAPTCHA).
 
 ### `POST /api/v1/public/d2d/intake`
 **Use:** unauthenticated D2D order intake — useful for first-time visitors before they have an account.
+**CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header.
 **Payload:**
 ```json
 {
@@ -1566,22 +1726,30 @@ File: [src/websocket/handlers.ts](src/websocket/handlers.ts)
 
 ## Global behaviors
 
-- **Rate limit (global):** 100 requests / minute / IP. Per-route overrides are noted inline. Exceeded → `429` with `{ success: false, message: "Too many requests — you are being rate limited. Try again in N seconds." }`.
-- **Account lockout:** 5 failed password attempts → 15-minute lockout on `/auth/login` and `/internal/auth/login`. Returns `423` with `lockedUntil` (ISO 8601). Rate limit is per-IP; lockout is per-account.
+- **Rate limit (global):** 100 requests / minute / IP. Per-route overrides are noted inline. Exceeded → `429` Problem Details (`type: /problems/rate-limited`).
+- **Account lockout:** 5 failed password attempts → 15-minute lockout on `/auth/login` and `/internal/auth/login`. Returns `423` Problem Details with `lockedUntil` (ISO 8601) extension. Rate limit is per-IP; lockout is per-account.
 - **MFA:** required for `superadmin` role. Login returns an `mfaToken` to exchange via `/auth/mfa/verify` (TOTP) or `/auth/mfa/recovery` (single-use code).
-- **CORS:** origins are loaded from `CORS_ORIGINS` env. Methods: `GET, POST, PUT, PATCH, DELETE, OPTIONS`. Credentials allowed. Exposes `Content-Disposition`.
+- **CORS:** origins loaded from `CORS_ORIGINS` env. Methods: `GET, POST, PUT, PATCH, DELETE, OPTIONS`. Credentials allowed. Allowed headers include `Content-Type`, `Authorization`, `Idempotency-Key`, `If-None-Match`, `cf-turnstile-response`. Exposes `Content-Disposition`, `X-Request-ID`, `Idempotent-Replayed`, `ETag`.
 - **Empty bodies:** PATCH/DELETE with `Content-Type: application/json` and an empty body are accepted (Fastify default rejects them — we override).
 - **PII fields** (`firstName`, `lastName`, `phone`, address fields, emergency contacts, `nationalId`, `dateOfBirth`, `email`) are encrypted at rest with AES-256-GCM and decrypted into responses only for authorized callers.
 - **Audit:** every 403 from `requireRole` is recorded in `auditLogs`. Sensitive admin actions also write audit entries.
 - **Cache busting:** authenticated/PII responses include `Cache-Control: no-store, private`. Treat these as never-cacheable on the FE side too.
+- **Observability:** every response carries `X-Request-ID` (exposed via CORS) — quote it in error UIs ("ref: …") for support correlation. OpenTelemetry tracing kicks in when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- **Outbound calls:** Paystack calls go through a hardened axios client (30s timeout + 3-retry exponential backoff on 5xx/429/network).
 
 ## Updating this doc
 
-The total count is verified by:
-
 ```bash
+# Total HTTP endpoint count check — should match the number in the header.
 grep -nE "\.(get|post|put|patch|delete)\(['\"]" src/routes/*.routes.ts | wc -l
-# Should match the total HTTP endpoint count above (excluding /health and /ws).
+# Currently 163 (application routes). Plus /health, /readiness, /metrics, /docs, /openapi.json = 168 HTTP + 1 WS.
 ```
 
-If you add a route, also add a section here. If you change a payload shape, update the example. The Zod schemas in the route file are the source of truth — this doc reflects them as of 2026-05-17.
+The Zod schemas in the route file are the source of truth — this doc reflects them as of 2026-06-01.
+
+Source-of-truth files:
+- Route shapes: [src/routes/](src/routes/) (Zod schemas drive both runtime validation and OpenAPI generation)
+- Error shape (RFC 7807): [src/utils/problem-details.ts](src/utils/problem-details.ts), [src/middleware/errorHandler.ts](src/middleware/errorHandler.ts)
+- Idempotency: [src/middleware/idempotency.ts](src/middleware/idempotency.ts)
+- CAPTCHA: [src/middleware/captcha.ts](src/middleware/captcha.ts)
+- Auto-generated OpenAPI spec: `GET /openapi.json` (live, from running server)

@@ -16,6 +16,7 @@ import { generateTrackingNumber } from '../utils/tracking'
 import { uploadsService } from './uploads.service'
 import { supportService } from './support.service'
 import { notificationsService, notifyUser } from './notifications.service'
+import { avScanService } from './av-scan.service'
 import { env } from '../config/env'
 import { dispatchBatchesService } from './dispatch-batches.service'
 import { maskTrackingNumber } from '../utils/tracking'
@@ -819,6 +820,16 @@ export class GalleryService {
         })
         .returning()
 
+      // Fire-and-forget AV scan of every uploaded proof file (V12.4.1).
+      // Staff "review claim" UI must check scan status before opening proofs.
+      for (const r2Key of input.proofR2Keys) {
+        void avScanService.scheduleScan({
+          r2Key,
+          scope: 'gallery/claim-proof',
+          scopeId: newClaim.id,
+        })
+      }
+
       return { lockedItem: locked, claim: newClaim }
     })
 
@@ -948,6 +959,8 @@ export class GalleryService {
           proofUrls: [],
         })
         .returning()
+
+      // Car purchase claims have no proof uploads, so no AV scan needed here.
 
       return { lockedItem: locked, claim: newClaim }
     })

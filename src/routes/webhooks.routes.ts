@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { Webhook } from 'svix'
 import { env } from '../config/env'
 import { usersService } from '../services/users.service'
+import { db } from '../config/db'
+import { processedWebhookEvents } from '../../drizzle/schema'
 
 interface ClerkEmailAddress {
   id: string
@@ -112,6 +114,18 @@ All other event types are acknowledged but ignored.
       } catch (err) {
         fastify.log.warn({ err }, 'Clerk webhook signature verification failed')
         return reply.code(400).send({ success: false, message: 'Invalid webhook signature' })
+      }
+
+      // Idempotency: insert the svix-id into the processed-events log. Unique
+      // constraint catches duplicates so retries from Clerk become no-ops.
+      try {
+        await db
+          .insert(processedWebhookEvents)
+          .values({ provider: 'clerk', eventId: svixId })
+      } catch {
+        // Duplicate (already processed) — acknowledge without re-running the handler.
+        fastify.log.info({ svixId }, 'Clerk webhook replay ignored (already processed)')
+        return reply.send({ received: true })
       }
 
       // ─── user.updated ──────────────────────────────────────────────────────

@@ -5,7 +5,11 @@ services:
     rootDir: .
     autoDeploy: true
     buildCommand: npm ci && npm run build
-    preDeployCommand: npm run db:migrate
+    # Gate every deploy on the secret hygiene audit (placeholder values,
+    # test-key prefixes in prod, sample-env collisions). Database migrations
+    # are applied manually via `scripts/run-migration.ts` because the Drizzle
+    # journal is empty — `drizzle-kit migrate` would be a no-op here.
+    preDeployCommand: npm run audit:secrets:prod
     startCommand: npm start
     healthCheckPath: /health
     envVars:
@@ -62,4 +66,25 @@ services:
       - key: VAPID_PRIVATE_KEY
         sync: false
       - key: VAPID_SUBJECT
+        sync: false
+
+      # ─── Cloudflare Turnstile CAPTCHA ───────────────────────────────────
+      # Get from: https://dash.cloudflare.com/?to=/:account/turnstile
+      # Wired to public mutation endpoints (newsletter, gallery claims, D2D).
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+
+      # ─── VirusTotal AV scanning ─────────────────────────────────────────
+      # Get from: https://www.virustotal.com/gui/my-apikey
+      # Scans every confirmed upload (receipts, claim proofs, attachments).
+      - key: VIRUSTOTAL_API_KEY
+        sync: false
+
+      # ─── OpenTelemetry tracing (optional) ───────────────────────────────
+      # Leave unset to disable. Typical values:
+      #   OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io/v1/traces
+      #   OTEL_SERVICE_NAME=global-express-backend
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_SERVICE_NAME
         sync: false

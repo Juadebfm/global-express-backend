@@ -1,15 +1,25 @@
 # See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
 # Disabled from automatic push triggers because this project deploys via Render.
 # Keep manual dispatch only in case Fly deployment is needed in the future.
+#
+# Runs on a GitHub-hosted runner (ASVS V10.3.1) — `flyctl deploy --remote-only`
+# does the actual build/deploy on Fly's infrastructure, so the runner only needs
+# to call the Fly API. No reason to use self-hosted and accept the supply-chain
+# surface that adds.
 
 name: Fly Deploy (Manual Only)
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Deploy app
-    runs-on: self-hosted
-    concurrency: deploy-group    # optional: ensure only one action runs at a time
+    runs-on: ubuntu-latest
+    concurrency: deploy-group    # ensure only one deploy runs at a time
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master

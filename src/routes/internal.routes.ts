@@ -12,6 +12,7 @@ import {
   requireStaffOrAbove,
 } from '../middleware/requireRole'
 import { enforceAdminIpAllowlist } from '../middleware/ipAllowlist'
+import { logSecurityEvent } from '../utils/security-events'
 import { UserRole } from '../types/enums'
 import { sendWelcomeCredentialsEmail } from '../notifications/email'
 import { webPushService } from '../services/web-push.service'
@@ -391,6 +392,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     handler: async (request, reply) => {
       try {
         const codes = await mfaService.verifyEnrollment(request.user.id, request.body.code)
+        logSecurityEvent({ type: 'mfa_enrollment_completed', request, userId: request.user.id })
         return reply.send({
           success: true,
           data: {
@@ -452,6 +454,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
       try {
         await mfaService.disable(request.user.id, request.body.code)
+        logSecurityEvent({ type: 'mfa_disabled', request, userId: request.user.id })
         return reply.send({ success: true, data: { enabled: false as const } })
       } catch (err) {
         const e = err as { statusCode?: number; message?: string }
@@ -493,6 +496,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     handler: async (request, reply) => {
       try {
         const codes = await mfaService.regenerateRecoveryCodes(request.user.id, request.body.code)
+        logSecurityEvent({ type: 'mfa_recovery_codes_regenerated', request, userId: request.user.id })
         return reply.send({
           success: true,
           data: {
@@ -899,6 +903,60 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     handler: async (request, reply) => {
       await webPushService.unsubscribe(request.user.id, request.body.endpoint)
       return reply.send({ success: true, data: { message: 'Push subscription removed' } })
+    },
+  })
+
+  // ─── AV Scan Status (V12.4.1) ──────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/internal/file-scans/status
+   * Look up the AV scan status for an uploaded file. Staff UI MUST call this
+   * before opening a receipt / claim proof / invoice attachment.
+   *
+   * Query: `r2Key=<key>` (URL-encoded). Status values:
+   *   - `pending` — scan in progress; do NOT open the file yet
+   *   - `clean`   — safe to open
+   *   - `malicious` — quarantined (file was deleted from R2); display a warning
+   *   - `error`   — scan failed; admin can retry, treat as untrusted in the meantime
+   *   - `skipped` — VirusTotal didn't recognise the hash OR scanning is disabled (dev)
+   */
+  app.get('/file-scans/status', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — File Scans'],
+      summary: 'Get AV scan status for an uploaded file',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        r2Key: z.string().min(1),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            r2Key: z.string(),
+            status: z.enum(['pending', 'clean', 'malicious', 'error', 'skipped']),
+            scannedAt: z.string().nullable(),
+          }),
+        }),
+        404: z.object({ success: z.literal(false), message: z.string() }),
+      },
+    },
+    handler: async (request, reply) => {
+      const { avScanService } = await import('../services/av-scan.service')
+      const status = await avScanService.getStatus(request.query.r2Key)
+      if (!status) {
+        return reply
+          .code(404)
+          .send({ success: false, message: 'No scan record for this file' })
+      }
+      return reply.send({
+        success: true,
+        data: {
+          r2Key: request.query.r2Key,
+          status: status.status,
+          scannedAt: status.scannedAt,
+        },
+      })
     },
   })
 }

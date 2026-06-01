@@ -10,6 +10,7 @@ import { db } from '../config/db'
 import { packageImages, orders } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
+import { avScanService } from './av-scan.service'
 
 const r2 = new S3Client({
   region: 'auto',
@@ -145,6 +146,13 @@ export class UploadsService {
         uploadedBy: params.uploadedBy,
       })
       .returning()
+
+    // Fire-and-forget AV scan (V12.4.1). Staff UI must gate on scan status.
+    void avScanService.scheduleScan({
+      r2Key: params.r2Key,
+      scope: 'orders/package-image',
+      scopeId: params.orderId,
+    })
 
     return image
   }

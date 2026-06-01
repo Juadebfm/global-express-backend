@@ -70,6 +70,37 @@ const envSchema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().optional(), // e.g. "mailto:admin@globalexpress.kr"
+
+  // ─── OpenTelemetry (optional) ────────────────────────────────────────────
+  // Setting OTEL_EXPORTER_OTLP_ENDPOINT enables tracing instrumentation.
+  // Typical values: "http://localhost:4318/v1/traces" (local Tempo/Jaeger)
+  // or a hosted endpoint like Honeycomb / Grafana Cloud.
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
+  OTEL_SERVICE_NAME: z.string().optional(),
+
+  // ─── VirusTotal AV scanning (optional) ───────────────────────────────────
+  // Setting VIRUSTOTAL_API_KEY enables malware scanning of every uploaded file
+  // (receipts, claim proofs, gallery media, package photos, CSV imports).
+  // Get a free key: https://www.virustotal.com/gui/my-apikey
+  //
+  // Status rolls through pending → clean | malicious | error in `file_scans`.
+  // Without a key, the upload still succeeds; rows are marked `skipped`. In
+  // production, the staff UI MUST gate file access on status='clean'.
+  VIRUSTOTAL_API_KEY: z.string().optional(),
+
+  // ─── Cloudflare Turnstile CAPTCHA (optional) ─────────────────────────────
+  // Setting TURNSTILE_SECRET_KEY enables CAPTCHA on public mutation endpoints
+  // (newsletter, D2D intake, gallery claims). The FE sends the token in the
+  // `cf-turnstile-response` header. Get a key:
+  //   https://dash.cloudflare.com/?to=/:account/turnstile
+  //
+  // In dev, leave unset for a bypass — set TURNSTILE_REQUIRE=true to force
+  // enforcement even without a key (will reject everything).
+  TURNSTILE_SECRET_KEY: z.string().optional(),
+  TURNSTILE_REQUIRE: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
 })
 
 const parsed = envSchema.safeParse(process.env)

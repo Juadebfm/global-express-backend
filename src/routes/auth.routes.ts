@@ -12,6 +12,7 @@ import { mfaService } from '../services/mfa.service'
 import { passwordResetService } from '../services/password-reset.service'
 import { db } from '../config/db'
 import { revokedTokens } from '../../drizzle/schema'
+import { logSecurityEvent } from '../utils/security-events'
 
 // Shape the frontend operator dashboard expects
 const operatorSchema = z.object({
@@ -22,12 +23,12 @@ const operatorSchema = z.object({
   role: z.string(),
   mustChangePassword: z.boolean(),
   mustCompleteProfile: z.boolean(),
-  // Set when policy requires MFA for this role and the user hasn't enrolled yet.
-  // FE should redirect to enrollment UI after login.
   mustEnrollMfa: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
+
+const messageSchema = z.object({ message: z.string() })
 
 export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
@@ -41,13 +42,19 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       description: `**Registration is handled by Clerk.** Use the Clerk SDK (\`useSignUp()\`) in your frontend. After verification completes, call \`POST /api/v1/auth/sync\` to provision the user in the backend.`,
       body: z.object({}).describe('No body — registration handled by Clerk'),
       response: {
-        200: z.object({ message: z.string(), clerkSignUpUrl: z.string() }),
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({ message: z.string(), clerkSignUpUrl: z.string() }),
+        }),
       },
     },
     handler: async (_request, reply) => {
       return reply.send({
-        message: 'Registration is handled by Clerk. Use the Clerk SDK useSignUp() hook.',
-        clerkSignUpUrl: 'https://clerk.com/docs/references/javascript/sign-up',
+        success: true,
+        data: {
+          message: 'Registration is handled by Clerk. Use the Clerk SDK useSignUp() hook.',
+          clerkSignUpUrl: 'https://clerk.com/docs/references/javascript/sign-up',
+        },
       })
     },
   })
@@ -100,7 +107,9 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
 
   /**
    * POST /api/v1/auth/login
-   * Returns { user, tokens: { accessToken } } — matches frontend operator dashboard contract.
+   *
+   * On success (no MFA): { success: true, data: { user, tokens: { accessToken } } }
+   * On success (MFA required): { success: true, data: { mfaRequired, mfaToken, userId } }
    */
   app.post('/login', {
     preHandler: [enforceAdminIpAllowlist],
@@ -116,21 +125,25 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         password: z.string().min(1).describe('Operator password'),
       }),
       response: {
-        // 200 with `tokens` = fully authenticated (possibly with mustEnrollMfa flag).
-        // 200 with `mfaRequired: true` = need to call /mfa/verify or /mfa/recovery to complete.
         200: z.union([
           z.object({
-            user: operatorSchema,
-            tokens: z.object({ accessToken: z.string() }),
+            success: z.literal(true),
+            data: z.object({
+              user: operatorSchema,
+              tokens: z.object({ accessToken: z.string() }),
+            }),
           }),
           z.object({
-            mfaRequired: z.literal(true),
-            mfaToken: z.string(),
-            userId: z.string().uuid(),
+            success: z.literal(true),
+            data: z.object({
+              mfaRequired: z.literal(true),
+              mfaToken: z.string(),
+              userId: z.string().uuid(),
+            }),
           }),
         ]),
-        401: z.object({ message: z.string() }),
-        423: z.object({ message: z.string(), lockedUntil: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
+        423: z.object({ success: z.literal(false), message: z.string(), lockedUntil: z.string() }),
       },
     },
     handler: async (request, reply) => {
@@ -141,56 +154,72 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
 
       if (!result.ok) {
         if (result.reason === 'locked') {
+          logSecurityEvent({
+            type: 'login_locked',
+            request,
+            metadata: { email: request.body.email, lockedUntil: result.lockedUntil.toISOString() },
+          })
           return reply.code(423).send({
+            success: false,
             message: 'Account locked due to too many failed attempts. Try again later.',
             lockedUntil: result.lockedUntil.toISOString(),
           })
         }
-        return reply.code(401).send({ message: 'Invalid email or password' })
+        logSecurityEvent({
+          type: 'login_failure',
+          request,
+          metadata: { email: request.body.email },
+        })
+        return reply.code(401).send({ success: false, message: 'Invalid email or password' })
       }
 
       const user = result.user
 
-      // ─── MFA gate ───────────────────────────────────────────────────────────
       const mfaEnabled = await mfaService.isEnabled(user.id)
 
       if (mfaEnabled) {
-        // Issue a short-lived challenge token; client must exchange via /mfa/verify.
         const mfaToken = mfaService.issueChallengeToken(user.id)
         return reply.send({
-          mfaRequired: true as const,
-          mfaToken,
-          userId: user.id,
+          success: true,
+          data: {
+            mfaRequired: true as const,
+            mfaToken,
+            userId: user.id,
+          },
         })
       }
 
-      // MFA not enabled. If role policy requires enrollment, surface the flag and
-      // let the FE redirect to /me/mfa/enroll (mirrors mustChangePassword pattern).
       const mustEnrollMfa = mfaService.isMfaRequiredForRole(user.role)
       const accessToken = internalAuthService.generateToken(user.id, user.role)
 
+      logSecurityEvent({
+        type: 'login_success',
+        request,
+        userId: user.id,
+        metadata: { mfaEnrolled: false, mustEnrollMfa },
+      })
+
       return reply.send({
-        user: {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role,
-          mustChangePassword: user.mustChangePassword,
-          mustCompleteProfile: user.mustCompleteProfile,
-          mustEnrollMfa,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
+        success: true,
+        data: {
+          user: {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            role: user.role,
+            mustChangePassword: user.mustChangePassword,
+            mustCompleteProfile: user.mustCompleteProfile,
+            mustEnrollMfa,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+          },
+          tokens: { accessToken },
         },
-        tokens: { accessToken },
       })
     },
   })
 
-  /**
-   * POST /api/v1/auth/mfa/verify
-   * Exchange an mfaToken + TOTP code for a real access token.
-   */
   app.post('/mfa/verify', {
     preHandler: [enforceAdminIpAllowlist],
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
@@ -203,10 +232,13 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({
-          user: operatorSchema,
-          tokens: z.object({ accessToken: z.string() }),
+          success: z.literal(true),
+          data: z.object({
+            user: operatorSchema,
+            tokens: z.object({ accessToken: z.string() }),
+          }),
         }),
-        401: z.object({ message: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: async (request, reply) => {
@@ -214,42 +246,52 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       try {
         payload = mfaService.verifyChallengeToken(request.body.mfaToken)
       } catch {
-        return reply.code(401).send({ message: 'MFA challenge expired or invalid' })
+        return reply.code(401).send({ success: false, message: 'MFA challenge expired or invalid' })
       }
 
       const verified = await mfaService.verifyUserTotp(payload.sub, request.body.code)
       if (!verified) {
-        return reply.code(401).send({ message: 'Invalid verification code' })
+        logSecurityEvent({
+          type: 'mfa_verify_failure',
+          request,
+          userId: payload.sub,
+        })
+        return reply.code(401).send({ success: false, message: 'Invalid verification code' })
       }
 
       const userRow = await usersService.getUserById(payload.sub)
       if (!userRow) {
-        return reply.code(401).send({ message: 'User not found' })
+        return reply.code(401).send({ success: false, message: 'User not found' })
       }
 
       const accessToken = internalAuthService.generateToken(userRow.id, userRow.role)
+      logSecurityEvent({ type: 'mfa_verify_success', request, userId: userRow.id })
+      logSecurityEvent({
+        type: 'login_success',
+        request,
+        userId: userRow.id,
+        metadata: { mfaEnrolled: true, channel: 'totp' },
+      })
       return reply.send({
-        user: {
-          id: userRow.id,
-          email: userRow.email,
-          firstName: userRow.firstName,
-          lastName: userRow.lastName,
-          role: userRow.role,
-          mustChangePassword: userRow.mustChangePassword ?? false,
-          mustCompleteProfile: userRow.mustCompleteProfile ?? false,
-          createdAt: userRow.createdAt,
-          updatedAt: userRow.updatedAt,
+        success: true,
+        data: {
+          user: {
+            id: userRow.id,
+            email: userRow.email,
+            firstName: userRow.firstName,
+            lastName: userRow.lastName,
+            role: userRow.role,
+            mustChangePassword: userRow.mustChangePassword ?? false,
+            mustCompleteProfile: userRow.mustCompleteProfile ?? false,
+            createdAt: userRow.createdAt,
+            updatedAt: userRow.updatedAt,
+          },
+          tokens: { accessToken },
         },
-        tokens: { accessToken },
       })
     },
   })
 
-  /**
-   * POST /api/v1/auth/mfa/recovery
-   * Exchange an mfaToken + single-use recovery code for an access token.
-   * The recovery code is consumed on success.
-   */
   app.post('/mfa/recovery', {
     preHandler: [enforceAdminIpAllowlist],
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
@@ -262,11 +304,14 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({
-          user: operatorSchema,
-          tokens: z.object({ accessToken: z.string() }),
-          remainingRecoveryCodes: z.number(),
+          success: z.literal(true),
+          data: z.object({
+            user: operatorSchema,
+            tokens: z.object({ accessToken: z.string() }),
+            remainingRecoveryCodes: z.number(),
+          }),
         }),
-        401: z.object({ message: z.string() }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: async (request, reply) => {
@@ -274,7 +319,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       try {
         payload = mfaService.verifyChallengeToken(request.body.mfaToken)
       } catch {
-        return reply.code(401).send({ message: 'MFA challenge expired or invalid' })
+        return reply.code(401).send({ success: false, message: 'MFA challenge expired or invalid' })
       }
 
       const consumed = await mfaService.consumeRecoveryCodeForUser(
@@ -282,38 +327,50 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         request.body.recoveryCode,
       )
       if (!consumed) {
-        return reply.code(401).send({ message: 'Invalid recovery code' })
+        logSecurityEvent({ type: 'mfa_recovery_failure', request, userId: payload.sub })
+        return reply.code(401).send({ success: false, message: 'Invalid recovery code' })
       }
 
       const userRow = await usersService.getUserById(payload.sub)
       if (!userRow) {
-        return reply.code(401).send({ message: 'User not found' })
+        return reply.code(401).send({ success: false, message: 'User not found' })
       }
 
       const status = await mfaService.getStatus(userRow.id)
       const accessToken = internalAuthService.generateToken(userRow.id, userRow.role)
+      logSecurityEvent({
+        type: 'mfa_recovery_used',
+        request,
+        userId: userRow.id,
+        metadata: { remainingRecoveryCodes: status.remainingRecoveryCodes },
+      })
+      logSecurityEvent({
+        type: 'login_success',
+        request,
+        userId: userRow.id,
+        metadata: { mfaEnrolled: true, channel: 'recovery_code' },
+      })
       return reply.send({
-        user: {
-          id: userRow.id,
-          email: userRow.email,
-          firstName: userRow.firstName,
-          lastName: userRow.lastName,
-          role: userRow.role,
-          mustChangePassword: userRow.mustChangePassword ?? false,
-          mustCompleteProfile: userRow.mustCompleteProfile ?? false,
-          createdAt: userRow.createdAt,
-          updatedAt: userRow.updatedAt,
+        success: true,
+        data: {
+          user: {
+            id: userRow.id,
+            email: userRow.email,
+            firstName: userRow.firstName,
+            lastName: userRow.lastName,
+            role: userRow.role,
+            mustChangePassword: userRow.mustChangePassword ?? false,
+            mustCompleteProfile: userRow.mustCompleteProfile ?? false,
+            createdAt: userRow.createdAt,
+            updatedAt: userRow.updatedAt,
+          },
+          tokens: { accessToken },
+          remainingRecoveryCodes: status.remainingRecoveryCodes,
         },
-        tokens: { accessToken },
-        remainingRecoveryCodes: status.remainingRecoveryCodes,
       })
     },
   })
 
-  /**
-   * GET /api/v1/auth/me
-   * Restores operator session from stored JWT. Called on every page load.
-   */
   app.get('/me', {
     preHandler: [authenticate],
     schema: {
@@ -322,33 +379,33 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       description: 'Returns the authenticated operator profile. Call on every page load to restore session from a stored access token.',
       security: [{ bearerAuth: [] }],
       response: {
-        200: operatorSchema,
-        401: z.object({ message: z.string() }),
+        200: z.object({
+          success: z.literal(true),
+          data: operatorSchema,
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: async (request, reply) => {
       const user = await usersService.getUserById(request.user.id)
-      if (!user) return reply.code(401).send({ message: 'User not found' })
+      if (!user) return reply.code(401).send({ success: false, message: 'User not found' })
       return reply.send({
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName ?? null,
-        lastName: user.lastName ?? null,
-        role: user.role,
-        mustChangePassword: user.mustChangePassword,
-        mustCompleteProfile: user.mustCompleteProfile,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
+        success: true,
+        data: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName ?? null,
+          lastName: user.lastName ?? null,
+          role: user.role,
+          mustChangePassword: user.mustChangePassword,
+          mustCompleteProfile: user.mustCompleteProfile,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
       })
     },
   })
 
-  /**
-   * POST /api/v1/auth/logout
-   * Revokes the current internal operator JWT by adding its JTI to the blocklist.
-   * The token is immediately invalid on subsequent requests.
-   * Clerk customer tokens are not handled here — use Clerk's signOut() instead.
-   */
   app.post('/logout', {
     preHandler: [authenticate, requireStaffOrAbove],
     schema: {
@@ -357,14 +414,17 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       description: 'Revokes the current internal operator JWT. The token is immediately invalid for subsequent requests. Clear it client-side after calling this endpoint.',
       security: [{ bearerAuth: [] }],
       response: {
-        200: z.object({ message: z.string() }),
-        401: z.object({ message: z.string() }),
+        200: z.object({
+          success: z.literal(true),
+          data: messageSchema,
+        }),
+        401: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: async (request, reply) => {
       const authHeader = request.headers.authorization
       if (!authHeader?.startsWith('Bearer ')) {
-        return reply.code(401).send({ message: 'Unauthorized - missing token' })
+        return reply.code(401).send({ success: false, message: 'Unauthorized - missing token' })
       }
 
       const token = authHeader.slice(7).trim()
@@ -372,11 +432,11 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       try {
         payload = internalAuthService.verifyToken(token)
       } catch {
-        return reply.code(401).send({ message: 'Unauthorized - invalid or expired token' })
+        return reply.code(401).send({ success: false, message: 'Unauthorized - invalid or expired token' })
       }
 
       if (!payload.jti || payload.sub !== request.user.id) {
-        return reply.code(401).send({ message: 'Unauthorized - invalid token payload' })
+        return reply.code(401).send({ success: false, message: 'Unauthorized - invalid token payload' })
       }
 
       await db
@@ -388,12 +448,12 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         })
         .onConflictDoNothing({ target: revokedTokens.jti })
 
-      // Lazy cleanup: remove expired entries so the table stays small
       db.delete(revokedTokens)
         .where(lt(revokedTokens.expiresAt, new Date()))
         .catch(() => {})
 
-      return reply.send({ message: 'Logged out successfully' })
+      logSecurityEvent({ type: 'logout', request, userId: request.user.id })
+      return reply.send({ success: true, data: { message: 'Logged out successfully' } })
     },
   })
 
@@ -411,13 +471,23 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         email: z.string().email().describe('Operator email address'),
       }),
       response: {
-        200: z.object({ message: z.string() }),
+        200: z.object({
+          success: z.literal(true),
+          data: messageSchema,
+        }),
       },
     },
     handler: async (request, reply) => {
-      // Fire-and-forget — same response regardless of whether email exists
       passwordResetService.sendOtp(request.body.email).catch(() => {})
-      return reply.send({ message: 'Verification code sent to your email' })
+      logSecurityEvent({
+        type: 'password_reset_otp_sent',
+        request,
+        metadata: { email: request.body.email },
+      })
+      return reply.send({
+        success: true,
+        data: { message: 'Verification code sent to your email' },
+      })
     },
   })
 
@@ -434,16 +504,32 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         otp: z.string().length(4).describe('4-digit OTP from email'),
       }),
       response: {
-        200: z.object({ message: z.string() }),
-        400: z.object({ message: z.string() }),
+        200: z.object({
+          success: z.literal(true),
+          data: messageSchema,
+        }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: async (request, reply) => {
       const valid = await passwordResetService.verifyOtp(request.body.email, request.body.otp)
       if (!valid) {
-        return reply.code(400).send({ message: 'Invalid or expired code' })
+        logSecurityEvent({
+          type: 'password_reset_otp_failure',
+          request,
+          metadata: { email: request.body.email },
+        })
+        return reply.code(400).send({ success: false, message: 'Invalid or expired code' })
       }
-      return reply.send({ message: 'Code verified successfully' })
+      logSecurityEvent({
+        type: 'password_reset_otp_verified',
+        request,
+        metadata: { email: request.body.email },
+      })
+      return reply.send({
+        success: true,
+        data: { message: 'Code verified successfully' },
+      })
     },
   })
 
@@ -460,8 +546,11 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         password: z.string().min(12).describe('New password (min 12 characters)'),
       }),
       response: {
-        200: z.object({ message: z.string() }),
-        400: z.object({ message: z.string() }),
+        200: z.object({
+          success: z.literal(true),
+          data: messageSchema,
+        }),
+        400: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
     handler: async (request, reply) => {
@@ -470,9 +559,20 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         request.body.password,
       )
       if (!success) {
-        return reply.code(400).send({ message: 'User not found or reset session expired. Please request a new code.' })
+        return reply.code(400).send({
+          success: false,
+          message: 'User not found or reset session expired. Please request a new code.',
+        })
       }
-      return reply.send({ message: 'Password reset successfully' })
+      logSecurityEvent({
+        type: 'password_reset_completed',
+        request,
+        metadata: { email: request.body.email },
+      })
+      return reply.send({
+        success: true,
+        data: { message: 'Password reset successfully' },
+      })
     },
   })
 }

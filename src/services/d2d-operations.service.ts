@@ -16,6 +16,7 @@ import {
   UserRole,
 } from '../types/enums'
 import { uploadsService } from './uploads.service'
+import { avScanService } from './av-scan.service'
 import { decrypt } from '../utils/encryption'
 import { notifyUser } from './notifications.service'
 import { sendSupplierInvoiceEmail } from '../notifications/email'
@@ -347,6 +348,13 @@ export class D2dOperationsService {
         uploadedBy: params.actorId,
       })
       .returning()
+
+    // Fire-and-forget AV scan (V12.4.1).
+    void avScanService.scheduleScan({
+      r2Key: params.r2Key,
+      scope: `invoices/${params.attachmentType}`,
+      scopeId: invoice.id,
+    })
 
     return created
   }

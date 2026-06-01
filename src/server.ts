@@ -1,7 +1,12 @@
+import { initTelemetry } from './config/telemetry'
 import { buildApp } from './app'
 import { env } from './config/env'
 
 async function start() {
+  // Initialise OpenTelemetry FIRST so auto-instrumentation can hook into
+  // Fastify / postgres / axios before those modules are required by buildApp.
+  await initTelemetry()
+
   const app = await buildApp()
 
   try {

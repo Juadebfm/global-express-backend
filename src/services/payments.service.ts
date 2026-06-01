@@ -1,7 +1,8 @@
 import { createHmac } from 'crypto'
 import { eq, and, desc, sql, isNull } from 'drizzle-orm'
-import axios from 'axios'
+import { paystackClient } from '../config/http-clients'
 import { db } from '../config/db'
+import { avScanService } from './av-scan.service'
 import { payments, orders, invoices } from '../../drizzle/schema'
 import { notificationsService, notifyUser } from './notifications.service'
 import { dispatchBatchesService } from './dispatch-batches.service'
@@ -12,7 +13,6 @@ import type { PaginationParams } from '../types'
 import { PaymentStatus, PaymentType } from '../types/enums'
 import { uploadsService } from './uploads.service'
 
-const PAYSTACK_API = 'https://api.paystack.co'
 const ALLOWED_RECEIPT_CONTENT_TYPES = new Set([
   'application/pdf',
   'image/jpeg',
@@ -140,20 +140,14 @@ export class PaymentsService {
       target,
     })
 
-    const response = await axios.post<PaystackInitializeResponse>(
-      `${PAYSTACK_API}/transaction/initialize`,
+    const response = await paystackClient.post<PaystackInitializeResponse>(
+      '/transaction/initialize',
       {
         email,
         amount, // Paystack expects amount in kobo
         currency,
         callback_url: callbackUrl,
         metadata,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
-          'Content-Type': 'application/json',
-        },
       },
     )
 
@@ -260,6 +254,14 @@ export class PaymentsService {
         updatedAt: new Date(),
       })
       .where(eq(orders.id, target.orderId))
+
+    // Fire-and-forget AV scan of the receipt (V12.4.1). Staff "verify receipt"
+    // UI must check the scan status before opening the file.
+    void avScanService.scheduleScan({
+      r2Key: input.r2Key,
+      scope: 'payments/receipt',
+      scopeId: target.orderId,
+    })
 
     void notificationsService.notifyRole({
       targetRole: UserRole.STAFF,
@@ -506,11 +508,8 @@ export class PaymentsService {
   }
 
   async verifyPayment(reference: string) {
-    const response = await axios.get<PaystackVerifyResponse>(
-      `${PAYSTACK_API}/transaction/verify/${reference}`,
-      {
-        headers: { Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}` },
-      },
+    const response = await paystackClient.get<PaystackVerifyResponse>(
+      `/transaction/verify/${reference}`,
     )
 
     if (!response.data.status) {

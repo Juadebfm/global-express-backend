@@ -4,6 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
+import { checkIdempotencyKey } from '../middleware/idempotency'
 import {
   OrderDirection,
   PricingSource,
@@ -223,7 +224,7 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
   // ─── Authenticated ────────────────────────────────────────────────────────
 
   app.post('/', {
-    preHandler: [authenticate],
+    preHandler: [authenticate, checkIdempotencyKey],
     config: {
       rateLimit: {
         max: 20,

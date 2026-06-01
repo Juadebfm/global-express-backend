@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
+import { sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { db } from '../config/db'
 import { authRoutes } from './auth.routes'
 import { usersRoutes } from './users.routes'
 import { ordersRoutes } from './orders.routes'
@@ -22,11 +24,12 @@ import { galleryRoutes } from './gallery.routes'
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
 
-  // Health check — no auth required
+  // ─── Health (liveness) — always 200 if the process is up ─────────────────
+  // For load-balancer liveness probes. Use /readiness for dependency checks.
   server.get('/health', {
     schema: {
       tags: ['Health'],
-      summary: 'Server health check',
+      summary: 'Liveness probe — always 200 if the server process is responsive',
       response: {
         200: z.object({
           status: z.string(),
@@ -36,6 +39,49 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     },
     handler: async (_request, reply) => {
       reply.send({ status: 'ok', timestamp: new Date().toISOString() })
+    },
+  })
+
+  // ─── Readiness — verifies downstream dependencies are reachable ──────────
+  // Returns 503 when the DB is unreachable so the load balancer can route
+  // around a degraded instance. Keep this lightweight (single `SELECT 1`).
+  server.get('/readiness', {
+    schema: {
+      tags: ['Health'],
+      summary: 'Readiness probe — 200 when DB is reachable, 503 otherwise',
+      response: {
+        200: z.object({
+          status: z.string(),
+          timestamp: z.string(),
+          checks: z.object({
+            database: z.literal('ok'),
+          }),
+        }),
+        503: z.object({
+          status: z.string(),
+          timestamp: z.string(),
+          checks: z.object({
+            database: z.string(),
+          }),
+        }),
+      },
+    },
+    handler: async (request, reply) => {
+      try {
+        await db.execute(sql`select 1`)
+        reply.send({
+          status: 'ready',
+          timestamp: new Date().toISOString(),
+          checks: { database: 'ok' as const },
+        })
+      } catch (err) {
+        request.log.error({ err }, 'Readiness check failed: DB unreachable')
+        reply.code(503).send({
+          status: 'not_ready',
+          timestamp: new Date().toISOString(),
+          checks: { database: 'unreachable' },
+        })
+      }
     },
   })
 
