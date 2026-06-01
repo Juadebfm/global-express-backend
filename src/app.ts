@@ -90,6 +90,14 @@ export async function buildApp() {
     staticCSP: true,
   })
 
+  // Expose the raw OpenAPI 3 spec at /openapi.json (canonical location for
+  // openapi-generator-cli + most FE SDK tooling). The Swagger plugin only
+  // serves the spec at /docs/json by default; this is a friendlier alias.
+  app.get('/openapi.json', { schema: { hide: true } }, async (_request, reply) => {
+    reply.header('Content-Type', 'application/json; charset=utf-8')
+    return app.swagger()
+  })
+
   // ─── ETag + conditional GET (304) ─────────────────────────────────────────
   // Generates a weak SHA-1 ETag from response payload on GET responses and
   // returns 304 Not Modified when If-None-Match matches. Reduces bandwidth
@@ -279,6 +287,18 @@ export async function buildApp() {
 
   // ─── Centralized error handler ────────────────────────────────────────────
   app.setErrorHandler(errorHandler)
+
+  // ─── 404 handler — route through the same RFC 7807 emitter ───────────────
+  // Fastify's default 404 produces { message, error, statusCode } which would
+  // bypass the Problem Details contract. Hand-off to the error handler so the
+  // wire format stays uniform.
+  app.setNotFoundHandler((request, reply) => {
+    const err = Object.assign(new Error(`Route ${request.method}:${request.url} not found`), {
+      statusCode: 404,
+      validation: undefined,
+    })
+    errorHandler(err as Parameters<typeof errorHandler>[0], request, reply)
+  })
 
   // ─── Routes ───────────────────────────────────────────────────────────────
   await registerRoutes(app)
