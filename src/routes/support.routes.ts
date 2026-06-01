@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { supportController } from '../controllers/support.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireStaffOrAbove } from '../middleware/requireRole'
@@ -80,7 +81,7 @@ Once created, all connected staff receive a \`support:new_ticket\` WebSocket eve
           success: z.literal(true),
           data: z.object({ ticket: ticketSchema, message: messageSchema }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: supportController.create,
@@ -119,7 +120,7 @@ Once created, all connected staff receive a \`support:new_ticket\` WebSocket eve
             }),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: supportController.list,
@@ -145,9 +146,9 @@ Once created, all connected staff receive a \`support:new_ticket\` WebSocket eve
           success: z.literal(true),
           data: z.object({ ticket: ticketSchema, messages: z.array(messageSchema) }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: supportController.getOne,
@@ -181,10 +182,10 @@ If the customer is offline (not in the ticket room), they receive an in-app noti
       }),
       response: {
         201: z.object({ success: z.literal(true), data: messageSchema }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
-        422: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+        422: errorResponseSchema,
       },
     },
     handler: supportController.addMessage,
@@ -214,9 +215,9 @@ When resolved, the customer receives an in-app notification.`,
       }),
       response: {
         200: z.object({ success: z.literal(true), data: ticketSchema }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: supportController.update,

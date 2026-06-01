@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { internalAuthService } from '../services/internal-auth.service'
 import { mfaService } from '../services/mfa.service'
 import { usersService } from '../services/users.service'
@@ -77,9 +78,9 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
             }),
           }),
         ]),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        423: z.object({ success: z.literal(false), message: z.string(), lockedUntil: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        423: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -149,8 +150,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         201: z.object({ success: z.literal(true), data: internalUserResponseSchema }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        409: z.object({ success: z.literal(false), message: z.string() }),
+        403: errorResponseSchema,
+        409: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -225,7 +226,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        404: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -259,8 +260,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -336,10 +337,10 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
             otpauthUri: z.string(),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
-        409: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+        409: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -383,10 +384,10 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
             warning: z.string(),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
-        409: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+        409: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -432,10 +433,10 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: z.object({ enabled: z.literal(false) }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
-        409: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+        409: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -487,10 +488,10 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
             warning: z.string(),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
-        409: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+        409: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -584,7 +585,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -938,7 +939,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
             scannedAt: z.string().nullable(),
           }),
         }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        404: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {

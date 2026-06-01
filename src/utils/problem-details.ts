@@ -41,6 +41,29 @@ export const problemDetailsSchema = z
 export type ProblemDetails = z.infer<typeof problemDetailsSchema>
 
 /**
+ * Union schema for error response codes (4xx/5xx) in route declarations.
+ *
+ * Accepts BOTH the legacy `{ success: false, message, ... }` shape (what
+ * handlers and middleware actually return) AND RFC 7807 Problem Details (what
+ * the wire format becomes after the `preSerialization` reshape).
+ *
+ * This is required because Fastify's serializer validates the FINAL serialized
+ * payload against the response schema — so the schema must accept both the
+ * pre- and post-reshape shapes. Without the union, the strict serializer
+ * throws `FST_ERR_RESPONSE_SERIALIZATION` mid-response, returning a default
+ * 500 instead of the intended error.
+ */
+export const errorResponseSchema = z.union([
+  z
+    .object({
+      success: z.literal(false),
+      message: z.string(),
+    })
+    .passthrough(),
+  problemDetailsSchema,
+])
+
+/**
  * Map of well-known problem types in this API. Keep stable — these URIs are part
  * of the public API contract; clients may switch on them.
  */

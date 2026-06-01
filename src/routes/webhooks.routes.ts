@@ -5,6 +5,7 @@ import { env } from '../config/env'
 import { usersService } from '../services/users.service'
 import { db } from '../config/db'
 import { processedWebhookEvents } from '../../drizzle/schema'
+import { errorResponseSchema } from '../utils/problem-details'
 
 interface ClerkEmailAddress {
   id: string
@@ -78,8 +79,8 @@ All other event types are acknowledged but ignored.
 > Returns \`503\` if \`CLERK_WEBHOOK_SECRET\` is not configured.`,
       response: {
         200: z.object({ received: z.literal(true) }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
-        503: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
+        503: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {

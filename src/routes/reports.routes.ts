@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { reportsController } from '../controllers/reports.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
@@ -8,9 +9,9 @@ import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRol
 // ─── Shared schemas ──────────────────────────────────────────────────────────
 
 const errorSchemas = {
-  400: z.object({ success: z.literal(false), message: z.string() }),
-  401: z.object({ success: z.literal(false), message: z.string() }),
-  403: z.object({ success: z.literal(false), message: z.string() }),
+  400: errorResponseSchema,
+  401: errorResponseSchema,
+  403: errorResponseSchema,
 }
 
 const dateRangeQuerystring = z.object({

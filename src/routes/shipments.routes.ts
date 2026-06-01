@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { shipmentsController } from '../controllers/shipments.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove, requireSuperAdmin } from '../middleware/requireRole'
@@ -90,7 +91,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
             }),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: shipmentsController.list,
@@ -127,9 +128,9 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: z.any(),
         }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: shipmentsController.intakeGoods,
@@ -152,9 +153,9 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: shipmentsController.upsertMeasurement,
@@ -171,7 +172,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.array(z.any()) }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
       },
     },
     handler: shipmentsController.listMeasurements,
@@ -193,7 +194,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
       },
     },
     handler: shipmentsController.presignTaskInvoiceAttachment,
@@ -216,7 +217,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         201: z.object({ success: z.literal(true), data: z.any() }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
       },
     },
     handler: shipmentsController.confirmTaskInvoiceAttachment,
@@ -233,7 +234,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.array(z.any()) }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        403: errorResponseSchema,
       },
     },
     handler: shipmentsController.listTaskInvoiceAttachments,
@@ -255,8 +256,8 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: shipmentsController.presignRegulatedDocument,
@@ -279,8 +280,8 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         201: z.object({ success: z.literal(true), data: z.any() }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: shipmentsController.confirmRegulatedDocument,
@@ -297,7 +298,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.array(z.any()) }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        403: errorResponseSchema,
       },
     },
     handler: shipmentsController.listRegulatedDocuments,
@@ -314,7 +315,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        404: errorResponseSchema,
       },
     },
     handler: shipmentsController.internalTrackByMasterTracking,
@@ -331,8 +332,8 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: shipmentsController.approveCutoff,
@@ -365,9 +366,9 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
         }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: shipmentsController.updateBatchCarrierInfo,
@@ -389,9 +390,9 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: shipmentsController.updateBatchStatus,
@@ -434,9 +435,9 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.any() }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: shipmentsController.moveGoodsToNextBatch,

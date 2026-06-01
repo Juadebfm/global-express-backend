@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { lt } from 'drizzle-orm'
 import { usersController } from '../controllers/users.controller'
 import { usersService } from '../services/users.service'
@@ -96,8 +97,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
             updatedAt: z.string(),
           }),
         }),
-        409: z.object({ success: z.literal(false), message: z.string() }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        409: errorResponseSchema,
+        401: errorResponseSchema,
       },
     },
     handler: usersController.getMe,
@@ -142,8 +143,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
             }),
           }),
         ]),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        423: z.object({ success: z.literal(false), message: z.string(), lockedUntil: z.string() }),
+        401: errorResponseSchema,
+        423: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -238,7 +239,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
             tokens: z.object({ accessToken: z.string() }),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -311,7 +312,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
             remainingRecoveryCodes: z.number(),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -383,7 +384,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: operatorSchema,
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -418,7 +419,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: messageSchema,
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -508,7 +509,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: messageSchema,
         }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {
@@ -550,7 +551,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
           success: z.literal(true),
           data: messageSchema,
         }),
-        400: z.object({ success: z.literal(false), message: z.string() }),
+        400: errorResponseSchema,
       },
     },
     handler: async (request, reply) => {

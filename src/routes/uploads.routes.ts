@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { uploadsController } from '../controllers/uploads.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireStaffOrAbove, requireAdminOrAbove } from '../middleware/requireRole'
@@ -55,8 +56,8 @@ The presigned URL expires in **1 hour**.`,
             expiresInSeconds: z.number().describe('Seconds until the presigned URL expires (3600 = 1 hour)'),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: uploadsController.generatePresignedUrl,
@@ -85,8 +86,8 @@ The \`r2Key\` must match the key returned by \`POST /api/v1/uploads/presign\`.
       }),
       response: {
         201: z.object({ success: z.literal(true), data: imageResponseSchema }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: uploadsController.confirmUpload,
@@ -105,9 +106,9 @@ The \`r2Key\` must match the key returned by \`POST /api/v1/uploads/presign\`.
           success: z.literal(true),
           data: z.array(imageResponseSchema),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: uploadsController.getOrderImages,
@@ -123,9 +124,9 @@ The \`r2Key\` must match the key returned by \`POST /api/v1/uploads/presign\`.
       params: z.object({ imageId: z.string().uuid().describe('Image record UUID') }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: uploadsController.deleteImage,

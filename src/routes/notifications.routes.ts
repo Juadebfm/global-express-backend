@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { notificationsController } from '../controllers/notifications.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireSuperAdmin } from '../middleware/requireRole'
@@ -67,7 +68,7 @@ export async function notificationsRoutes(fastify: FastifyInstance): Promise<voi
       }),
       response: {
         200: z.object({ success: z.literal(true), data: paginatedNotificationsSchema }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: notificationsController.list,
@@ -82,7 +83,7 @@ export async function notificationsRoutes(fastify: FastifyInstance): Promise<voi
       security: [{ bearerAuth: [] }],
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ count: z.number() }) }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: notificationsController.unreadCount,
@@ -98,8 +99,8 @@ export async function notificationsRoutes(fastify: FastifyInstance): Promise<voi
       params: z.object({ id: z.string().uuid() }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: notificationsController.markRead,
@@ -115,7 +116,7 @@ export async function notificationsRoutes(fastify: FastifyInstance): Promise<voi
       security: [{ bearerAuth: [] }],
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: notificationsController.markAllRead,
@@ -131,8 +132,8 @@ export async function notificationsRoutes(fastify: FastifyInstance): Promise<voi
       params: z.object({ id: z.string().uuid() }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: notificationsController.toggleSaved,
@@ -152,8 +153,8 @@ export async function notificationsRoutes(fastify: FastifyInstance): Promise<voi
       params: z.object({ id: z.string().uuid() }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: notificationsController.deleteOne,
@@ -174,7 +175,7 @@ Returns the count of successfully processed items. IDs that do not belong to the
       }),
       response: {
         200: z.object({ success: z.literal(true), data: z.object({ deleted: z.number() }) }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: notificationsController.bulkDelete,
@@ -199,8 +200,8 @@ Returns the count of successfully processed items. IDs that do not belong to the
       }),
       response: {
         201: z.object({ success: z.literal(true), data: notificationSchema }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: notificationsController.broadcast,

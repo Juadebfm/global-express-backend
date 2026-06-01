@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { publicController } from '../controllers/public.controller'
 import { galleryController } from '../controllers/gallery.controller'
 import { requireCaptcha } from '../middleware/captcha'
@@ -482,7 +483,7 @@ The requester can indicate whether they want to register on the platform or rema
             }),
           }),
         }),
-        409: z.object({ success: z.literal(false), message: z.string() }),
+        409: errorResponseSchema,
       },
     },
     handler: publicController.submitD2dIntake,

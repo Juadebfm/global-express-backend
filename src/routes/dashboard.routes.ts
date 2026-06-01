@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { dashboardController } from '../controllers/dashboard.controller'
 import { authenticate } from '../middleware/authenticate'
 
@@ -81,7 +82,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
             fxRateSource: z.enum(['configured_or_live', 'official_fallback']).optional(),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: dashboardController.getStats,
@@ -128,7 +129,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
             }),
           ),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: dashboardController.getTrends,
@@ -166,7 +167,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
             }),
           ),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: dashboardController.getActiveDeliveries,
@@ -259,7 +260,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
             activeDeliveries: activeDeliveriesSchema,
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
       },
     },
     handler: dashboardController.getAll,

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
+import { errorResponseSchema } from '../utils/problem-details'
 import { teamController } from '../controllers/team.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
@@ -55,8 +56,8 @@ Requires **staff** or **superadmin** role.
             }),
           }),
         }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
       },
     },
     handler: teamController.list,
@@ -76,9 +77,9 @@ Use \`GET /api/v1/team?isActive=false\` to list all pending accounts.`,
       params: z.object({ id: z.string().uuid() }),
       response: {
         200: z.object({ success: z.literal(true), data: teamMemberSchema }),
-        401: z.object({ success: z.literal(false), message: z.string() }),
-        403: z.object({ success: z.literal(false), message: z.string() }),
-        404: z.object({ success: z.literal(false), message: z.string() }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
       },
     },
     handler: teamController.approve,
