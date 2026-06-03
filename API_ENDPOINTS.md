@@ -1448,11 +1448,13 @@ File: [src/routes/admin.routes.ts](src/routes/admin.routes.ts)
 **Errors:** 401, 403, 404.
 
 ### `GET /api/v1/admin/clients`
-**Use:** staff CRM list.
+**Use:** staff CRM list. Used by the New Shipment wizard and Bulk Orders create form to populate the customer picker.
 **Auth:** Bearer (staff+).
-**Query:** `page, limit, isActive`.
+**Query:** `page, limit, isActive, search`.
+- `search` (string, ≤ 200 chars) — case-insensitive partial match on `email`, `firstName`, `lastName`, `businessName`, `shippingMark`. Empty / missing → unfiltered. Wildcards (`%`, `_`) and quotes are treated as literal characters (no SQL pattern semantics).
+- When `search` is present, pagination is applied to the filtered set; `pagination.total` reflects the **filtered** count.
 **Success 200:** paginated client list (`{ id, email, firstName, lastName, businessName, displayName, phone, shippingMark, addressCity, addressCountry, isActive, orderCount, totalSpent, lastOrderDate, createdAt }`).
-**Errors:** 401, 403.
+**Errors:** 400 (search > 200 chars), 401, 403.
 
 ### `GET /api/v1/admin/clients/:id`
 **Use:** client detail page.

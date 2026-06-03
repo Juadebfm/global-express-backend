@@ -35,7 +35,7 @@ function buildFallbackRecipientAddress(client: {
 export const clientsController = {
   async list(
     request: FastifyRequest<{
-      Querystring: { page?: string; limit?: string; isActive?: string }
+      Querystring: { page?: string; limit?: string; isActive?: string; search?: string }
     }>,
     reply: FastifyReply,
   ) {
@@ -50,6 +50,7 @@ export const clientsController = {
       page: Number(request.query.page) || 1,
       limit: Number(request.query.limit) || 20,
       isActive,
+      search: request.query.search,
     })
 
     return reply.send(successResponse(result))

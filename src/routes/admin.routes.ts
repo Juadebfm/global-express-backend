@@ -243,12 +243,22 @@ Use \`dryRun=true\` to validate and preview actions without writing to the datab
 - \`totalSpent\` — sum of successful payments
 - \`lastOrderDate\` — most recent order date
 
+Pass \`?search=\` to filter case-insensitively across \`email\`, \`firstName\`,
+\`lastName\`, \`businessName\`, \`shippingMark\` (partial match anywhere in the
+field). Pagination is applied to the filtered set; \`pagination.total\`
+reflects the filtered count.
+
 Requires **staff** or **superadmin** role.`,
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         page: z.coerce.number().int().positive().optional().default(1),
         limit: z.coerce.number().int().min(1).max(100).optional().default(20),
         isActive: z.enum(['true', 'false']).optional().describe('Filter by active status'),
+        search: z
+          .string()
+          .max(200)
+          .optional()
+          .describe('Case-insensitive partial match on email, firstName, lastName, businessName, shippingMark'),
       }),
       response: {
         200: z.object({

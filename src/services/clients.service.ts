@@ -16,61 +16,144 @@ function httpError(message: string, statusCode: number): Error & { statusCode: n
   return Object.assign(new Error(message), { statusCode })
 }
 
+/**
+ * In-memory case-insensitive search across decrypted customer fields.
+ * Used by listClients when `search` is provided — because the searchable
+ * columns (email/firstName/lastName/businessName/shippingMark) are AES-GCM
+ * encrypted at rest, we can't push the predicate into Postgres.
+ *
+ * Exported for unit testing — pure function, no DB.
+ */
+export function clientMatchesSearch(
+  fields: {
+    email: string | null
+    firstName: string | null
+    lastName: string | null
+    businessName: string | null
+    shippingMark: string | null
+  },
+  normalisedSearch: string,
+): boolean {
+  if (!normalisedSearch) return true
+  const haystack = [
+    fields.email,
+    fields.firstName,
+    fields.lastName,
+    fields.businessName,
+    fields.shippingMark,
+  ]
+    .filter((v): v is string => Boolean(v))
+    .map((v) => v.toLowerCase())
+  return haystack.some((s) => s.includes(normalisedSearch))
+}
+
+// Max candidate rows we'll decrypt-and-scan per search request. The base SQL
+// filter (role=user, deletedAt IS NULL, optionally isActive) already narrows
+// hard. At single-digit-thousands of customers this is comfortable headroom;
+// past ~50k we need a search projection column + trigram index.
+const SEARCH_CANDIDATE_CAP = 10_000
+
 export class ClientsService {
   /**
    * Paginated list of all customers (role=user) with order/payment aggregates.
    * Includes: orderCount, totalSpent (sum of successful payments), lastOrderDate.
+   *
+   * When `search` is provided, filters case-insensitively across decrypted
+   * email/firstName/lastName/businessName/shippingMark (partial match, anywhere
+   * in the field). Pagination is applied to the filtered set; pagination.total
+   * reflects the filtered count.
    */
-  async listClients(params: PaginationParams & { isActive?: boolean }) {
-    const offset = getPaginationOffset(params.page, params.limit)
-
+  async listClients(params: PaginationParams & { isActive?: boolean; search?: string }) {
     const baseWhere = and(
       isNull(users.deletedAt),
       eq(users.role, UserRole.USER),
       params.isActive !== undefined ? eq(users.isActive, params.isActive) : undefined,
     )
 
-    const [data, countResult] = await Promise.all([
-      db
-        .select({
-          // User fields
-          id: users.id,
-          email: users.email,
-          firstName: users.firstName,
-          lastName: users.lastName,
-          businessName: users.businessName,
-        phone: users.phone,
-        shippingMark: users.shippingMark,
-        addressCity: users.addressCity,
-          addressCountry: users.addressCountry,
-          isActive: users.isActive,
-          createdAt: users.createdAt,
-          // Aggregates
-          orderCount: sql<number>`count(distinct ${orders.id}) filter (where ${orders.id} is not null and ${orders.deletedAt} is null)::int`,
-          totalSpent: sql<string>`coalesce(sum(${payments.amount}) filter (where ${payments.status} = 'successful'), 0)::text`,
-          lastOrderDate: sql<string | null>`max(${orders.createdAt})::text`,
-        })
-        .from(users)
-        .leftJoin(orders, and(eq(orders.senderId, users.id), isNull(orders.deletedAt)))
-        .leftJoin(payments, eq(payments.userId, users.id))
-        .where(baseWhere)
-        .groupBy(users.id)
-        .orderBy(desc(users.createdAt))
-        .limit(params.limit)
-        .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(users)
-        .where(baseWhere),
-    ])
+    const search = (params.search ?? '').trim().toLowerCase()
 
-    const total = countResult[0]?.count ?? 0
+    // Fast path — no search: paginate at the DB level.
+    if (!search) {
+      const offset = getPaginationOffset(params.page, params.limit)
+
+      const [data, countResult] = await Promise.all([
+        db
+          .select(this.listClientsSelect())
+          .from(users)
+          .leftJoin(orders, and(eq(orders.senderId, users.id), isNull(orders.deletedAt)))
+          .leftJoin(payments, eq(payments.userId, users.id))
+          .where(baseWhere)
+          .groupBy(users.id)
+          .orderBy(desc(users.createdAt))
+          .limit(params.limit)
+          .offset(offset),
+        db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(users)
+          .where(baseWhere),
+      ])
+
+      const total = countResult[0]?.count ?? 0
+
+      return buildPaginatedResult(
+        data.map((row) => this.formatClient(row)),
+        total,
+        params,
+      )
+    }
+
+    // Search path — decrypt-and-filter in memory, then paginate.
+    const candidates = await db
+      .select(this.listClientsSelect())
+      .from(users)
+      .leftJoin(orders, and(eq(orders.senderId, users.id), isNull(orders.deletedAt)))
+      .leftJoin(payments, eq(payments.userId, users.id))
+      .where(baseWhere)
+      .groupBy(users.id)
+      .orderBy(desc(users.createdAt))
+      .limit(SEARCH_CANDIDATE_CAP)
+
+    const filtered = candidates.filter((row) =>
+      clientMatchesSearch(
+        {
+          email: row.email ? decrypt(row.email) : null,
+          firstName: row.firstName ? decrypt(row.firstName) : null,
+          lastName: row.lastName ? decrypt(row.lastName) : null,
+          businessName: row.businessName ? decrypt(row.businessName) : null,
+          shippingMark: row.shippingMark ? decrypt(row.shippingMark) : null,
+        },
+        search,
+      ),
+    )
+
+    const total = filtered.length
+    const offset = getPaginationOffset(params.page, params.limit)
+    const pageSlice = filtered.slice(offset, offset + params.limit)
 
     return buildPaginatedResult(
-      data.map((row) => this.formatClient(row)),
+      pageSlice.map((row) => this.formatClient(row)),
       total,
       params,
     )
+  }
+
+  private listClientsSelect() {
+    return {
+      id: users.id,
+      email: users.email,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      businessName: users.businessName,
+      phone: users.phone,
+      shippingMark: users.shippingMark,
+      addressCity: users.addressCity,
+      addressCountry: users.addressCountry,
+      isActive: users.isActive,
+      createdAt: users.createdAt,
+      orderCount: sql<number>`count(distinct ${orders.id}) filter (where ${orders.id} is not null and ${orders.deletedAt} is null)::int`,
+      totalSpent: sql<string>`coalesce(sum(${payments.amount}) filter (where ${payments.status} = 'successful'), 0)::text`,
+      lastOrderDate: sql<string | null>`max(${orders.createdAt})::text`,
+    }
   }
 
   /**
