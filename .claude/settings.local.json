@@ -52,7 +52,21 @@
       "Bash(curl -sS -i https://global-express-backend-1.onrender.com/api/v1/users/me -H 'Authorization: Bearer fake.fake.fake')",
       "Bash(curl -sS -X POST https://global-express-backend-1.onrender.com/api/v1/public/newsletter/subscribe -H 'Content-Type: application/json' -d '{\"email\":\"x@y.com\"}')",
       "Bash(curl -sS -X POST https://global-express-backend-1.onrender.com/api/v1/payments/initialize -H 'Content-Type: application/json' -d '{}')",
-      "Bash(curl -sS \"https://global-express-backend-1.onrender.com/api/v1/public/calculator/rates\")"
+      "Bash(curl -sS \"https://global-express-backend-1.onrender.com/api/v1/public/calculator/rates\")",
+      "Bash(grep -nB 2 -A 30 \"server.get\\\\\\\\\\('/\" src/routes/dashboard.routes.ts)",
+      "Bash(grep -nB 1 -A 6 \"querystring:\" src/routes/dashboard.routes.ts)",
+      "Bash(grep -nB 2 -A 25 \"getAll\" src/controllers/dashboard.controller.ts)",
+      "Bash(grep -nB 2 -A 35 \"resolveFxRate\" src/services/dashboard.service.ts)",
+      "Bash(node --env-file=.env -e ' *)",
+      "Bash(grep -nB 2 -A 6 \"app.post..'/sync'\" src/routes/auth.routes.ts)",
+      "Bash(grep -nB 2 -A 25 \"^\\\\s*async getMe\" src/controllers/users.controller.ts)",
+      "Bash(grep -nB 1 -A 30 \"^\\\\s*async updateUser\" src/services/users.service.ts)",
+      "Bash(grep -nA 25 \"^\\\\s*decryptUser\" src/services/users.service.ts)",
+      "Bash(grep -nA 30 \"decryptUser\" src/services/users.service.ts)",
+      "Bash(grep -nA 35 \"private decryptUser\" src/services/users.service.ts)",
+      "Bash(grep -nB 1 -A 25 \"userResponseSchema\" src/routes/users.routes.ts)",
+      "Bash(grep -nB 1 -A 30 \"PATCH /api/v1/users/me\\\\`$\\\\|GET /api/v1/users/me\\\\`$\" API_ENDPOINTS.md | head -70)",
+      "Read(//Users/macbookpro/Documents/GitHub/global-express-backend/PATCH /api/v1/users/me`$\\\\|GET /api/v1/users/**)"
     ]
   }
 }

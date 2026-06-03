@@ -38,6 +38,12 @@ export interface UpdateUserInput {
   addressCountry?: string | null
   addressPostalCode?: string | null
   shippingMark?: string | null
+  /**
+   * Set to a Date when the customer consumes their one-time edit via PATCH
+   * /api/v1/users/me. Leave undefined on admin updates so admins can change
+   * the mark without consuming the customer's one edit.
+   */
+  shippingMarkUserEditedAt?: Date
   isActive?: boolean
   consentMarketing?: boolean
   notifyEmailAlerts?: boolean
@@ -285,6 +291,9 @@ export class UsersService {
     if (input.addressPostalCode !== undefined) patch.addressPostalCode = input.addressPostalCode
     if (input.shippingMark !== undefined) {
       patch.shippingMark = input.shippingMark ? encrypt(input.shippingMark) : null
+    }
+    if (input.shippingMarkUserEditedAt !== undefined) {
+      patch.shippingMarkUserEditedAt = input.shippingMarkUserEditedAt
     }
     if (input.isActive !== undefined) patch.isActive = input.isActive
     if (input.consentMarketing !== undefined) patch.consentMarketing = input.consentMarketing
@@ -1604,6 +1613,7 @@ export class UsersService {
       phone: user.phone ? decrypt(user.phone) : null,
       whatsappNumber: user.whatsappNumber ? decrypt(user.whatsappNumber) : null,
       shippingMark: user.shippingMark ? decrypt(user.shippingMark) : null,
+      shippingMarkUserEditedAt: user.shippingMarkUserEditedAt?.toISOString() ?? null,
       addressStreet: user.addressStreet ? decrypt(user.addressStreet) : null,
       // city/state/country/postalCode are stored plain
       notifyEmailAlerts: user.notifyEmailAlerts,

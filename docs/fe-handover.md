@@ -29,7 +29,7 @@ openapi-generator-cli generate \
 
 ---
 
-## The 8 changes
+## The 9 changes
 
 ### 1 — Error responses are now RFC 7807 Problem Details
 
@@ -472,6 +472,71 @@ Allowed fields will be server-enforced per endpoint; unknown field names will be
 
 ---
 
+### 9 — Shipping mark UX
+
+**Where:** customer profile screen.
+
+The backend auto-generates a shipping mark for every new customer at signup (e.g., Julius Adebowale → `julade`, Pluralcode business → `plural`). Customers can replace it **once** via `PATCH /api/v1/users/me` to use their actual preferred alias. After that, the mark locks from the customer side — only staff can change it.
+
+A shipping mark is **not** a tracking number — we already have tracking numbers (`GEX-…`). It's a personal alias the customer hand-writes on physical boxes during consolidation, so the Korean warehouse and Lagos receiving office can match cargo to the right person at a glance. Common industry conventions: short (3–10 chars), customer-chosen, often nicknames. Examples: `jay`, `juadeb`, `hayomz`, `queen24`, `plural99`.
+
+**Format:** 3–20 chars, lowercase letters + digits, must start with a letter. Regex: `^[a-z][a-z0-9]{2,19}$`. The server normalises uppercase input — `JUADEB` becomes `juadeb` — so don't strict-error on case in the FE.
+
+**FE action:**
+
+1. **Read the lock state from `data.shippingMarkUserEditedAt`:**
+
+   ```ts
+   const profile = (await callApi<User>('/api/v1/users/me')).data
+   const canEditShippingMark = profile.shippingMarkUserEditedAt === null
+   ```
+
+2. **When `canEditShippingMark` is true** → show an editable input pre-filled with `profile.shippingMark`. On submit, normalise to lowercase and validate the format client-side to avoid the 400 round-trip:
+
+   ```ts
+   const SHIPPING_MARK_REGEX = /^[a-z][a-z0-9]{2,19}$/
+   const input = rawInput.trim().toLowerCase()
+   if (!SHIPPING_MARK_REGEX.test(input)) {
+     showError('Use 3–20 lowercase letters and digits, starting with a letter')
+     return
+   }
+   await callApi<User>('/api/v1/users/me', {
+     method: 'PATCH',
+     body: JSON.stringify({ shippingMark: input }),
+   })
+   ```
+
+3. **When `canEditShippingMark` is false** → render the mark as read-only with a short explanation and a path to support:
+
+   > "Your shipping mark `juadeb` is locked. Contact support to change it."
+
+4. **Error handling:** if the API returns 409 with `type: "/problems/conflict"`, the customer's already used their edit. Refresh `GET /users/me` to pick up the new `shippingMarkUserEditedAt` and re-render the locked UI.
+
+```tsx
+function ShippingMarkField({ profile }: { profile: User }) {
+  const locked = profile.shippingMarkUserEditedAt !== null
+  if (locked) {
+    return (
+      <div>
+        <label>Shipping mark</label>
+        <code>{profile.shippingMark}</code>
+        <p>Locked. <a href="/support/new">Contact support</a> to change it.</p>
+      </div>
+    )
+  }
+  return <EditableShippingMarkForm initial={profile.shippingMark} />
+}
+```
+
+**Acceptance:**
+- [ ] Profile screen shows `data.shippingMark` (no more "Not provided yet" for that field)
+- [ ] Customers whose `shippingMarkUserEditedAt === null` see an editable field
+- [ ] After submitting a valid edit, the field becomes read-only and reflects the new mark
+- [ ] 409 response triggers a re-fetch and the locked UI
+- [ ] Format errors (400) surface `problem.detail` to the user
+
+---
+
 ## Test checklist before declaring "FE integrated"
 
 | Test | Expected |
@@ -487,6 +552,10 @@ Allowed fields will be server-enforced per endpoint; unknown field names will be
 | Superadmin first-login | Forced through MFA enrollment, sees 10 recovery codes |
 | Superadmin logs in with TOTP | Lands on dashboard |
 | Superadmin logs in with recovery code | Lands on dashboard, sees "9 codes left" warning |
+| Customer profile shows pre-populated address + shipping mark | All fields rendered from `data.*`, no "Not provided yet" |
+| Customer with `shippingMarkUserEditedAt === null` edits shipping mark to `jay` | 200, field becomes read-only, `data.shippingMarkUserEditedAt` is now non-null |
+| Same customer tries to edit again | 409 `conflict`, FE re-fetches profile and shows the locked UI |
+| Customer types shipping mark with invalid format (`A1`, `1abc`, `with space`) | 400 with `problem.detail` describing the format |
 | Any error response in DevTools | Content-Type is `application/problem+json`, body has `type/title/status/detail/instance/requestId` |
 
 ---

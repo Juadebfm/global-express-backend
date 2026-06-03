@@ -6,6 +6,7 @@ import { users, revokedTokens } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
 import { encrypt, decrypt, hashEmail } from '../utils/encryption'
+import { generateShippingMark } from '../utils/shipping-mark'
 import { logSecurityEvent } from '../utils/security-events'
 import { internalAuthService } from '../services/internal-auth.service'
 import { notificationsService } from '../services/notifications.service'
@@ -377,6 +378,23 @@ export async function authenticate(
         return
       }
 
+      // Auto-generate shipping mark only when the existing row doesn't have one yet.
+      // Source the initials from whatever we'll end up writing back (existing
+      // stubbed values take precedence, then Clerk/metadata).
+      const generatedShippingMark = emailOwner.shippingMark
+        ? null
+        : generateShippingMark({
+            firstName: emailOwner.firstName
+              ? decrypt(emailOwner.firstName)
+              : clerkUser.firstName,
+            lastName: emailOwner.lastName
+              ? decrypt(emailOwner.lastName)
+              : clerkUser.lastName,
+            businessName: emailOwner.businessName
+              ? decrypt(emailOwner.businessName)
+              : businessName,
+          })
+
       // Link staff-created stubs, or reconnect an existing customer row when a
       // new Clerk user ID is created for the same verified email address.
       const [linkedUser] = await db
@@ -389,6 +407,9 @@ export async function authenticate(
           businessName: emailOwner.businessName ?? (businessName ? encrypt(businessName) : null),
           phone: emailOwner.phone ?? encrypt(resolvedPhone!),
           whatsappNumber: emailOwner.whatsappNumber ?? (whatsappNumber ? encrypt(whatsappNumber) : null),
+          shippingMark:
+            emailOwner.shippingMark ??
+            (generatedShippingMark ? encrypt(generatedShippingMark) : null),
           addressStreet: emailOwner.addressStreet ?? encrypt(resolvedAddressStreet!),
           addressCity: emailOwner.addressCity ?? resolvedAddressCity!,
           addressState: emailOwner.addressState ?? resolvedAddressState!,
@@ -425,6 +446,15 @@ export async function authenticate(
       return
     }
 
+    // Auto-generate the customer's shipping mark from the values they supplied
+    // at signup. They can edit it ONCE via PATCH /api/v1/users/me before it
+    // locks (`shipping_mark_user_edited_at` is set on their first edit).
+    const shippingMark = generateShippingMark({
+      firstName: clerkUser.firstName,
+      lastName: clerkUser.lastName,
+      businessName,
+    })
+
     // No stub found — auto-provision a fresh account on first Clerk login
     const [newUser] = await db
       .insert(users)
@@ -437,6 +467,7 @@ export async function authenticate(
         businessName: businessName ? encrypt(businessName) : null,
         phone: encrypt(phone!),
         whatsappNumber: whatsappNumber ? encrypt(whatsappNumber) : null,
+        shippingMark: encrypt(shippingMark),
         addressStreet: encrypt(addressStreet!),
         addressCity: city!,
         addressState: addressState!,

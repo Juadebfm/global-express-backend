@@ -18,7 +18,18 @@ const userResponseSchema = z.object({
   // Contact
   phone: z.string().nullable().describe('Primary contact number'),
   whatsappNumber: z.string().nullable().describe('WhatsApp-enabled number (if different from phone)'),
-  shippingMark: z.string().nullable().describe('Shipping mark used for package labeling'),
+  shippingMark: z
+    .string()
+    .nullable()
+    .describe(
+      'Shipping mark used for package labeling (e.g. GE-JA-X7K4M9). Auto-generated on signup; customer may edit ONCE.',
+    ),
+  shippingMarkUserEditedAt: z
+    .string()
+    .nullable()
+    .describe(
+      'Timestamp when the customer used their one-time shipping mark edit. null = edit is still available; non-null = locked (staff-only changes from here).',
+    ),
   // Address (optional at signup; required before placing an order)
   addressStreet: z.string().nullable().describe('Street address (encrypted at rest)'),
   addressCity: z.string().nullable().describe('City'),

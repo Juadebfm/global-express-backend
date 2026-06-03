@@ -28,8 +28,14 @@ export const users = pgTable('users', {
   phone: text('phone'),
   // WhatsApp-enabled number — null means same as phone
   whatsappNumber: text('whatsapp_number'),
-  // Shipping mark / customer identifier for package labeling (encrypted PII)
+  // Shipping mark / customer identifier for package labeling (encrypted PII).
+  // Format: GE-<initials>-<6 chars>. Auto-generated on Clerk auto-provision;
+  // customer can edit ONCE via PATCH /users/me. Subsequent edits 409 unless
+  // staff/superadmin changes it via /admin/* path.
   shippingMark: text('shipping_mark'),
+  // null  → customer hasn't used their one-time edit yet (auto-generated value)
+  // set   → customer has consumed their edit; further user edits are rejected
+  shippingMarkUserEditedAt: timestamp('shipping_mark_user_edited_at'),
 
   // ─── Staff profile (internal users only — collected on first login) ────────
   gender: genderEnum('gender'),

@@ -230,6 +230,7 @@ If the login response is the regular `{ data: { user, tokens } }` shape but `dat
 
 ## Table of Contents
 
+- [Roles & Access Control (RBAC)](#roles--access-control-rbac)
 - [Health & Diagnostics](#health--diagnostics)
 - [Auth — `/api/v1/auth`](#auth)
 - [Users — `/api/v1/users`](#users)
@@ -249,6 +250,95 @@ If the login response is the regular `{ data: { user, tokens } }` shape but `dat
 - [Public — `/api/v1/public`](#public)
 - [Gallery — `/api/v1/gallery`](#gallery)
 - [WebSocket — `/ws`](#websocket)
+
+---
+
+## Roles & Access Control (RBAC)
+
+Every endpoint enforces one of three access modes at the middleware level:
+
+- **Public** — no token required (calculator, public gallery, public tracking, etc.)
+- **Authenticated** — any valid Bearer token works (customer profile, support tickets, etc.)
+- **Role-gated** — Bearer token AND the user must be in one of the allowed roles. Enforced by the `requireRole` middleware factory: `requireSuperAdmin`, `requireAdminOrAbove` (= staff or superadmin), `requireStaffOrAbove` (= staff or superadmin). Customers and suppliers never pass these.
+
+### Roles
+
+| Role | Token source | Description |
+|---|---|---|
+| `user` | Clerk JWT | End customer (the people who ship things) |
+| `supplier` | Clerk JWT | Korean supplier who delivers goods on a customer's behalf |
+| `staff` | Internal JWT | Operations team (warehouse, dispatch, support) |
+| `superadmin` | Internal JWT | Full admin — finance, pricing, MFA-required |
+
+### Capability matrix (high-level)
+
+| Capability | user | supplier | staff | superadmin |
+|---|:---:|:---:|:---:|:---:|
+| Sign up / log in via Clerk | ✅ | ✅ | — | — |
+| Log in via internal `/auth/login` | — | — | ✅ | ✅ |
+| View/edit own profile | ✅ | ✅ | own only (via `/internal/me/*`) | own only (via `/internal/me/*`) |
+| Edit own shipping mark (one time only) | ✅ | ✅ | — | — |
+| Edit any customer's shipping mark (no limit) | — | — | ✅ | ✅ |
+| Read own orders / shipments / payments | ✅ | ✅ | ✅ all customers | ✅ all customers |
+| Create orders | ✅ | ✅ | ✅ on behalf of any customer | ✅ on behalf of any customer |
+| Initialize payment | ✅ own | ✅ own | ✅ on behalf | ✅ on behalf |
+| Verify offline payment (approve/reject receipt) | — | — | — | ✅ |
+| View/edit other users | — | — | ✅ (customers/suppliers only) | ✅ all |
+| Promote/demote roles | — | — | — | ✅ |
+| Create staff accounts | — | — | ✅ (only staff role) | ✅ (any internal role) |
+| Approve new staff (activate) | — | — | — | ✅ |
+| Toggle staff per-feature permissions (client-login provision, batch mgmt) | — | — | — | ✅ |
+| Manage shipment batches | — | — | conditional* | ✅ |
+| Move packages between batches | — | — | conditional* | ✅ |
+| Approve dispatch batch cutoff | — | — | — | ✅ |
+| Provision new client login (invite link) | — | — | conditional* | ✅ |
+| View customer detail / orders / workbench | — | — | ✅ | ✅ |
+| CSV bulk-import users/suppliers | — | — | ✅ | ✅ |
+| Warehouse-verify order | — | — | ✅ | ✅ |
+| Update order status | — | — | ✅ | ✅ |
+| Soft-delete order | — | — | — | ✅ (admin+) |
+| Hard-delete (GDPR erase) own account | ✅ | ✅ | — | — |
+| Edit lane / office addresses / FX rate / pricing rules | — | — | partial (lane + ETA notes) | ✅ all |
+| Edit shipment type catalog / restricted goods | — | — | — | ✅ |
+| Edit notification templates | — | — | ✅ (admin+) | ✅ |
+| Send system-wide broadcast notification | — | — | — | ✅ |
+| Review gallery claims (anonymous goods / car) | — | — | ✅ | ✅ |
+| Create gallery items / adverts | — | — | ✅ | ✅ |
+| View AV scan status of uploaded files | — | — | ✅ | ✅ |
+| Read full reports (revenue, top customers, etc.) | — | — | ✅ most | ✅ all (incl. revenue/payment) |
+| Manage own MFA enrollment / recovery codes | — | — | ✅ | ✅ |
+| MFA required to log in | — | — | optional | **required** |
+| Toggle "require national ID" setting for staff onboarding | — | — | — | ✅ |
+| View/edit special-packaging surcharge catalog | — | — | view | edit |
+| Web Push subscribe / unsubscribe | — | — | ✅ | ✅ |
+| Trigger AV re-scan of a file | — | — | ✅ | ✅ |
+
+\* "conditional" means the staff member needs a specific superadmin-granted flag enabled on their account (`canManageShipmentBatches` or `canProvisionClientLogin`).
+
+### Mapping role guards to the inline auth notes
+
+Each endpoint in this doc has an **Auth** line. Translation:
+
+| Inline note | Allowed roles |
+|---|---|
+| `Auth: none` | Public — anyone |
+| `Auth: Bearer` | Any authenticated user (user / supplier / staff / superadmin) |
+| `Auth: Bearer (staff+)` | staff + superadmin |
+| `Auth: Bearer (admin+)` | staff + superadmin (same as above — "admin" here is the legacy synonym for "staff+", retained for clarity) |
+| `Auth: Bearer (superadmin)` | superadmin only |
+| `Auth: Bearer (Clerk token)` | Authenticated via Clerk JWT specifically — customer paths only |
+| `Auth: Bearer (internal JWT)` | Authenticated via the internal token specifically — staff/superadmin paths |
+| `Auth: Paystack signature` / `Auth: Svix signature` | Webhooks — provider-signed, no Bearer |
+
+For runtime confirmation, the `/openapi.json` spec documents each endpoint's `security: [{ bearerAuth: [] }]` requirement programmatically — generate a typed client and the auth requirements become part of the type signatures.
+
+### Special enforcement points beyond role
+
+- **MFA gate:** if a user has `mustEnrollMfa: true` in the login response, the FE must redirect them to enrollment before the dashboard. Superadmins cannot bypass; staff currently optional.
+- **`ADMIN_IP_WHITELIST`:** when set, only requests from listed IPs can reach `/auth/login` and `/internal/auth/login` (returns 403 otherwise).
+- **Idempotency-Key:** `POST /payments/initialize`, `POST /orders`, `POST /support/tickets` accept the header for replay safety — see [Idempotency contract](#idempotency-contract).
+- **Cloudflare Turnstile CAPTCHA:** 5 public mutation endpoints require `cf-turnstile-response` header.
+- **BOLA enforcement:** the API consistently checks resource ownership on `:id` paths — customers can only read/edit their own orders, payments, tickets, etc. Staff and superadmin can access any.
 
 ---
 
@@ -446,6 +536,11 @@ User object fields (used in responses below): `id, clerkId, email, firstName, la
 **Use:** fetch the current customer's profile — call on every Clerk session restore.
 **Auth:** Bearer.
 **Success 200:** `{ "success": true, "data": <User> }`.
+
+Notable fields the FE should be aware of:
+- `shippingMark` — string. Auto-generated at signup from the customer's name (Julius Adebowale → `julade`). Customer can replace it ONCE via PATCH.
+- `shippingMarkUserEditedAt` — ISO 8601 timestamp or `null`. If `null`, the customer's one-time edit is still available. If non-null, customer self-edits are now rejected with 409 (only staff can change it from this point on). **FE should use this to decide whether to show the "Edit shipping mark" affordance.**
+
 **Errors:** 401.
 
 ### `GET /api/v1/users/me/completeness`
@@ -466,14 +561,26 @@ User object fields (used in responses below): `id, clerkId, email, firstName, la
   "phone": "...", "whatsappNumber": "...",
   "addressStreet": "...", "addressCity": "...", "addressState": "...",
   "addressCountry": "...", "addressPostalCode": "...",
-  "shippingMark": "...",
+  "shippingMark": "juadeb",
   "consentMarketing": true, "notifyEmailAlerts": true,
   "notifySmsAlerts": true, "notifyInAppAlerts": true,
   "preferredLanguage": "en"
 }
 ```
-**Success 200:** `{ "success": true, "data": <User> }`.
-**Errors:** 401, 400 (validation).
+
+**Shipping mark rules:**
+- Format: 3–20 chars, lowercase letters + digits, must start with a letter. Input is auto-normalised — `JUADEB` becomes `juadeb`. Regex: `^[a-z][a-z0-9]{2,19}$`. Examples: `jay`, `juadeb`, `queen24`, `plural99`.
+- Customer can change `shippingMark` **once** via this endpoint. After that, the server records the timestamp in `shippingMarkUserEditedAt` and rejects further customer-driven changes.
+- Sending the same value as the existing mark is a no-op (doesn't consume the edit).
+- Customers cannot clear the mark (sending `null` or empty is silently ignored).
+- Staff can change a customer's mark any time via `PATCH /api/v1/users/:id` (no one-time limit applies there).
+
+**Success 200:** `{ "success": true, "data": <User> }` — including the updated `shippingMarkUserEditedAt`.
+
+**Errors:**
+- 401
+- 400 — validation (Zod schema or shipping mark format)
+- 409 `detail: "Shipping mark has already been set. Contact support to change it — only staff can edit it now."` — customer attempted to change a mark they've already set
 
 ### `GET /api/v1/users/me/notification-preferences`
 **Use:** load notification toggles for the settings screen.

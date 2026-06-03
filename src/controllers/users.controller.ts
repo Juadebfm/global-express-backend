@@ -3,6 +3,11 @@ import { usersService } from '../services/users.service'
 import { generateGdprExportPdf } from '../services/pdf-export.service'
 import { createAuditLog } from '../utils/audit'
 import { logSecurityEvent } from '../utils/security-events'
+import {
+  isValidShippingMark,
+  normaliseShippingMarkInput,
+  SHIPPING_MARK_REGEX,
+} from '../utils/shipping-mark'
 import { successResponse } from '../utils/response'
 import { PreferredLanguage, SupplierUpdateRequestStatus, UserRole } from '../types/enums'
 import type { PaginationParams } from '../types'
@@ -51,7 +56,9 @@ export const usersController = {
     }>,
     reply: FastifyReply,
   ) {
-    const patch = { ...request.body }
+    const patch: typeof request.body & { shippingMarkUserEditedAt?: Date } = {
+      ...request.body,
+    }
     const hasShippingMarkPatch = Object.prototype.hasOwnProperty.call(patch, 'shippingMark')
 
     if (hasShippingMarkPatch) {
@@ -62,23 +69,40 @@ export const usersController = {
 
       const existingShippingMark = currentUser.shippingMark?.trim() ?? ''
       const requestedShippingMark =
-        typeof patch.shippingMark === 'string' ? patch.shippingMark.trim() : patch.shippingMark
+        typeof patch.shippingMark === 'string'
+          ? normaliseShippingMarkInput(patch.shippingMark)
+          : patch.shippingMark
 
-      // Self-service rule: shipping mark is add-only.
-      if (existingShippingMark) {
-        if (requestedShippingMark !== existingShippingMark) {
-          return reply.code(403).send({
-            success: false,
-            message:
-              'Shipping mark cannot be changed from profile update. Please raise a support ticket for super admin approval.',
-          })
-        }
+      // No-op the patch when the normalised value matches what's already there.
+      if (existingShippingMark && requestedShippingMark === existingShippingMark) {
         delete patch.shippingMark
       } else if (!requestedShippingMark) {
-        // Empty/null updates are ignored when mark is not yet set.
+        // Customers cannot clear their shipping mark from self-service.
         delete patch.shippingMark
       } else {
+        // Customer wants to set or change their shipping mark.
+        //   - Reject if they've already consumed their one-time edit
+        //   - Reject if the format is invalid (3–20 lowercase alphanumeric, starts with letter)
+        //   - Otherwise accept + record the timestamp so subsequent edits 409
+        const alreadyConsumedOneTimeEdit = currentUser.shippingMarkUserEditedAt !== null
+
+        if (alreadyConsumedOneTimeEdit) {
+          return reply.code(409).send({
+            success: false,
+            message:
+              'Shipping mark has already been set. Contact support to change it — only staff can edit it now.',
+          })
+        }
+
+        if (!isValidShippingMark(requestedShippingMark)) {
+          return reply.code(400).send({
+            success: false,
+            message: `Shipping mark must match ${SHIPPING_MARK_REGEX.source} — 3–20 chars, lowercase letters and digits, must start with a letter. Examples: jay, juadeb, queen24, plural99.`,
+          })
+        }
+
         patch.shippingMark = requestedShippingMark
+        patch.shippingMarkUserEditedAt = new Date()
       }
     }
 
