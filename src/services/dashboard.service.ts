@@ -297,8 +297,12 @@ export class DashboardService {
     const rows = await db
       .select({
         period: sql<string>`to_char(date_trunc('month', ${orders.createdAt}), 'YYYY-MM')`,
-        year: sql<number>`extract(year from ${orders.createdAt})::int`,
-        month: sql<number>`extract(month from ${orders.createdAt})::int`,
+        // year/month are derived from the grouped expression (date_trunc),
+        // not the raw column — Postgres requires SELECT columns to either be
+        // in the GROUP BY verbatim or be derived from a GROUP BY expression.
+        // Using extract(... from raw column) would error with 42803.
+        year: sql<number>`extract(year from date_trunc('month', ${orders.createdAt}))::int`,
+        month: sql<number>`extract(month from date_trunc('month', ${orders.createdAt}))::int`,
         totalShipmentCount: sql<number>`count(*) filter (where (${orders.statusV2} is null or ${orders.statusV2} <> 'CANCELLED') )::int`,
         cancelledShipmentCount: sql<number>`count(*) filter (where ${orders.statusV2} = 'CANCELLED')::int`,
         deliveryCompletedCount: sql<number>`count(*) filter (where ${orders.statusV2} = ANY(${deliveredPgArr}::shipment_status_v2[]))::int`,
