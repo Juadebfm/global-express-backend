@@ -323,8 +323,8 @@ Optional L3 hardening (already L2-compliant):
   - Evidence: [.github/workflows/security.yml](.github/workflows/security.yml), [.github/workflows/codeql.yml](.github/workflows/codeql.yml)
 
 - [x] **10.3.1** Build pipeline integrity
-  - Status: ✅ All workflows now run on GitHub-hosted `ubuntu-latest` (ephemeral, isolated). Removed `runs-on: self-hosted` from both fly-deploy.yml and render-keepalive.yml. `flyctl deploy --remote-only` already runs the build on Fly's infra, so the GitHub runner only calls the Fly API — no functional change.
-  - Evidence: [.github/workflows/fly-deploy.yml](.github/workflows/fly-deploy.yml), [.github/workflows/render-keepalive.yml](.github/workflows/render-keepalive.yml)
+  - Status: ✅ All workflows run on GitHub-hosted `ubuntu-latest` (ephemeral, isolated). The historical `fly-deploy.yml` was deleted alongside the Fly app it targeted. The only remaining scheduled workflow (`render-keepalive.yml`) is also on `ubuntu-latest` and only performs a `curl` against the Render health endpoint.
+  - Evidence: [.github/workflows/render-keepalive.yml](.github/workflows/render-keepalive.yml), [.github/workflows/security.yml](.github/workflows/security.yml), [.github/workflows/codeql.yml](.github/workflows/codeql.yml)
 
 ---
 

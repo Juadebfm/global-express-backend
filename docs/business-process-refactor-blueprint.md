@@ -517,10 +517,13 @@ Response: `{ success: true, data: { paymentId, orderId, paymentCollectionStatus 
 
 #### 15.1 Connection Details
 
-- Base URL: `https://your-app-name-snowy-waterfall-9062.fly.dev`
+- Base URL (current): `https://global-express-backend-1.onrender.com`
+- Base URL (production target, when DNS cuts over): `https://api.globalexpress.kr`
 - API prefix: `/api/v1`
 - Swagger docs: `<base-url>/docs`
+- OpenAPI spec (for SDK generation): `<base-url>/openapi.json`
 - WebSocket: `wss://<host>/ws?token=<clerk-jwt>` (auth via query param, not Authorization header)
+- Health probe: `<base-url>/health` (liveness) and `<base-url>/readiness` (DB check)
 
 #### 15.2 Auth Architecture
 
@@ -579,9 +582,11 @@ UX rules:
 
 ```env
 VITE_CLERK_PUBLISHABLE_KEY=pk_live_...
-VITE_API_BASE_URL=https://your-app-name-snowy-waterfall-9062.fly.dev/api/v1
-VITE_WS_URL=wss://your-app-name-snowy-waterfall-9062.fly.dev/ws
+VITE_API_BASE_URL=https://global-express-backend-1.onrender.com/api/v1
+VITE_WS_URL=wss://global-express-backend-1.onrender.com/ws
 ```
+
+Once the `api.globalexpress.kr` DNS cuts over to Render, swap both hosts to that.
 
 #### 15.5 Authenticated API Calls
 
