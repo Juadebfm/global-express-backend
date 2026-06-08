@@ -30,8 +30,8 @@
     "backfill:status-v2": "tsx scripts/backfill-status-v2.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1038.0",
-    "@aws-sdk/s3-request-presigner": "^3.1038.0",
+    "@aws-sdk/client-s3": "^3.1063.0",
+    "@aws-sdk/s3-request-presigner": "^3.1063.0",
     "@clerk/backend": "^3.2.11",
     "@fastify/cors": "^10.0.2",
     "@fastify/etag": "^6.1.0",
