@@ -16,6 +16,10 @@ import {
   type NotificationTemplateChannel,
 } from '../services/settings-templates.service'
 import { settingsShipmentTypesService } from '../services/settings-shipment-types.service'
+import {
+  settingsBankAccountsService,
+  type Bank,
+} from '../services/settings-bank-accounts.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 import { PreferredLanguage, TransportMode, UserRole } from '../types/enums'
@@ -406,6 +410,42 @@ export const settingsController = {
       return reply.send(successResponse({ summary, ...data }))
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to update pricing settings'
+      return reply.code(400).send({ success: false, message })
+    }
+  },
+
+  async getBankAccounts(_request: FastifyRequest, reply: FastifyReply) {
+    const data = await settingsBankAccountsService.getBankAccountSettings()
+    return reply.send(successResponse(data))
+  },
+
+  async updateBankAccounts(
+    request: FastifyRequest<{
+      Body: {
+        beneficiaryName?: string
+        banks?: Bank[]
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const data = await settingsBankAccountsService.updateBankAccountSettings({
+        actorId: request.user.id,
+        beneficiaryName: request.body.beneficiaryName,
+        banks: request.body.banks,
+      })
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: 'Updated bank account settings',
+        resourceType: 'app_settings',
+        resourceId: 'bank_accounts',
+        request,
+      })
+
+      return reply.send(successResponse(data))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to update bank account settings'
       return reply.code(400).send({ success: false, message })
     }
   },

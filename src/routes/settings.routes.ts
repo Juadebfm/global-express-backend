@@ -347,6 +347,63 @@ const templatePatchBodySchema = z
 export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
+  const bankAccountSchema = z.object({
+    currency: z.string().min(1),
+    accountNumber: z.string().min(1),
+  })
+
+  const bankSchema = z.object({
+    bankName: z.string().min(1),
+    accounts: z.array(bankAccountSchema).min(1),
+  })
+
+  const bankAccountsResponseSchema = z.object({
+    beneficiaryName: z.string(),
+    banks: z.array(bankSchema),
+    updatedAt: z.string().nullable(),
+  })
+
+  app.get('/bank-accounts', {
+    schema: {
+      tags: ['Settings - Bank Accounts'],
+      summary: 'Get bank account details for payment (public)',
+      description: 'Returns the bank account details customers should use to make bank transfer payments. No authentication required.',
+      response: {
+        200: z.object({ success: z.literal(true), data: bankAccountsResponseSchema }),
+      },
+    },
+    handler: settingsController.getBankAccounts,
+  })
+
+  app.patch('/bank-accounts', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Settings - Bank Accounts'],
+      summary: 'Update bank account details (superadmin)',
+      security: [{ bearerAuth: [] }],
+      body: z
+        .object({
+          beneficiaryName: z.string().min(1).optional(),
+          banks: z.array(bankSchema).min(1).optional(),
+        })
+        .superRefine((value, ctx) => {
+          if (value.beneficiaryName === undefined && value.banks === undefined) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'At least one mutation is required: beneficiaryName or banks',
+            })
+          }
+        }),
+      response: {
+        200: z.object({ success: z.literal(true), data: bankAccountsResponseSchema }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: settingsController.updateBankAccounts,
+  })
+
   app.get('/logistics', {
     preHandler: [authenticate, requireStaffOrAbove],
     schema: {
