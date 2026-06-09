@@ -9,7 +9,7 @@ import swaggerUi from '@fastify/swagger-ui'
 import etag from '@fastify/etag'
 import fastifyMetrics from 'fastify-metrics'
 import {
-  serializerCompiler,
+  serializerCompiler as zodSerializerCompiler,
   validatorCompiler,
   jsonSchemaTransform,
 } from 'fastify-type-provider-zod'
@@ -51,7 +51,14 @@ export async function buildApp() {
 
   // ─── Zod type provider ───────────────────────────────────────────────────
   app.setValidatorCompiler(validatorCompiler)
-  app.setSerializerCompiler(serializerCompiler)
+  // fastify-type-provider-zod v6 runs safeParse(schema, data) before JSON.stringify.
+  // Drizzle returns timestamp columns as Date objects; z.string() rejects them → 500.
+  // JSON.parse(JSON.stringify(data)) converts Dates to ISO strings before Zod sees them.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  app.setSerializerCompiler((opts: any) => {
+    const inner = zodSerializerCompiler(opts)
+    return (data) => inner(JSON.parse(JSON.stringify(data)))
+  })
 
   // ─── OpenAPI / Swagger ────────────────────────────────────────────────────
   // Generates an OpenAPI 3 spec from the Zod schemas on every route and serves
