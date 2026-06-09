@@ -774,6 +774,15 @@ export class PaymentsService {
     return payment ?? null
   }
 
+  async listPaymentsForOrder(orderId: string) {
+    return db
+      .select({ ...getTableColumns(payments), trackingNumber: orders.trackingNumber })
+      .from(payments)
+      .innerJoin(orders, eq(payments.orderId, orders.id))
+      .where(eq(payments.orderId, orderId))
+      .orderBy(desc(payments.createdAt))
+  }
+
   async listPayments(
     params: PaginationParams & { userId?: string; status?: PaymentStatus },
   ) {

@@ -167,6 +167,14 @@ export const paymentsController = {
     return reply.send(successResponse(payment))
   },
 
+  async listPaymentsForOrder(
+    request: FastifyRequest<{ Params: { orderId: string } }>,
+    reply: FastifyReply,
+  ) {
+    const result = await paymentsService.listPaymentsForOrder(request.params.orderId)
+    return reply.send(successResponse(result))
+  },
+
   async listPayments(
     request: FastifyRequest<{
       Querystring: { page?: string; limit?: string; userId?: string; status?: string }

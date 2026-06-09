@@ -353,4 +353,22 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
     },
     handler: paymentsController.recordOfflinePayment,
   })
+
+  app.get('/orders/:orderId/payments', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Payments — Admin'],
+      summary: 'List payments for an order (staff+)',
+      description: 'Returns all payment records attached to a given order, ordered newest first. Includes Paystack online payments, offline transfers/cash recorded by staff, and customer receipt submissions.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ orderId: z.string().uuid().describe('Order UUID') }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.array(paymentResponseSchema) }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: paymentsController.listPaymentsForOrder,
+  })
 }
