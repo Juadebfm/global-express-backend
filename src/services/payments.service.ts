@@ -1,5 +1,5 @@
 import { createHmac } from 'crypto'
-import { eq, and, desc, sql, isNull } from 'drizzle-orm'
+import { eq, and, desc, sql, isNull, getTableColumns } from 'drizzle-orm'
 import { paystackClient } from '../config/http-clients'
 import { db } from '../config/db'
 import { avScanService } from './av-scan.service'
@@ -78,6 +78,7 @@ export interface SubmitPaymentReceiptInput {
 
 interface ResolvedPaymentTarget {
   orderId: string
+  trackingNumber: string
   senderId: string
   billingSupplierId: string | null
   invoiceId: string
@@ -172,7 +173,7 @@ export class PaymentsService {
       .returning()
 
     return {
-      payment,
+      payment: { ...payment, trackingNumber: target.trackingNumber },
       authorizationUrl: authorization_url,
       reference,
     }
@@ -276,7 +277,7 @@ export class PaymentsService {
       },
     })
 
-    return payment
+    return { ...payment, trackingNumber: target.trackingNumber }
   }
 
   async verifySubmittedReceipt(input: {
@@ -386,7 +387,13 @@ export class PaymentsService {
       },
     })
 
-    return updated
+    const [orderRow] = await db
+      .select({ trackingNumber: orders.trackingNumber })
+      .from(orders)
+      .where(eq(orders.id, updated.orderId))
+      .limit(1)
+
+    return { ...updated, trackingNumber: orderRow?.trackingNumber ?? '' }
   }
 
   private async resolvePaymentTarget(input: {
@@ -440,6 +447,7 @@ export class PaymentsService {
     const [order] = await db
       .select({
         id: orders.id,
+        trackingNumber: orders.trackingNumber,
         senderId: orders.senderId,
         billingSupplierId: orders.billingSupplierId,
       })
@@ -472,6 +480,7 @@ export class PaymentsService {
 
     return {
       orderId: order.id,
+      trackingNumber: order.trackingNumber,
       senderId: order.senderId,
       billingSupplierId: order.billingSupplierId,
       invoiceId: resolvedInvoiceId,
@@ -537,8 +546,9 @@ export class PaymentsService {
       existing.paystackTransactionId === transactionId
     ) {
       const [current] = await db
-        .select()
+        .select({ ...getTableColumns(payments), trackingNumber: orders.trackingNumber })
         .from(payments)
+        .innerJoin(orders, eq(payments.orderId, orders.id))
         .where(eq(payments.id, existing.id))
         .limit(1)
       return current ?? null
@@ -566,7 +576,13 @@ export class PaymentsService {
       })
     }
 
-    return updated ?? null
+    if (!updated) return null
+    const [orderRow] = await db
+      .select({ trackingNumber: orders.trackingNumber })
+      .from(orders)
+      .where(eq(orders.id, updated.orderId))
+      .limit(1)
+    return { ...updated, trackingNumber: orderRow?.trackingNumber ?? '' }
   }
 
   async recordOfflinePayment(input: {
@@ -639,7 +655,7 @@ export class PaymentsService {
       paidAt: payment.paidAt,
     })
 
-    return payment
+    return { ...payment, trackingNumber: target.trackingNumber }
   }
 
   /**
@@ -738,8 +754,9 @@ export class PaymentsService {
 
   async getPaymentById(id: string) {
     const [payment] = await db
-      .select()
+      .select({ ...getTableColumns(payments), trackingNumber: orders.trackingNumber })
       .from(payments)
+      .innerJoin(orders, eq(payments.orderId, orders.id))
       .where(eq(payments.id, id))
       .limit(1)
 
@@ -748,8 +765,9 @@ export class PaymentsService {
 
   async getPaymentByReference(reference: string) {
     const [payment] = await db
-      .select()
+      .select({ ...getTableColumns(payments), trackingNumber: orders.trackingNumber })
       .from(payments)
+      .innerJoin(orders, eq(payments.orderId, orders.id))
       .where(eq(payments.paystackReference, reference))
       .limit(1)
 
@@ -773,8 +791,9 @@ export class PaymentsService {
 
     const [data, countResult] = await Promise.all([
       db
-        .select()
+        .select({ ...getTableColumns(payments), trackingNumber: orders.trackingNumber })
         .from(payments)
+        .innerJoin(orders, eq(payments.orderId, orders.id))
         .where(baseWhere)
         .orderBy(desc(payments.createdAt))
         .limit(params.limit)

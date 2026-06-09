@@ -11,6 +11,7 @@ import { PaymentStatus, PaymentType } from '../types/enums'
 const paymentResponseSchema = z.object({
   id: z.string().uuid().describe('Payment UUID'),
   orderId: z.string().uuid().describe('UUID of the linked order'),
+  trackingNumber: z.string().describe('Tracking number of the linked order'),
   invoiceId: z.string().uuid().nullable().describe('UUID of the linked invoice (preferred billing entity)'),
   userId: z.string().uuid().describe('UUID of the customer who made the payment'),
   amount: z.string().describe('Amount in major currency units (e.g. "5000" = ₦5,000)'),
