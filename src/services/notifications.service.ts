@@ -624,17 +624,16 @@ export class NotificationsService {
    * A user sees: personal (userId=me) OR broadcast OR role-targeted (if role matches).
    */
   private buildVisibilityFilter(userId: string, visibleRoles: UserRole[]) {
-    const conditions = [
-      sql`${notifications.userId} = ${userId}`,
-      sql`${notifications.isBroadcast} = true`,
+    const conditions: ReturnType<typeof eq>[] = [
+      eq(notifications.userId, userId),
+      eq(notifications.isBroadcast, true),
     ]
 
     if (visibleRoles.length > 0) {
-      const roleList = visibleRoles.map((r) => `'${r}'`).join(', ')
-      conditions.push(sql.raw(`${notifications.targetRole.name} IN (${roleList})`))
+      conditions.push(inArray(notifications.targetRole, visibleRoles) as ReturnType<typeof eq>)
     }
 
-    return sql`(${sql.join(conditions, sql` OR `)})`
+    return or(...conditions)!
   }
 
   private formatForUser(
