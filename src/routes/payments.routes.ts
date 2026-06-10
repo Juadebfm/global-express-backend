@@ -317,24 +317,26 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
     schema: {
       tags: ['Payments — Admin'],
       summary: 'Record an offline payment (staff+)',
-      description: `Records a cash or bank-transfer payment collected outside of Paystack. Immediately marks the order's \`paymentCollectionStatus\` as \`PAID_IN_FULL\`.
+      description: `Records a cash or bank-transfer payment. Coverage is checked automatically against \`finalChargeUsd\` — the order moves to \`PAID_IN_FULL\` only when the total received meets or exceeds the charge. Returns a \`warning\` when payment is partial or the order is not yet priced.
 
-**Example — bank transfer:**
+**Example — NGN bank transfer:**
 \`\`\`json
 {
   "userId": "550e8400-e29b-41d4-a716-446655440000",
   "amount": 45000,
+  "currency": "NGN",
   "paymentType": "transfer",
   "proofReference": "TRF-2024-00123",
   "note": "Customer transferred ₦45,000 on Feb 26"
 }
 \`\`\`
 
-**Example — cash:**
+**Example — USD cash:**
 \`\`\`json
 {
   "userId": "550e8400-e29b-41d4-a716-446655440000",
-  "amount": 20000,
+  "amount": 200,
+  "currency": "USD",
   "paymentType": "cash",
   "note": "Collected at Lagos office"
 }
@@ -344,19 +346,59 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
       body: z.object({
         userId: z.string().uuid().describe('UUID of the customer making the payment'),
         invoiceId: z.string().uuid().optional().describe('Invoice UUID (preferred). If omitted, backend resolves from orderId.'),
-        amount: z.number().positive().describe('Amount in major currency units (NGN) — e.g. 45000 = ₦45,000'),
+        amount: z.number().positive().describe('Amount in major currency units'),
+        currency: z.enum(['USD', 'NGN']).optional().default('NGN').describe('Currency of the payment amount (default: NGN)'),
         paymentType: z.enum(['transfer', 'cash']).describe('Offline payment method: transfer | cash'),
         proofReference: z.string().optional().describe('Bank receipt / transfer reference code'),
         note: z.string().optional().describe('Optional staff note about the payment'),
       }),
       response: {
-        201: z.object({ success: z.literal(true), data: paymentResponseSchema }),
+        201: z.object({
+          success: z.literal(true),
+          data: paymentResponseSchema.extend({
+            warning: z.string().nullable().describe('Set when payment is partial or order is unpriced — show to the recording staff member'),
+          }),
+        }),
+        400: errorResponseSchema,
         401: errorResponseSchema,
         403: errorResponseSchema,
         404: errorResponseSchema,
       },
     },
     handler: paymentsController.recordOfflinePayment,
+  })
+
+  app.patch('/orders/:orderId/waive-balance', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Payments — SuperAdmin'],
+      summary: 'Waive remaining balance (superadmin)',
+      description: `Marks an order as \`PAID_IN_FULL\` without recording a payment — use for goodwill write-offs, rounding differences, or exceptional cases. Requires a reason. Notifies the customer and staff.`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ orderId: z.string().uuid().describe('UUID of the order') }),
+      body: z.object({
+        reason: z.string().min(5).describe('Reason for waiving the balance — stored for audit trail'),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            orderId: z.string().uuid(),
+            trackingNumber: z.string(),
+            paymentCollectionStatus: z.literal('PAID_IN_FULL'),
+            waivedBy: z.string().uuid(),
+            reason: z.string(),
+            waivedAt: z.string(),
+          }),
+        }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+        409: errorResponseSchema,
+      },
+    },
+    handler: paymentsController.waiveOrderBalance,
   })
 
   app.get('/orders/:orderId/payments', {

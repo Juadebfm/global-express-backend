@@ -627,7 +627,8 @@ export class PaymentsService {
     invoiceId?: string
     userId: string
     recordedBy: string
-    amount: number // major currency units (NGN)
+    amount: number
+    currency?: string
     paymentType: PaymentType.TRANSFER | PaymentType.CASH
     proofReference?: string
     note?: string
@@ -637,62 +638,150 @@ export class PaymentsService {
       invoiceId: input.invoiceId,
     })
     const resolvedOrderId = target.orderId
+    const currency = (input.currency ?? 'NGN').toUpperCase()
 
-    // Validate: order must exist and amount must not exceed the order charge
     const [order] = await db
       .select({ finalChargeUsd: orders.finalChargeUsd, calculatedChargeUsd: orders.calculatedChargeUsd })
       .from(orders)
       .where(and(eq(orders.id, resolvedOrderId), isNull(orders.deletedAt)))
 
     if (!order) {
-      throw new Error('Order not found')
+      throw httpError('Order not found', 404)
     }
 
     if (input.amount <= 0) {
-      throw new Error('Payment amount must be greater than zero')
+      throw httpError('Payment amount must be greater than zero', 400)
     }
 
+    // Sanity check: catch obvious typos (e.g. extra zeros)
     const orderCharge = parseFloat(order.finalChargeUsd ?? order.calculatedChargeUsd ?? '0')
-    if (orderCharge > 0 && input.amount > orderCharge * 100) {
-      // Sanity check: amount in NGN should not wildly exceed the USD charge * rough conversion
-      // This prevents accidental or malicious extreme amounts (e.g. staff typo adding extra zeros)
-      throw new Error('Payment amount appears unreasonably high for this order')
+    if (orderCharge > 0) {
+      const limit = currency === 'USD' ? orderCharge * 3 : orderCharge * 3000
+      if (input.amount > limit) {
+        throw httpError('Payment amount appears unreasonably high for this order', 400)
+      }
     }
 
-    const [payment] = await db.transaction(async (tx) => {
-      const [newPayment] = await tx
-        .insert(payments)
-        .values({
-          orderId: resolvedOrderId,
-          invoiceId: target.invoiceId,
-          userId: input.userId,
-          amount: String(input.amount),
-          currency: 'NGN',
-          // paystackReference intentionally null for offline payments
-          status: PaymentStatus.SUCCESSFUL,
-          paymentType: input.paymentType,
-          recordedBy: input.recordedBy,
-          proofReference: input.proofReference ?? null,
-          note: input.note ?? null,
-          paidAt: new Date(),
-        })
-        .returning()
+    const [payment] = await db
+      .insert(payments)
+      .values({
+        orderId: resolvedOrderId,
+        invoiceId: target.invoiceId,
+        userId: input.userId,
+        amount: String(input.amount),
+        currency,
+        status: PaymentStatus.SUCCESSFUL,
+        paymentType: input.paymentType,
+        recordedBy: input.recordedBy,
+        proofReference: input.proofReference ?? null,
+        note: input.note ?? null,
+        paidAt: new Date(),
+      })
+      .returning()
 
-      await tx
-        .update(orders)
-        .set({ paymentCollectionStatus: 'PAID_IN_FULL', updatedAt: new Date() })
-        .where(eq(orders.id, resolvedOrderId))
+    const finalCharge = order.finalChargeUsd ? parseFloat(order.finalChargeUsd) : null
+    const totalPaidUsd = await this.getTotalPaidUsdForOrder(resolvedOrderId)
 
-      return [newPayment]
+    let newStatus: PaymentCollectionStatus
+    let warning: string | null = null
+
+    if (finalCharge === null) {
+      newStatus = PaymentCollectionStatus.PAID_IN_FULL
+      warning = 'Order has no confirmed price yet. Payment recorded — final charge will be set after warehouse verification.'
+    } else if (totalPaidUsd >= finalCharge) {
+      newStatus = PaymentCollectionStatus.PAID_IN_FULL
+    } else {
+      newStatus = PaymentCollectionStatus.PAYMENT_IN_PROGRESS
+      const remaining = (finalCharge - totalPaidUsd).toFixed(2)
+      warning = `Payment partially covers the order total. $${remaining} USD still outstanding.`
+    }
+
+    await db
+      .update(orders)
+      .set({ paymentCollectionStatus: newStatus, updatedAt: new Date() })
+      .where(eq(orders.id, resolvedOrderId))
+
+    if (newStatus === PaymentCollectionStatus.PAID_IN_FULL) {
+      await dispatchBatchesService.markInvoicePaidByOrder({
+        orderId: resolvedOrderId,
+        actorId: input.recordedBy,
+        paidAt: payment.paidAt,
+      })
+    }
+
+    void notificationsService.notifyRole({
+      targetRole: UserRole.STAFF,
+      type: 'payment_received',
+      title: 'Offline Payment Recorded',
+      body: `${currency} ${input.amount} recorded for order ${resolvedOrderId}.`,
+      metadata: { paymentId: payment.id, orderId: resolvedOrderId },
     })
+
+    return { ...payment, trackingNumber: target.trackingNumber, warning }
+  }
+
+  async waiveOrderBalance(input: {
+    orderId: string
+    actorId: string
+    reason: string
+  }) {
+    const [order] = await db
+      .select({
+        id: orders.id,
+        trackingNumber: orders.trackingNumber,
+        paymentCollectionStatus: orders.paymentCollectionStatus,
+        senderId: orders.senderId,
+      })
+      .from(orders)
+      .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order) {
+      throw httpError('Order not found', 404)
+    }
+
+    if (order.paymentCollectionStatus === PaymentCollectionStatus.PAID_IN_FULL) {
+      throw httpError('Order is already marked as paid in full', 409)
+    }
+
+    await db
+      .update(orders)
+      .set({ paymentCollectionStatus: PaymentCollectionStatus.PAID_IN_FULL, updatedAt: new Date() })
+      .where(eq(orders.id, input.orderId))
 
     await dispatchBatchesService.markInvoicePaidByOrder({
-      orderId: resolvedOrderId,
-      actorId: input.recordedBy,
-      paidAt: payment.paidAt,
+      orderId: input.orderId,
+      actorId: input.actorId,
+      paidAt: new Date(),
     })
 
-    return { ...payment, trackingNumber: target.trackingNumber }
+    void notificationsService.notifyRole({
+      targetRole: UserRole.STAFF,
+      type: 'payment_received',
+      title: 'Balance Waived',
+      body: `Remaining balance waived for order ${order.trackingNumber}. Reason: ${input.reason}`,
+      metadata: { orderId: input.orderId },
+    })
+
+    await notifyUser({
+      userId: order.senderId,
+      orderId: input.orderId,
+      type: 'payment_event',
+      title: 'Balance Waived',
+      subtitle: order.trackingNumber,
+      body: 'Your remaining balance has been waived. Your order is now marked as paid in full.',
+      createdBy: input.actorId,
+      metadata: { orderId: input.orderId },
+    })
+
+    return {
+      orderId: input.orderId,
+      trackingNumber: order.trackingNumber,
+      paymentCollectionStatus: PaymentCollectionStatus.PAID_IN_FULL,
+      waivedBy: input.actorId,
+      reason: input.reason,
+      waivedAt: new Date().toISOString(),
+    }
   }
 
   /**

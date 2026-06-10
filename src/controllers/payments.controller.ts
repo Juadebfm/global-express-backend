@@ -214,6 +214,7 @@ export const paymentsController = {
         userId: string
         invoiceId?: string
         amount: number
+        currency?: string
         paymentType: PaymentType.TRANSFER | PaymentType.CASH
         proofReference?: string
         note?: string
@@ -227,11 +228,28 @@ export const paymentsController = {
       userId: request.body.userId,
       recordedBy: request.user.id,
       amount: request.body.amount,
+      currency: request.body.currency,
       paymentType: request.body.paymentType,
       proofReference: request.body.proofReference,
       note: request.body.note,
     })
 
     return reply.code(201).send(successResponse(payment))
+  },
+
+  async waiveOrderBalance(
+    request: FastifyRequest<{
+      Params: { orderId: string }
+      Body: { reason: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await paymentsService.waiveOrderBalance({
+      orderId: request.params.orderId,
+      actorId: request.user.id,
+      reason: request.body.reason,
+    })
+
+    return reply.send(successResponse(result))
   },
 }
