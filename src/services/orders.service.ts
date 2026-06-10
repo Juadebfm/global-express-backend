@@ -8,6 +8,7 @@ import {
   invoiceAttachments,
   shipmentMeasurements,
   users,
+  payments,
 } from '../../drizzle/schema'
 import { appSettings } from '../../drizzle/schema/app-settings'
 import { encrypt, decrypt } from '../utils/encryption'
@@ -19,6 +20,7 @@ import { sendOrderStatusWhatsApp } from '../notifications/whatsapp'
 import { notifyUser } from './notifications.service'
 import { orderStatusEventsService } from './order-status-events.service'
 import { pricingV2Service, SEA_CBM_TO_KG_FACTOR } from './pricing-v2.service'
+import { settingsFxRateService } from './settings-fx-rate.service'
 import { settingsTemplatesService } from './settings-templates.service'
 import { dispatchBatchesService } from './dispatch-batches.service'
 import {
@@ -33,6 +35,8 @@ import {
 import type { PaginationParams } from '../types'
 import {
   InvoiceAttachmentType,
+  PaymentCollectionStatus,
+  PaymentStatus,
   ShipmentPayer,
   ShipmentStatusV2,
   ShipmentType,
@@ -291,7 +295,9 @@ export class OrdersService {
       .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
       .limit(1)
 
-    return order ? this.decryptOrder(order) : null
+    if (!order) return null
+    const totalPaidUsd = await this.getTotalPaidUsd(order.id)
+    return this.decryptOrder(order, totalPaidUsd)
   }
 
   async getOrderByTrackingNumber(trackingNumber: string) {
@@ -301,7 +307,9 @@ export class OrdersService {
       .where(and(eq(orders.trackingNumber, trackingNumber), isNull(orders.deletedAt)))
       .limit(1)
 
-    return order ? this.decryptOrder(order) : null
+    if (!order) return null
+    const totalPaidUsd = await this.getTotalPaidUsd(order.id)
+    return this.decryptOrder(order, totalPaidUsd)
   }
 
   async updateOrderStatus(id: string, input: UpdateOrderStatusInput) {
@@ -855,6 +863,19 @@ export class OrdersService {
         })
     })
 
+    // If the order was already marked PAID_IN_FULL before warehouse verification,
+    // check whether the total received covers the now-confirmed charge.
+    // If not, reset to UNPAID so the customer can pay the difference.
+    if (existing.paymentCollectionStatus === PaymentCollectionStatus.PAID_IN_FULL) {
+      const totalPaidUsd = await this.getTotalPaidUsd(id)
+      if (totalPaidUsd < finalChargeUsd) {
+        await db
+          .update(orders)
+          .set({ paymentCollectionStatus: PaymentCollectionStatus.UNPAID, updatedAt: new Date() })
+          .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
+      }
+    }
+
     await dispatchBatchesService.ensureDraftInvoiceForOrder({
       orderId: id,
       actorId: input.verifiedBy,
@@ -1298,6 +1319,20 @@ export class OrdersService {
     return updated ? this.decryptOrder(updated) : null
   }
 
+  private async getTotalPaidUsd(orderId: string): Promise<number> {
+    const [fxRate, rows] = await Promise.all([
+      settingsFxRateService.getEffectiveRate().catch(() => 1500),
+      db
+        .select({ amount: payments.amount, currency: payments.currency })
+        .from(payments)
+        .where(and(eq(payments.orderId, orderId), eq(payments.status, PaymentStatus.SUCCESSFUL))),
+    ])
+    return rows.reduce((sum, row) => {
+      const val = parseFloat(row.amount)
+      return Number.isFinite(val) ? sum + (row.currency.toUpperCase() === 'USD' ? val : val / fxRate) : sum
+    }, 0)
+  }
+
   private computePaymentMeta(order: typeof orders.$inferSelect): {
     paymentNote: string | null
     estimatedChargeUsd: string | null
@@ -1330,12 +1365,15 @@ export class OrdersService {
     return { paymentNote, estimatedChargeUsd }
   }
 
-  private decryptOrder(order: typeof orders.$inferSelect) {
-    // amountDue = finalChargeUsd when payment not yet collected, null when paid or not yet priced
-    const amountDue =
-      order.paymentCollectionStatus !== 'PAID_IN_FULL' && order.finalChargeUsd !== null
-        ? order.finalChargeUsd
-        : null
+  private decryptOrder(order: typeof orders.$inferSelect, totalPaidUsd?: number) {
+    const finalCharge = order.finalChargeUsd ? parseFloat(order.finalChargeUsd) : null
+    let amountDue: string | null = null
+    if (order.paymentCollectionStatus !== 'PAID_IN_FULL' && finalCharge !== null) {
+      amountDue =
+        totalPaidUsd !== undefined
+          ? Math.max(0, finalCharge - totalPaidUsd).toFixed(2)
+          : order.finalChargeUsd
+    }
 
     const { paymentNote, estimatedChargeUsd } = this.computePaymentMeta(order)
 
@@ -1348,6 +1386,7 @@ export class OrdersService {
       pickupRepName: order.pickupRepName ? decrypt(order.pickupRepName) : null,
       pickupRepPhone: order.pickupRepPhone ? decrypt(order.pickupRepPhone) : null,
       amountDue,
+      totalPaidUsd: totalPaidUsd !== undefined ? totalPaidUsd.toFixed(2) : null,
       paymentNote,
       estimatedChargeUsd,
       priceCalculatedAt: order.priceCalculatedAt?.toISOString() ?? null,

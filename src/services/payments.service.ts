@@ -12,6 +12,7 @@ import { env } from '../config/env'
 import type { PaginationParams } from '../types'
 import { PaymentStatus, PaymentType } from '../types/enums'
 import { uploadsService } from './uploads.service'
+import { settingsFxRateService } from './settings-fx-rate.service'
 
 const ALLOWED_RECEIPT_CONTENT_TYPES = new Set([
   'application/pdf',
@@ -280,6 +281,20 @@ export class PaymentsService {
     return { ...payment, trackingNumber: target.trackingNumber }
   }
 
+  async getTotalPaidUsdForOrder(orderId: string): Promise<number> {
+    const [fxRate, rows] = await Promise.all([
+      settingsFxRateService.getEffectiveRate().catch(() => 1500),
+      db
+        .select({ amount: payments.amount, currency: payments.currency })
+        .from(payments)
+        .where(and(eq(payments.orderId, orderId), eq(payments.status, PaymentStatus.SUCCESSFUL))),
+    ])
+    return rows.reduce((sum, row) => {
+      const val = parseFloat(row.amount)
+      return Number.isFinite(val) ? sum + (row.currency.toUpperCase() === 'USD' ? val : val / fxRate) : sum
+    }, 0)
+  }
+
   async verifySubmittedReceipt(input: {
     paymentId: string
     verifiedBy: string
@@ -319,20 +334,42 @@ export class PaymentsService {
       throw httpError('Payment not found', 404)
     }
 
+    let warning: string | null = null
+
     if (isApproved) {
+      const [orderData] = await db
+        .select({ finalChargeUsd: orders.finalChargeUsd })
+        .from(orders)
+        .where(eq(orders.id, payment.orderId))
+        .limit(1)
+
+      const finalCharge = orderData?.finalChargeUsd ? parseFloat(orderData.finalChargeUsd) : null
+      const totalPaidUsd = await this.getTotalPaidUsdForOrder(payment.orderId)
+
+      let newStatus: PaymentCollectionStatus
+      if (finalCharge === null) {
+        newStatus = PaymentCollectionStatus.PAID_IN_FULL
+        warning = 'Order has no confirmed price yet. Payment accepted — final charge will be set after warehouse verification.'
+      } else if (totalPaidUsd >= finalCharge) {
+        newStatus = PaymentCollectionStatus.PAID_IN_FULL
+      } else {
+        newStatus = PaymentCollectionStatus.PAYMENT_IN_PROGRESS
+        const remaining = (finalCharge - totalPaidUsd).toFixed(2)
+        warning = `Payment partially covers the order total. $${remaining} USD still outstanding.`
+      }
+
       await db
         .update(orders)
-        .set({
-          paymentCollectionStatus: PaymentCollectionStatus.PAID_IN_FULL,
-          updatedAt: now,
-        })
+        .set({ paymentCollectionStatus: newStatus, updatedAt: now })
         .where(eq(orders.id, payment.orderId))
 
-      await dispatchBatchesService.markInvoicePaidByOrder({
-        orderId: payment.orderId,
-        actorId: input.verifiedBy,
-        paidAt: updated.paidAt,
-      })
+      if (newStatus === PaymentCollectionStatus.PAID_IN_FULL) {
+        await dispatchBatchesService.markInvoicePaidByOrder({
+          orderId: payment.orderId,
+          actorId: input.verifiedBy,
+          paidAt: updated.paidAt,
+        })
+      }
 
       void notificationsService.notifyRole({
         targetRole: UserRole.STAFF,
@@ -393,7 +430,7 @@ export class PaymentsService {
       .where(eq(orders.id, updated.orderId))
       .limit(1)
 
-    return { ...updated, trackingNumber: orderRow?.trackingNumber ?? '' }
+    return { ...updated, trackingNumber: orderRow?.trackingNumber ?? '', warning }
   }
 
   private async resolvePaymentTarget(input: {

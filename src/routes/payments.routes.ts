@@ -152,7 +152,7 @@ After the customer pays and returns to your \`callbackUrl\`, call \`POST /api/v1
       tags: ['Payments — SuperAdmin'],
       summary: 'Verify a submitted payment receipt',
       description:
-        'Superadmin approves or rejects a pending receipt submission. Approval marks payment successful and updates shipment payment collection state.',
+        'Superadmin approves or rejects a pending receipt submission. On approval, checks total payments vs final charge — sets PAID_IN_FULL if fully covered, otherwise PAYMENT_IN_PROGRESS. Returns a `warning` when payment is partial or the order is not yet priced.',
       security: [{ bearerAuth: [] }],
       params: z.object({ id: z.string().uuid().describe('Payment UUID') }),
       body: z.object({
@@ -160,7 +160,12 @@ After the customer pays and returns to your \`callbackUrl\`, call \`POST /api/v1
         note: z.string().optional().describe('Optional reviewer note'),
       }),
       response: {
-        200: z.object({ success: z.literal(true), data: paymentResponseSchema }),
+        200: z.object({
+          success: z.literal(true),
+          data: paymentResponseSchema.extend({
+            warning: z.string().nullable().describe('Set when payment is partial or order is unpriced — show to the verifying admin'),
+          }),
+        }),
         401: errorResponseSchema,
         403: errorResponseSchema,
         404: errorResponseSchema,
