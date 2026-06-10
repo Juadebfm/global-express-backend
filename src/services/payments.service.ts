@@ -767,9 +767,9 @@ export class PaymentsService {
       userId: order.senderId,
       orderId: input.orderId,
       type: 'payment_event',
-      title: 'Balance Waived',
+      title: 'Payment Confirmed',
       subtitle: order.trackingNumber,
-      body: 'Your remaining balance has been waived. Your order is now marked as paid in full.',
+      body: `Payment for your order ${order.trackingNumber} has been confirmed. You're all set.`,
       createdBy: input.actorId,
       metadata: { orderId: input.orderId },
     })
