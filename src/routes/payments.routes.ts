@@ -368,38 +368,6 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
     handler: paymentsController.recordOfflinePayment,
   })
 
-  app.patch('/orders/:orderId/waive-balance', {
-    preHandler: [authenticate, requireSuperAdmin],
-    schema: {
-      tags: ['Payments — SuperAdmin'],
-      summary: 'Waive remaining balance (superadmin)',
-      description: `Marks an order as \`PAID_IN_FULL\` without recording a payment — use for goodwill write-offs, rounding differences, or exceptional cases. Requires a reason. Notifies the customer and staff.`,
-      security: [{ bearerAuth: [] }],
-      params: z.object({ orderId: z.string().uuid().describe('UUID of the order') }),
-      body: z.object({
-        reason: z.string().min(5).describe('Reason for waiving the balance — stored for audit trail'),
-      }),
-      response: {
-        200: z.object({
-          success: z.literal(true),
-          data: z.object({
-            orderId: z.string().uuid(),
-            trackingNumber: z.string(),
-            paymentCollectionStatus: z.literal('PAID_IN_FULL'),
-            waivedBy: z.string().uuid(),
-            reason: z.string(),
-            waivedAt: z.string(),
-          }),
-        }),
-        400: errorResponseSchema,
-        401: errorResponseSchema,
-        403: errorResponseSchema,
-        404: errorResponseSchema,
-        409: errorResponseSchema,
-      },
-    },
-    handler: paymentsController.waiveOrderBalance,
-  })
 
   app.get('/orders/:orderId/payments', {
     preHandler: [authenticate, requireStaffOrAbove],

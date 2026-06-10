@@ -237,19 +237,4 @@ export const paymentsController = {
     return reply.code(201).send(successResponse(payment))
   },
 
-  async waiveOrderBalance(
-    request: FastifyRequest<{
-      Params: { orderId: string }
-      Body: { reason: string }
-    }>,
-    reply: FastifyReply,
-  ) {
-    const result = await paymentsService.waiveOrderBalance({
-      orderId: request.params.orderId,
-      actorId: request.user.id,
-      reason: request.body.reason,
-    })
-
-    return reply.send(successResponse(result))
-  },
 }
