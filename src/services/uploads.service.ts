@@ -19,6 +19,11 @@ const r2 = new S3Client({
     accessKeyId: env.R2_ACCESS_KEY_ID,
     secretAccessKey: env.R2_SECRET_ACCESS_KEY,
   },
+  // AWS SDK v3 ≥ 3.750 adds CRC32 checksums by default (WHEN_SUPPORTED).
+  // R2 rejects PUT uploads when the presigned-URL checksum (CRC32 of empty body)
+  // doesn't match the actual file. Set WHEN_REQUIRED to suppress this header.
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
 })
 
 export interface PresignedUrlResult {
