@@ -1298,12 +1298,46 @@ export class OrdersService {
     return updated ? this.decryptOrder(updated) : null
   }
 
+  private computePaymentMeta(order: typeof orders.$inferSelect): {
+    paymentNote: string | null
+    estimatedChargeUsd: string | null
+  } {
+    const { paymentCollectionStatus, finalChargeUsd, transportMode, weight } = order
+
+    let paymentNote: string | null = null
+    if (paymentCollectionStatus === 'PAYMENT_IN_PROGRESS') {
+      paymentNote = 'Receipt submitted — pending verification.'
+    } else if (paymentCollectionStatus !== 'PAID_IN_FULL' && finalChargeUsd === null) {
+      paymentNote = 'Final amount confirmed after warehouse verification.'
+    }
+
+    let estimatedChargeUsd: string | null = null
+    if (finalChargeUsd === null && transportMode !== null) {
+      const weightKg = weight !== null ? parseFloat(weight) : NaN
+      if (Number.isFinite(weightKg) && weightKg > 0) {
+        try {
+          const result = pricingV2Service.calculateDefaultPricing({
+            mode: transportMode as TransportMode,
+            weightKg,
+          })
+          estimatedChargeUsd = result.amountUsd.toFixed(2)
+        } catch {
+          estimatedChargeUsd = null
+        }
+      }
+    }
+
+    return { paymentNote, estimatedChargeUsd }
+  }
+
   private decryptOrder(order: typeof orders.$inferSelect) {
     // amountDue = finalChargeUsd when payment not yet collected, null when paid or not yet priced
     const amountDue =
       order.paymentCollectionStatus !== 'PAID_IN_FULL' && order.finalChargeUsd !== null
         ? order.finalChargeUsd
         : null
+
+    const { paymentNote, estimatedChargeUsd } = this.computePaymentMeta(order)
 
     return {
       ...order,
@@ -1314,6 +1348,8 @@ export class OrdersService {
       pickupRepName: order.pickupRepName ? decrypt(order.pickupRepName) : null,
       pickupRepPhone: order.pickupRepPhone ? decrypt(order.pickupRepPhone) : null,
       amountDue,
+      paymentNote,
+      estimatedChargeUsd,
       priceCalculatedAt: order.priceCalculatedAt?.toISOString() ?? null,
       createdAt: order.createdAt.toISOString(),
       updatedAt: order.updatedAt.toISOString(),
