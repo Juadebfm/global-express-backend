@@ -160,7 +160,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
           data: z.array(
             z.object({
               destination: z.string().describe('Destination name'),
-              shipmentType: z.enum(['air', 'ocean']).nullable().describe('Transport mode'),
+              shipmentType: z.enum(['air', 'ocean', 'd2d']).nullable().describe('Transport mode'),
               activeCount: z.number().describe('Number of active shipments to this destination'),
               nextEta: z.string().nullable().describe('Earliest ETA among active shipments (ISO 8601)'),
               status: z.enum(['on_time', 'delayed', 'unknown']).describe('Derived delivery status'),
@@ -227,7 +227,7 @@ Each change field is \`{ value: number, direction: "up" | "down" }\` or \`null\`
   const activeDeliveriesSchema = z.array(
     z.object({
       destination: z.string(),
-      shipmentType: z.enum(['air', 'ocean']).nullable(),
+      shipmentType: z.enum(['air', 'ocean', 'd2d']).nullable(),
       activeCount: z.number(),
       nextEta: z.string().nullable(),
       status: z.enum(['on_time', 'delayed', 'unknown']),
