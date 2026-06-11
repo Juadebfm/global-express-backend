@@ -107,7 +107,8 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
       security: [{ bearerAuth: [] }],
       body: z
         .object({
-          customerId: z.string().uuid(),
+          customerId: z.string().uuid().optional().describe('Customer UUID — use this or shippingMark, not both'),
+          shippingMark: z.string().min(1).optional().describe('Shipping mark printed on the package (e.g. "juadeb") — alternative to customerId for barcode/manual entry workflows'),
           mode: z.nativeEnum(TransportMode),
           shipmentType: z.nativeEnum(ShipmentType).optional(),
           shipmentPayer: z.nativeEnum(ShipmentPayer).optional().default(ShipmentPayer.USER),
@@ -115,6 +116,20 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
           goods: z.array(goodsInputSchema).min(1),
         })
         .superRefine((value, ctx) => {
+          if (!value.customerId && !value.shippingMark) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['customerId'],
+              message: 'Either customerId or shippingMark is required',
+            })
+          }
+          if (value.customerId && value.shippingMark) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['shippingMark'],
+              message: 'Provide either customerId or shippingMark, not both',
+            })
+          }
           if (value.shipmentPayer === ShipmentPayer.SUPPLIER && !value.billingSupplierId) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,

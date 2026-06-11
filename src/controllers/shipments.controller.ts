@@ -1,4 +1,8 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
+import { eq, and, isNull, isNotNull } from 'drizzle-orm'
+import { db } from '../config/db'
+import { users } from '../../drizzle/schema'
+import { decrypt } from '../utils/encryption'
 import { shipmentsService } from '../services/shipments.service'
 import { dispatchBatchesService } from '../services/dispatch-batches.service'
 import { d2dOperationsService } from '../services/d2d-operations.service'
@@ -14,6 +18,18 @@ import {
   TransportMode,
   UserRole,
 } from '../types/enums'
+
+async function resolveCustomerIdByShippingMark(mark: string): Promise<string | null> {
+  const normalised = mark.trim().toLowerCase()
+  const candidates = await db
+    .select({ id: users.id, shippingMark: users.shippingMark })
+    .from(users)
+    .where(and(eq(users.role, UserRole.USER), isNull(users.deletedAt), isNotNull(users.shippingMark)))
+  const match = candidates.find(
+    (row) => row.shippingMark && decrypt(row.shippingMark).toLowerCase() === normalised,
+  )
+  return match?.id ?? null
+}
 
 async function ensureCanManageShipmentBatches(
   request: FastifyRequest,
@@ -66,7 +82,8 @@ export const shipmentsController = {
   async intakeGoods(
     request: FastifyRequest<{
       Body: {
-        customerId: string
+        customerId?: string
+        shippingMark?: string
         mode: TransportMode
         shipmentType?: ShipmentType
         shipmentPayer?: ShipmentPayer
@@ -89,8 +106,18 @@ export const shipmentsController = {
     reply: FastifyReply,
   ) {
     try {
+      let customerId = request.body.customerId
+
+      if (!customerId && request.body.shippingMark) {
+        const resolved = await resolveCustomerIdByShippingMark(request.body.shippingMark)
+        if (!resolved) {
+          return reply.code(404).send({ success: false, message: `No customer found with shipping mark "${request.body.shippingMark}"` })
+        }
+        customerId = resolved
+      }
+
       const result = await dispatchBatchesService.intakeGoods({
-        customerId: request.body.customerId,
+        customerId: customerId!,
         mode: request.body.mode,
         shipmentType: request.body.shipmentType,
         shipmentPayer: request.body.shipmentPayer,
@@ -101,7 +128,7 @@ export const shipmentsController = {
 
       await createAuditLog({
         userId: request.user.id,
-        action: `Intake goods for customer ${request.body.customerId} into batch ${result.batch.id}`,
+        action: `Intake goods for customer ${customerId} into batch ${result.batch.id}`,
         resourceType: 'shipment_intake',
         resourceId: result.shipment.id,
         request,
