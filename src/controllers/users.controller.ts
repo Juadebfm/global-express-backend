@@ -47,6 +47,12 @@ export const usersController = {
         addressCountry?: string | null
         addressPostalCode?: string | null
         shippingMark?: string | null
+        gender?: 'male' | 'female' | 'other' | null
+        dateOfBirth?: string | null
+        emergencyContactName?: string | null
+        emergencyContactPhone?: string | null
+        emergencyContactRelationship?: string | null
+        nationalId?: string | null
         consentMarketing?: boolean
         notifyEmailAlerts?: boolean
         notifySmsAlerts?: boolean

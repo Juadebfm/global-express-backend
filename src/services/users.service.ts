@@ -44,6 +44,12 @@ export interface UpdateUserInput {
    * the mark without consuming the customer's one edit.
    */
   shippingMarkUserEditedAt?: Date
+  gender?: 'male' | 'female' | 'other' | null
+  dateOfBirth?: string | null
+  emergencyContactName?: string | null
+  emergencyContactPhone?: string | null
+  emergencyContactRelationship?: string | null
+  nationalId?: string | null
   isActive?: boolean
   consentMarketing?: boolean
   notifyEmailAlerts?: boolean
@@ -294,6 +300,22 @@ export class UsersService {
     }
     if (input.shippingMarkUserEditedAt !== undefined) {
       patch.shippingMarkUserEditedAt = input.shippingMarkUserEditedAt
+    }
+    if (input.gender !== undefined) patch.gender = input.gender
+    if (input.dateOfBirth !== undefined) {
+      patch.dateOfBirth = input.dateOfBirth ? encrypt(input.dateOfBirth) : null
+    }
+    if (input.emergencyContactName !== undefined) {
+      patch.emergencyContactName = input.emergencyContactName ? encrypt(input.emergencyContactName) : null
+    }
+    if (input.emergencyContactPhone !== undefined) {
+      patch.emergencyContactPhone = input.emergencyContactPhone ? encrypt(input.emergencyContactPhone) : null
+    }
+    if (input.emergencyContactRelationship !== undefined) {
+      patch.emergencyContactRelationship = input.emergencyContactRelationship
+    }
+    if (input.nationalId !== undefined) {
+      patch.nationalId = input.nationalId ? encrypt(input.nationalId) : null
     }
     if (input.isActive !== undefined) patch.isActive = input.isActive
     if (input.consentMarketing !== undefined) patch.consentMarketing = input.consentMarketing
@@ -1616,6 +1638,11 @@ export class UsersService {
       shippingMarkUserEditedAt: user.shippingMarkUserEditedAt?.toISOString() ?? null,
       addressStreet: user.addressStreet ? decrypt(user.addressStreet) : null,
       // city/state/country/postalCode are stored plain
+      dateOfBirth: user.dateOfBirth ? decrypt(user.dateOfBirth) : null,
+      emergencyContactName: user.emergencyContactName ? decrypt(user.emergencyContactName) : null,
+      emergencyContactPhone: user.emergencyContactPhone ? decrypt(user.emergencyContactPhone) : null,
+      emergencyContactRelationship: user.emergencyContactRelationship ?? null,
+      nationalId: user.nationalId ? decrypt(user.nationalId) : null,
       notifyEmailAlerts: user.notifyEmailAlerts,
       notifySmsAlerts: user.notifySmsAlerts,
       notifyInAppAlerts: user.notifyInAppAlerts,
