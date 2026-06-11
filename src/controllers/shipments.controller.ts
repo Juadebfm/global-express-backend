@@ -52,6 +52,26 @@ async function ensureCanManageShipmentBatches(
 }
 
 export const shipmentsController = {
+  async listBatches(
+    request: FastifyRequest<{
+      Querystring: {
+        status?: string
+        transportMode?: string
+        page?: string
+        limit?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await dispatchBatchesService.listBatches({
+      status: request.query.status as 'open' | 'cutoff_pending_approval' | 'closed' | undefined,
+      transportMode: request.query.transportMode as TransportMode | undefined,
+      page: Number(request.query.page) || 1,
+      limit: Number(request.query.limit) || 50,
+    })
+    return reply.send(successResponse(result))
+  },
+
   async list(
     request: FastifyRequest<{
       Querystring: {

@@ -319,6 +319,55 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
     handler: shipmentsController.listRegulatedDocuments,
   })
 
+  // ─── GET /shipments/batches ────────────────────────────────────────────────
+  app.get('/batches', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Shipments — Staff'],
+      summary: 'List dispatch batches (staff+)',
+      description: 'Returns all dispatch batches, newest first. Use ?status=open to get only active batches for pickers.',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        status: z.enum(['open', 'cutoff_pending_approval', 'closed']).optional(),
+        transportMode: z.nativeEnum(TransportMode).optional(),
+        page: z.string().optional(),
+        limit: z.string().optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(z.object({
+              id: z.string().uuid(),
+              masterTrackingNumber: z.string(),
+              transportMode: z.string(),
+              status: z.enum(['open', 'cutoff_pending_approval', 'closed']),
+              shipmentCount: z.number(),
+              carrierName: z.string().nullable(),
+              voyageOrFlightNumber: z.string().nullable(),
+              estimatedDepartureAt: z.string().nullable(),
+              estimatedArrivalAt: z.string().nullable(),
+              cutoffRequestedAt: z.string().nullable(),
+              cutoffApprovedAt: z.string().nullable(),
+              closedAt: z.string().nullable(),
+              createdAt: z.string(),
+              updatedAt: z.string(),
+            })),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: shipmentsController.listBatches,
+  })
+
   app.get('/internal-track/:masterTrackingNumber', {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {

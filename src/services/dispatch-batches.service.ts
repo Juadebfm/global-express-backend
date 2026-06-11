@@ -1256,6 +1256,92 @@ export class DispatchBatchesService {
       updatedAt: batch.updatedAt.toISOString(),
     }
   }
+  async listBatches(params: {
+    status?: 'open' | 'cutoff_pending_approval' | 'closed'
+    transportMode?: TransportMode
+    page?: number
+    limit?: number
+  }) {
+    const page = Math.max(1, params.page ?? 1)
+    const limit = Math.min(100, Math.max(1, params.limit ?? 20))
+    const offset = (page - 1) * limit
+
+    const where = and(
+      isNull(dispatchBatches.deletedAt),
+      params.status ? eq(dispatchBatches.status, params.status) : undefined,
+      params.transportMode ? eq(dispatchBatches.transportMode, params.transportMode) : undefined,
+    )
+
+    const [countRow] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(dispatchBatches)
+      .where(where)
+
+    const rows = await db
+      .select({
+        id: dispatchBatches.id,
+        masterTrackingNumber: dispatchBatches.masterTrackingNumber,
+        transportMode: dispatchBatches.transportMode,
+        status: dispatchBatches.status,
+        carrierName: dispatchBatches.carrierName,
+        voyageOrFlightNumber: dispatchBatches.voyageOrFlightNumber,
+        estimatedDepartureAt: dispatchBatches.estimatedDepartureAt,
+        estimatedArrivalAt: dispatchBatches.estimatedArrivalAt,
+        cutoffRequestedAt: dispatchBatches.cutoffRequestedAt,
+        cutoffApprovedAt: dispatchBatches.cutoffApprovedAt,
+        closedAt: dispatchBatches.closedAt,
+        createdAt: dispatchBatches.createdAt,
+        updatedAt: dispatchBatches.updatedAt,
+      })
+      .from(dispatchBatches)
+      .where(where)
+      .orderBy(desc(dispatchBatches.createdAt))
+      .limit(limit)
+      .offset(offset)
+
+    // Attach shipment count per batch
+    const batchIds = rows.map((r) => r.id)
+    const counts =
+      batchIds.length > 0
+        ? await db
+            .select({
+              batchId: orders.dispatchBatchId,
+              count: sql<number>`count(*)::int`,
+            })
+            .from(orders)
+            .where(and(inArray(orders.dispatchBatchId, batchIds), isNull(orders.deletedAt)))
+            .groupBy(orders.dispatchBatchId)
+        : []
+
+    const countMap = new Map(counts.map((c) => [c.batchId, c.count]))
+
+    const total = countRow?.total ?? 0
+
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        masterTrackingNumber: r.masterTrackingNumber,
+        transportMode: r.transportMode,
+        status: r.status,
+        shipmentCount: countMap.get(r.id) ?? 0,
+        carrierName: r.carrierName ?? null,
+        voyageOrFlightNumber: r.voyageOrFlightNumber ?? null,
+        estimatedDepartureAt: r.estimatedDepartureAt?.toISOString() ?? null,
+        estimatedArrivalAt: r.estimatedArrivalAt?.toISOString() ?? null,
+        cutoffRequestedAt: r.cutoffRequestedAt?.toISOString() ?? null,
+        cutoffApprovedAt: r.cutoffApprovedAt?.toISOString() ?? null,
+        closedAt: r.closedAt?.toISOString() ?? null,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    }
+  }
 }
 
 export const dispatchBatchesService = new DispatchBatchesService()
