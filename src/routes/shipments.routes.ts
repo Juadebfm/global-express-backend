@@ -398,6 +398,7 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
         200: z.object({ success: z.literal(true), data: z.any() }),
         403: errorResponseSchema,
         404: errorResponseSchema,
+        409: errorResponseSchema,
       },
     },
     handler: shipmentsController.approveCutoff,

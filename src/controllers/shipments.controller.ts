@@ -191,13 +191,17 @@ export const shipmentsController = {
       return
     }
 
-    const updated = await dispatchBatchesService.approveCutoff(
+    const result = await dispatchBatchesService.approveCutoff(
       request.params.batchId,
       request.user.id,
     )
 
-    if (!updated) {
-      return reply.code(404).send({ success: false, message: 'Open/pending batch not found' })
+    if (result.error === 'not_found') {
+      return reply.code(404).send({ success: false, message: 'Batch not found' })
+    }
+
+    if (result.error === 'already_closed') {
+      return reply.code(409).send({ success: false, message: 'This batch is already closed' })
     }
 
     await createAuditLog({
@@ -206,10 +210,10 @@ export const shipmentsController = {
       resourceType: 'dispatch_batch',
       resourceId: request.params.batchId,
       request,
-      metadata: { status: updated.status },
+      metadata: { status: result.data.status },
     })
 
-    return reply.send(successResponse(updated))
+    return reply.send(successResponse(result.data))
   },
 
   async updateBatchCarrierInfo(

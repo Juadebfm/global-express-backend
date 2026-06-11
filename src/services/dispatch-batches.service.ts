@@ -362,6 +362,15 @@ export class DispatchBatchesService {
   }
 
   async approveCutoff(batchId: string, actorId: string) {
+    const [existing] = await db
+      .select({ id: dispatchBatches.id, status: dispatchBatches.status })
+      .from(dispatchBatches)
+      .where(and(eq(dispatchBatches.id, batchId), isNull(dispatchBatches.deletedAt)))
+      .limit(1)
+
+    if (!existing) return { error: 'not_found' as const }
+    if (existing.status === 'closed') return { error: 'already_closed' as const }
+
     const [updated] = await db
       .update(dispatchBatches)
       .set({
@@ -380,7 +389,7 @@ export class DispatchBatchesService {
       )
       .returning()
 
-    return updated ?? null
+    return updated ? { data: updated } : { error: 'not_found' as const }
   }
 
   async updateBatchCarrierInfo(params: {
