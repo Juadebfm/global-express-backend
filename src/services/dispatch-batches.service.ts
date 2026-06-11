@@ -772,6 +772,13 @@ export class DispatchBatchesService {
       .set({
         packageCount: totals?.packageCount ?? shipment.packageCount,
         weight: totals?.totalWeight ?? shipment.weight,
+        statusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED,
+        customerStatusV2: ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED,
+        calculatedChargeUsd: pricing.amountUsd.toString(),
+        finalChargeUsd: pricing.amountUsd.toString(),
+        pricingSource: pricing.pricingSource,
+        priceCalculatedAt: new Date(),
+        priceCalculatedBy: input.createdBy,
         updatedAt: new Date(),
       })
       .where(eq(orders.id, shipment.id))
