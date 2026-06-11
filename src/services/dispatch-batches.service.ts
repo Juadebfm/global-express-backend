@@ -37,7 +37,7 @@ export interface IntakeGoodsInput {
   billingSupplierId?: string
   createdBy: string
   goods: Array<{
-    supplierId: string
+    supplierId?: string
     description?: string
     itemType?: string
     quantity?: number
@@ -580,32 +580,35 @@ export class DispatchBatchesService {
     const shipmentPayer = input.shipmentPayer ?? ShipmentPayer.USER
     const shipmentType = inferShipmentType(input.mode, input.shipmentType)
 
-    const uniqueSupplierIds = [...new Set(input.goods.map((g) => g.supplierId))]
-    const supplierRows = await db
-      .select({ id: users.id, role: users.role })
-      .from(users)
-      .where(and(inArray(users.id, uniqueSupplierIds), isNull(users.deletedAt)))
-
-    const supplierRoleMap = new Map(supplierRows.map((s) => [s.id, s.role]))
-    const hasInvalidSupplier = uniqueSupplierIds.some((id) => supplierRoleMap.get(id) !== UserRole.SUPPLIER)
-    if (hasInvalidSupplier) {
-      throw new Error('One or more supplier IDs are invalid or not SUPPLIER accounts.')
-    }
-
     let billingSupplierId: string | null = null
     if (shipmentPayer === ShipmentPayer.SUPPLIER) {
-      if (uniqueSupplierIds.length !== 1) {
-        throw new Error('Supplier-payer shipment must contain goods from exactly one supplier.')
-      }
-      billingSupplierId = input.billingSupplierId ?? uniqueSupplierIds[0] ?? null
+      billingSupplierId = input.billingSupplierId ?? null
       if (!billingSupplierId) {
         throw new Error('billingSupplierId is required when shipmentPayer is SUPPLIER.')
       }
-      if (!supplierRoleMap.has(billingSupplierId)) {
+      const [supplierRow] = await db
+        .select({ id: users.id, role: users.role })
+        .from(users)
+        .where(and(eq(users.id, billingSupplierId), isNull(users.deletedAt)))
+        .limit(1)
+      if (!supplierRow || supplierRow.role !== UserRole.SUPPLIER) {
         throw new Error('billingSupplierId must be a valid SUPPLIER account.')
       }
-      if (billingSupplierId !== uniqueSupplierIds[0]) {
-        throw new Error('billingSupplierId must match the supplier on all shipment goods.')
+    }
+
+    // Validate any explicitly-provided per-line supplier IDs
+    const explicitSupplierIds = [...new Set(
+      input.goods.map((g) => g.supplierId).filter((id): id is string => Boolean(id))
+    )]
+    if (explicitSupplierIds.length > 0) {
+      const supplierRows = await db
+        .select({ id: users.id, role: users.role })
+        .from(users)
+        .where(and(inArray(users.id, explicitSupplierIds), isNull(users.deletedAt)))
+      const supplierRoleMap = new Map(supplierRows.map((s) => [s.id, s.role]))
+      const hasInvalidSupplier = explicitSupplierIds.some((id) => supplierRoleMap.get(id) !== UserRole.SUPPLIER)
+      if (hasInvalidSupplier) {
+        throw new Error('One or more supplier IDs are invalid or not SUPPLIER accounts.')
       }
     }
 
@@ -700,7 +703,7 @@ export class DispatchBatchesService {
     const goodsRows = input.goods.map((item) => ({
       orderId: shipment.id,
       dispatchBatchId: batch.id,
-      supplierId: item.supplierId,
+      supplierId: item.supplierId ?? billingSupplierId ?? null,
       description: item.description ?? null,
       itemType: item.itemType ?? null,
       quantity: item.quantity && item.quantity > 0 ? item.quantity : 1,

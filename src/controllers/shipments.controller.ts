@@ -89,7 +89,7 @@ export const shipmentsController = {
         shipmentPayer?: ShipmentPayer
         billingSupplierId?: string
         goods: Array<{
-          supplierId: string
+          supplierId?: string
           description?: string
           itemType?: string
           quantity?: number

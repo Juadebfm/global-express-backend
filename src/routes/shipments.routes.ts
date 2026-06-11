@@ -42,7 +42,7 @@ const shipmentSchema = z.object({
 })
 
 const goodsInputSchema = z.object({
-  supplierId: z.string().uuid(),
+  supplierId: z.string().uuid().optional(),
   description: z.string().optional(),
   itemType: z.string().optional(),
   quantity: z.number().int().positive().optional(),
