@@ -385,6 +385,23 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
     handler: shipmentsController.internalTrackByMasterTracking,
   })
 
+  // ─── GET /shipments/batches/:batchId/manifest ─────────────────────────────
+  app.get('/batches/:batchId/manifest', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Shipments — Staff'],
+      summary: 'Download dispatch batch manifest PDF (staff+)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ batchId: z.string().uuid() }),
+      response: {
+        404: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: shipmentsController.downloadBatchManifest,
+  })
+
   app.post('/batches/:batchId/approve-cutoff', {
     preHandler: [authenticate, requireSuperAdmin],
     schema: {

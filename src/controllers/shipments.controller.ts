@@ -5,6 +5,7 @@ import { users } from '../../drizzle/schema'
 import { decrypt } from '../utils/encryption'
 import { shipmentsService } from '../services/shipments.service'
 import { dispatchBatchesService } from '../services/dispatch-batches.service'
+import { generateBatchManifestPdf } from '../services/manifest.service'
 import { d2dOperationsService } from '../services/d2d-operations.service'
 import { ordersService } from '../services/orders.service'
 import { successResponse } from '../utils/response'
@@ -52,6 +53,22 @@ async function ensureCanManageShipmentBatches(
 }
 
 export const shipmentsController = {
+  async downloadBatchManifest(
+    request: FastifyRequest<{ Params: { batchId: string } }>,
+    reply: FastifyReply,
+  ) {
+    const pdf = await generateBatchManifestPdf(request.params.batchId)
+    if (!pdf) {
+      return reply.code(404).send({ success: false, message: 'Batch not found or has no shipments' })
+    }
+    const filename = `manifest-${request.params.batchId}.pdf`
+    return reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', `attachment; filename="${filename}"`)
+      .header('Content-Length', pdf.length)
+      .send(pdf)
+  },
+
   async listBatches(
     request: FastifyRequest<{
       Querystring: {
