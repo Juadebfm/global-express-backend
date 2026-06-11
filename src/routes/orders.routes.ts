@@ -33,6 +33,7 @@ const orderResponseSchema = z.object({
   shipmentPayer: z.nativeEnum(ShipmentPayer).describe('Who pays for this shipment: USER or SUPPLIER'),
   billingSupplierId: z.string().uuid().nullable().describe('Supplier responsible for payment when shipmentPayer=SUPPLIER'),
   transportMode: z.nativeEnum(TransportMode).nullable().describe('Normalized transport mode for V2 flow: air | sea'),
+  dispatchBatchId: z.string().uuid().nullable().describe('UUID of the dispatch batch this order belongs to — non-null means status updates must go through PATCH /shipments/batches/:batchId/status, not the individual order status endpoint'),
   isPreorder: z.boolean().describe('Whether the order was created as a pre-order'),
   departureDate: z.string().nullable().describe('Departure date (ISO 8601)'),
   eta: z.string().nullable().describe('Estimated delivery date (ISO 8601)'),
