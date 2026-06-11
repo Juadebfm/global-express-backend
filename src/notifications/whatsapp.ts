@@ -64,6 +64,48 @@ export async function sendClientLoginLinkWhatsApp(params: {
   )
 }
 
+export async function sendPaymentRequestWhatsApp(params: {
+  phone: string
+  recipientName: string
+  trackingNumber: string
+  amountUsd: string
+  amountNgn: string
+  banks: Array<{ bankName: string; accounts: Array<{ currency: string; accountNumber: string }> }>
+  beneficiaryName: string
+}): Promise<void> {
+  const { phone, recipientName, trackingNumber, amountUsd, amountNgn, banks, beneficiaryName } = params
+
+  const bankLines = banks
+    .flatMap((b) => [b.bankName, ...b.accounts.map((a) => `  ${a.currency}: ${a.accountNumber}`)])
+    .join('\n')
+
+  await sendPhoneNotification(
+    phone,
+    `Hi ${recipientName}! Your shipment ${trackingNumber} is ready for payment.\n\nAmount: $${amountUsd} USD / ₦${amountNgn} NGN\n\nPay to: ${beneficiaryName}\n${bankLines}\n\nUse your tracking number as reference. You can pay now or when your goods arrive at our Lagos office.`,
+  )
+}
+
+export async function sendPaymentConfirmationWhatsApp(params: {
+  phone: string
+  recipientName: string
+  trackingNumber: string
+  amountPaid: string
+  currency: string
+  remainingBalanceUsd: string | null
+}): Promise<void> {
+  const { phone, recipientName, trackingNumber, amountPaid, currency, remainingBalanceUsd } = params
+
+  const balanceLine =
+    remainingBalanceUsd && parseFloat(remainingBalanceUsd) > 0
+      ? `Outstanding balance: $${remainingBalanceUsd} USD remaining.`
+      : 'Your order is fully paid. Thank you!'
+
+  await sendPhoneNotification(
+    phone,
+    `Hi ${recipientName}! We've received your ${currency} ${amountPaid} payment for order ${trackingNumber}.\n${balanceLine}`,
+  )
+}
+
 export async function sendSupplierInvoiceWhatsApp(params: {
   phone: string
   recipientName: string

@@ -207,6 +207,17 @@ export const paymentsController = {
     return reply.send(successResponse(result))
   },
 
+  async sendPaymentRequest(
+    request: FastifyRequest<{ Params: { orderId: string } }>,
+    reply: FastifyReply,
+  ) {
+    const result = await paymentsService.sendPaymentRequest({
+      orderId: request.params.orderId,
+      sentBy: request.user.id,
+    })
+    return reply.send(successResponse(result))
+  },
+
   async recordOfflinePayment(
     request: FastifyRequest<{
       Params: { orderId: string }

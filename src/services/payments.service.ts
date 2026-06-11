@@ -3,7 +3,7 @@ import { eq, and, desc, sql, isNull, getTableColumns } from 'drizzle-orm'
 import { paystackClient } from '../config/http-clients'
 import { db } from '../config/db'
 import { avScanService } from './av-scan.service'
-import { payments, orders, invoices } from '../../drizzle/schema'
+import { payments, orders, invoices, users } from '../../drizzle/schema'
 import { notificationsService, notifyUser } from './notifications.service'
 import { dispatchBatchesService } from './dispatch-batches.service'
 import { PaymentCollectionStatus, UserRole } from '../types/enums'
@@ -13,6 +13,10 @@ import type { PaginationParams } from '../types'
 import { PaymentStatus, PaymentType } from '../types/enums'
 import { uploadsService } from './uploads.service'
 import { settingsFxRateService } from './settings-fx-rate.service'
+import { decrypt } from '../utils/encryption'
+import { sendPaymentConfirmationEmail, sendPaymentRequestEmail } from '../notifications/email'
+import { sendPaymentConfirmationWhatsApp, sendPaymentRequestWhatsApp } from '../notifications/whatsapp'
+import { settingsBankAccountsService } from './settings-bank-accounts.service'
 
 const ALLOWED_RECEIPT_CONTENT_TYPES = new Set([
   'application/pdf',
@@ -717,6 +721,29 @@ export class PaymentsService {
       metadata: { paymentId: payment.id, orderId: resolvedOrderId },
     })
 
+    void notifyUser({
+      userId: input.userId,
+      orderId: resolvedOrderId,
+      type: 'payment_event',
+      title: 'Payment Received',
+      subtitle: target.trackingNumber,
+      body: newStatus === PaymentCollectionStatus.PAID_IN_FULL
+        ? `Your ${currency} ${input.amount} payment for order ${target.trackingNumber} has been recorded. Your order is fully paid.`
+        : `Your ${currency} ${input.amount} payment for order ${target.trackingNumber} has been recorded.`,
+      createdBy: input.recordedBy,
+      metadata: { paymentId: payment.id },
+    })
+
+    void this.sendPaymentReceivedToCustomer({
+      userId: input.userId,
+      trackingNumber: target.trackingNumber,
+      amountPaid: String(input.amount),
+      currency,
+      remainingBalanceUsd: finalCharge !== null && totalPaidUsd < finalCharge
+        ? (finalCharge - totalPaidUsd).toFixed(2)
+        : null,
+    })
+
     return { ...payment, trackingNumber: target.trackingNumber, warning }
   }
 
@@ -877,6 +904,149 @@ export class PaymentsService {
 
     const total = countResult[0]?.count ?? 0
     return buildPaginatedResult(data, total, params)
+  }
+
+  async sendPaymentRequest(input: { orderId: string; sentBy: string }) {
+    const [order] = await db
+      .select({
+        id: orders.id,
+        trackingNumber: orders.trackingNumber,
+        senderId: orders.senderId,
+        finalChargeUsd: orders.finalChargeUsd,
+        paymentCollectionStatus: orders.paymentCollectionStatus,
+      })
+      .from(orders)
+      .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order) throw httpError('Order not found', 404)
+    if (!order.finalChargeUsd) throw httpError('Order has not been priced yet', 422)
+    if (order.paymentCollectionStatus === PaymentCollectionStatus.PAID_IN_FULL) {
+      throw httpError('Order is already fully paid', 409)
+    }
+
+    const [fxRate, bankSettings] = await Promise.all([
+      settingsFxRateService.getEffectiveRate().catch(() => 1500),
+      settingsBankAccountsService.getBankAccountSettings(),
+    ])
+
+    const amountUsd = parseFloat(order.finalChargeUsd).toFixed(2)
+    const amountNgn = (parseFloat(order.finalChargeUsd) * fxRate).toLocaleString('en-NG', { maximumFractionDigits: 0 })
+
+    const [user] = await db
+      .select({
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        businessName: users.businessName,
+        phone: users.phone,
+        whatsappNumber: users.whatsappNumber,
+        notifyEmailAlerts: users.notifyEmailAlerts,
+        notifySmsAlerts: users.notifySmsAlerts,
+      })
+      .from(users)
+      .where(eq(users.id, order.senderId))
+      .limit(1)
+
+    if (!user) throw httpError('Customer not found', 404)
+
+    const email = decrypt(user.email)
+    const firstName = user.firstName ? decrypt(user.firstName) : null
+    const lastName = user.lastName ? decrypt(user.lastName) : null
+    const businessName = user.businessName ? decrypt(user.businessName) : null
+    const recipientName = firstName
+      ? [firstName, lastName].filter(Boolean).join(' ')
+      : (businessName ?? 'Customer')
+
+    const notifParams = {
+      recipientName,
+      trackingNumber: order.trackingNumber,
+      amountUsd,
+      amountNgn,
+      banks: bankSettings.banks,
+      beneficiaryName: bankSettings.beneficiaryName,
+    }
+
+    const sends: Promise<void>[] = []
+
+    if (user.notifyEmailAlerts) {
+      sends.push(sendPaymentRequestEmail({ to: email, ...notifParams }).catch(() => undefined))
+    }
+    if (user.notifySmsAlerts) {
+      const rawPhone = user.whatsappNumber ?? user.phone
+      if (rawPhone) {
+        const phone = decrypt(rawPhone)
+        sends.push(sendPaymentRequestWhatsApp({ phone, ...notifParams }).catch(() => undefined))
+      }
+    }
+
+    await Promise.all(sends)
+
+    void notifyUser({
+      userId: order.senderId,
+      orderId: order.id,
+      type: 'payment_event',
+      title: 'Payment Details Ready',
+      subtitle: order.trackingNumber,
+      body: `Your shipment ${order.trackingNumber} is ready for payment. Amount due: $${amountUsd} USD.`,
+      createdBy: input.sentBy,
+      metadata: { amountUsd, amountNgn },
+    })
+
+    return { amountUsd, amountNgn, trackingNumber: order.trackingNumber }
+  }
+
+  private async sendPaymentReceivedToCustomer(params: {
+    userId: string
+    trackingNumber: string
+    amountPaid: string
+    currency: string
+    remainingBalanceUsd: string | null
+  }): Promise<void> {
+    const [user] = await db
+      .select({
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        businessName: users.businessName,
+        phone: users.phone,
+        whatsappNumber: users.whatsappNumber,
+        notifyEmailAlerts: users.notifyEmailAlerts,
+        notifySmsAlerts: users.notifySmsAlerts,
+      })
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .limit(1)
+
+    if (!user) return
+
+    const email = decrypt(user.email)
+    const firstName = user.firstName ? decrypt(user.firstName) : null
+    const lastName = user.lastName ? decrypt(user.lastName) : null
+    const businessName = user.businessName ? decrypt(user.businessName) : null
+    const recipientName = firstName
+      ? [firstName, lastName].filter(Boolean).join(' ')
+      : (businessName ?? 'Customer')
+
+    const notifParams = {
+      recipientName,
+      trackingNumber: params.trackingNumber,
+      amountPaid: params.amountPaid,
+      currency: params.currency,
+      remainingBalanceUsd: params.remainingBalanceUsd,
+    }
+
+    if (user.notifyEmailAlerts) {
+      await sendPaymentConfirmationEmail({ to: email, ...notifParams }).catch(() => null)
+    }
+
+    if (user.notifySmsAlerts) {
+      const rawPhone = user.whatsappNumber ?? user.phone
+      if (rawPhone) {
+        const phone = decrypt(rawPhone)
+        await sendPaymentConfirmationWhatsApp({ phone, ...notifParams }).catch(() => null)
+      }
+    }
   }
 
   private mapPaystackStatus(paystackStatus: string): PaymentStatus {

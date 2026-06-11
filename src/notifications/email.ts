@@ -190,6 +190,103 @@ export async function sendPasswordResetOtpEmail(params: {
   })
 }
 
+export async function sendPaymentRequestEmail(params: {
+  to: string
+  recipientName: string
+  trackingNumber: string
+  amountUsd: string
+  amountNgn: string
+  banks: Array<{ bankName: string; accounts: Array<{ currency: string; accountNumber: string }> }>
+  beneficiaryName: string
+}): Promise<void> {
+  const { to, recipientName, trackingNumber, amountUsd, amountNgn, banks, beneficiaryName } = params
+
+  const bankRows = banks
+    .map((b) => {
+      const accountLines = b.accounts
+        .map((a) => `<li>${escapeHtml(a.currency)}: <strong>${escapeHtml(a.accountNumber)}</strong></li>`)
+        .join('')
+      return `
+        <tr>
+          <td style="padding:8px;font-weight:bold;vertical-align:top;">${escapeHtml(b.bankName)}</td>
+          <td style="padding:8px;"><ul style="margin:0;padding-left:16px;">${accountLines}</ul></td>
+        </tr>`
+    })
+    .join('')
+
+  await sendEmail({
+    to,
+    subject: `Payment Details — Order ${trackingNumber}`,
+    html: `
+      <h2>Your Order Is Ready for Payment</h2>
+      <p>Hi ${escapeHtml(recipientName)},</p>
+      <p>Your shipment <strong>${escapeHtml(trackingNumber)}</strong> has been verified and priced. Here are your payment details:</p>
+      <ul>
+        <li><strong>Amount (USD):</strong> $${escapeHtml(amountUsd)}</li>
+        <li><strong>Amount (NGN):</strong> ₦${escapeHtml(amountNgn)}</li>
+      </ul>
+      <p><strong>Pay to:</strong> ${escapeHtml(beneficiaryName)}</p>
+      <table style="border-collapse:collapse;margin:8px 0;">
+        ${bankRows}
+      </table>
+      <p style="color:#666;font-size:13px;">You can pay now or when your goods arrive at our Lagos office. Please use your tracking number as the payment reference.</p>
+    `,
+    text: [
+      `Payment Details — Order ${trackingNumber}`,
+      '',
+      `Hi ${recipientName},`,
+      `Your shipment ${trackingNumber} is ready for payment.`,
+      `Amount: $${amountUsd} USD / ₦${amountNgn} NGN`,
+      '',
+      `Pay to: ${beneficiaryName}`,
+      ...banks.flatMap((b) => [
+        b.bankName,
+        ...b.accounts.map((a) => `  ${a.currency}: ${a.accountNumber}`),
+      ]),
+      '',
+      'Use your tracking number as the payment reference.',
+      'You can pay now or when your goods arrive at our Lagos office.',
+    ].join('\n'),
+  })
+}
+
+export async function sendPaymentConfirmationEmail(params: {
+  to: string
+  recipientName: string
+  trackingNumber: string
+  amountPaid: string
+  currency: string
+  remainingBalanceUsd: string | null
+}): Promise<void> {
+  const { to, recipientName, trackingNumber, amountPaid, currency, remainingBalanceUsd } = params
+
+  const balanceLine =
+    remainingBalanceUsd && parseFloat(remainingBalanceUsd) > 0
+      ? `<p style="color:#b45309;"><strong>Outstanding balance:</strong> $${escapeHtml(remainingBalanceUsd)} USD remaining on this order.</p>`
+      : `<p style="color:#15803d;"><strong>Your order is fully paid. Thank you!</strong></p>`
+
+  await sendEmail({
+    to,
+    subject: `Payment Received — Order ${trackingNumber}`,
+    html: `
+      <h2>Payment Confirmed</h2>
+      <p>Hi ${escapeHtml(recipientName)},</p>
+      <p>We have received your <strong>${escapeHtml(currency)} ${escapeHtml(amountPaid)}</strong> payment for order <strong>${escapeHtml(trackingNumber)}</strong>.</p>
+      ${balanceLine}
+      <p>Thank you for choosing Global Express.</p>
+    `,
+    text: [
+      `Payment Confirmed — Order ${trackingNumber}`,
+      '',
+      `Hi ${recipientName},`,
+      `We have received your ${currency} ${amountPaid} payment for order ${trackingNumber}.`,
+      remainingBalanceUsd && parseFloat(remainingBalanceUsd) > 0
+        ? `Outstanding balance: $${remainingBalanceUsd} USD remaining.`
+        : 'Your order is fully paid. Thank you!',
+    ].join('\n'),
+  })
+}
+
 export async function sendSupplierInvoiceEmail(params: {
   to: string
   supplierName: string

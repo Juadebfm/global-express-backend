@@ -312,6 +312,31 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
     handler: paymentsController.getPaymentById,
   })
 
+  app.post('/:orderId/send-payment-request', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Payments — Admin'],
+      summary: 'Send payment details to customer (staff+)',
+      description: `Sends the order's final charge (in USD and NGN equivalent) along with all bank account details to the customer via email and WhatsApp/SMS. Also creates an in-app notification.\n\nOnly works when \`finalChargeUsd\` is set and the order is not already \`PAID_IN_FULL\`.`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ orderId: z.string().uuid().describe('Order UUID') }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            trackingNumber: z.string(),
+            amountUsd: z.string().describe('Final charge in USD'),
+            amountNgn: z.string().describe('NGN equivalent at current FX rate'),
+          }),
+        }),
+        404: errorResponseSchema,
+        409: errorResponseSchema,
+        422: errorResponseSchema,
+      },
+    },
+    handler: paymentsController.sendPaymentRequest,
+  })
+
   app.post('/:orderId/record-offline', {
     preHandler: [authenticate, requireStaffOrAbove],
     schema: {
