@@ -259,6 +259,7 @@ export class DispatchBatchesService {
 
     await tx.insert(orderPackages).values({
       orderId: order.id,
+      dispatchBatchId: batch.id,
       description: packageDescription,
       itemType: input.itemType ?? 'anonymous_goods',
       quantity,
