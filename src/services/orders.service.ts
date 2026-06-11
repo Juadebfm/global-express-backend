@@ -1,4 +1,4 @@
-﻿import { eq, and, isNull, sql, desc } from 'drizzle-orm'
+﻿import { eq, and, isNull, inArray, or, sql, desc } from 'drizzle-orm'
 import { db } from '../config/db'
 import {
   orders,
@@ -503,6 +503,13 @@ export class OrdersService {
     updatedBy: string
     actorRole: UserRole
   }) {
+    // Also include preorders whose packages belong to this batch but orders.dispatchBatchId is still null
+    const pkgOrderRows = await db
+      .selectDistinct({ orderId: orderPackages.orderId })
+      .from(orderPackages)
+      .where(eq(orderPackages.dispatchBatchId, input.batchId))
+    const pkgOrderIds = pkgOrderRows.map((r) => r.orderId).filter(Boolean) as string[]
+
     const rows = await db
       .select({
         orderId: orders.id,
@@ -525,7 +532,15 @@ export class OrdersService {
       })
       .from(orders)
       .innerJoin(users, eq(users.id, orders.senderId))
-      .where(and(eq(orders.dispatchBatchId, input.batchId), isNull(orders.deletedAt)))
+      .where(
+        and(
+          or(
+            eq(orders.dispatchBatchId, input.batchId),
+            pkgOrderIds.length > 0 ? inArray(orders.id, pkgOrderIds) : sql`false`,
+          ),
+          isNull(orders.deletedAt),
+        ),
+      )
 
     if (rows.length === 0) {
       throw new Error('No shipments found in this batch.')
@@ -862,6 +877,20 @@ export class OrdersService {
           },
         })
     })
+
+    // Assign each package to the current open batch (first verify only).
+    // For preorders (orders.dispatchBatchId = null), also set it on the order.
+    const openBatch = await dispatchBatchesService.getOrCreateOpenBatch(resolvedMode, input.verifiedBy)
+    await db
+      .update(orderPackages)
+      .set({ dispatchBatchId: openBatch.id, updatedAt: new Date() })
+      .where(and(eq(orderPackages.orderId, id), isNull(orderPackages.dispatchBatchId)))
+    if (!existing.dispatchBatchId) {
+      await db
+        .update(orders)
+        .set({ dispatchBatchId: openBatch.id, updatedAt: new Date() })
+        .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
+    }
 
     // If the order was already marked PAID_IN_FULL before warehouse verification,
     // check whether the total received covers the now-confirmed charge.

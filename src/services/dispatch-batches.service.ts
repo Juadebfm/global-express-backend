@@ -698,6 +698,7 @@ export class DispatchBatchesService {
     const now = new Date()
     const goodsRows = input.goods.map((item) => ({
       orderId: shipment.id,
+      dispatchBatchId: batch.id,
       supplierId: item.supplierId,
       description: item.description ?? null,
       itemType: item.itemType ?? null,
@@ -1056,6 +1057,11 @@ export class DispatchBatchesService {
         .where(eq(orders.id, sourceOrder.id))
         .returning()
 
+      await db
+        .update(orderPackages)
+        .set({ dispatchBatchId: nextBatch.id, updatedAt: new Date() })
+        .where(eq(orderPackages.orderId, sourceOrder.id))
+
       await this.recomputeOrderTotalsAndInvoice(sourceOrder.id, params.movedBy)
 
       return {
@@ -1108,6 +1114,7 @@ export class DispatchBatchesService {
       .update(orderPackages)
       .set({
         orderId: targetOrder.id,
+        dispatchBatchId: nextBatch.id,
         updatedBy: params.movedBy,
         updatedAt: new Date(),
       })

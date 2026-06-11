@@ -10,6 +10,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { orders } from './orders'
 import { users } from './users'
+import { dispatchBatches } from './dispatch-batches'
 
 export const orderPackages = pgTable(
   'order_packages',
@@ -17,6 +18,7 @@ export const orderPackages = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     // Order-bound package records.
     orderId: uuid('order_id').references(() => orders.id, { onDelete: 'cascade' }),
+    dispatchBatchId: uuid('dispatch_batch_id').references(() => dispatchBatches.id),
     description: text('description'),
     itemType: text('item_type'),
     quantity: integer('quantity').notNull().default(1),
@@ -50,5 +52,6 @@ export const orderPackages = pgTable(
     index('order_packages_supplier_id_idx').on(table.supplierId),
     index('order_packages_arrival_at_idx').on(table.arrivalAt),
     index('order_packages_item_type_idx').on(table.itemType),
+    index('order_packages_dispatch_batch_id_idx').on(table.dispatchBatchId),
   ],
 )
