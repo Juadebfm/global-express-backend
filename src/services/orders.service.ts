@@ -1390,6 +1390,7 @@ export class OrdersService {
       paymentNote,
       estimatedChargeUsd,
       priceCalculatedAt: order.priceCalculatedAt?.toISOString() ?? null,
+      paymentDetailsSentAt: order.paymentDetailsSentAt?.toISOString() ?? null,
       createdAt: order.createdAt.toISOString(),
       updatedAt: order.updatedAt.toISOString(),
       deletedAt: order.deletedAt?.toISOString() ?? null,

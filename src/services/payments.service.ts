@@ -982,6 +982,13 @@ export class PaymentsService {
 
     await Promise.all(sends)
 
+    const sentAt = new Date()
+
+    await db
+      .update(orders)
+      .set({ paymentDetailsSentAt: sentAt, updatedAt: sentAt })
+      .where(eq(orders.id, input.orderId))
+
     void notifyUser({
       userId: order.senderId,
       orderId: order.id,
@@ -993,7 +1000,7 @@ export class PaymentsService {
       metadata: { amountUsd, amountNgn },
     })
 
-    return { amountUsd, amountNgn, trackingNumber: order.trackingNumber }
+    return { amountUsd, amountNgn, trackingNumber: order.trackingNumber, paymentDetailsSentAt: sentAt.toISOString() }
   }
 
   private async sendPaymentReceivedToCustomer(params: {

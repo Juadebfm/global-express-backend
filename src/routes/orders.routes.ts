@@ -49,6 +49,7 @@ const orderResponseSchema = z.object({
     .describe('Payment collection state for pickup validation'),
   amountDue: z.string().nullable().describe('Remaining balance in USD — accounts for all successful payments; null when fully paid or not yet priced'),
   totalPaidUsd: z.string().nullable().describe('Total USD equivalent received across all successful payments for this order — null on list endpoints'),
+  paymentDetailsSentAt: z.string().nullable().describe('ISO timestamp of the last time payment details were sent to the customer — null if never sent'),
   paymentNote: z.string().nullable().describe('Context message about payment state — show in the payment section of the order detail view'),
   estimatedChargeUsd: z.string().nullable().describe('Estimated charge in USD from declared weight × default rates — only set before warehouse verification, null for D2D or when final price is confirmed'),
   pickupRepName: z.string().nullable().describe('Pickup representative name (if someone other than the customer will collect)'),

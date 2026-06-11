@@ -327,6 +327,7 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
             trackingNumber: z.string(),
             amountUsd: z.string().describe('Final charge in USD'),
             amountNgn: z.string().describe('NGN equivalent at current FX rate'),
+            paymentDetailsSentAt: z.string().describe('ISO timestamp of when this send occurred — update the order detail cache with this value'),
           }),
         }),
         404: errorResponseSchema,

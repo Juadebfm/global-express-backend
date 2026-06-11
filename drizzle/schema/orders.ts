@@ -100,6 +100,7 @@ export const orders = pgTable(
     paymentCollectionStatus: paymentCollectionStatusEnum('payment_collection_status')
       .notNull()
       .default('UNPAID'),
+    paymentDetailsSentAt: timestamp('payment_details_sent_at'),
     dispatchBatchId: uuid('dispatch_batch_id'),
     pickupRepName: text('pickup_rep_name'),
     pickupRepPhone: text('pickup_rep_phone'),
