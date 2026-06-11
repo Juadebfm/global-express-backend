@@ -16,6 +16,7 @@ import {
   type NotificationTemplateChannel,
 } from '../services/settings-templates.service'
 import { settingsShipmentTypesService } from '../services/settings-shipment-types.service'
+import { settingsItemTypesService } from '../services/settings-item-types.service'
 import {
   settingsBankAccountsService,
   type Bank,
@@ -531,6 +532,48 @@ export const settingsController = {
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Unable to update restricted goods'
+      return reply.code(400).send({ success: false, message })
+    }
+  },
+
+  async listItemTypes(
+    request: FastifyRequest<{ Querystring: { includeInactive?: boolean } }>,
+    reply: FastifyReply,
+  ) {
+    const data = await settingsItemTypesService.getItemTypeSettings({
+      includeInactive: request.query.includeInactive,
+    })
+    return reply.send(successResponse(data))
+  },
+
+  async updateItemTypes(
+    request: FastifyRequest<{
+      Body: {
+        items?: Array<{ key: string; label?: string; isActive?: boolean }>
+        deleteKeys?: string[]
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      const result = await settingsItemTypesService.updateItemTypeSettings({
+        actorId: request.user.id,
+        items: request.body.items,
+        deleteKeys: request.body.deleteKeys,
+      })
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: 'Updated item types settings',
+        resourceType: 'app_settings',
+        resourceId: 'item_types',
+        request,
+        metadata: result.summary as unknown as Record<string, unknown>,
+      })
+
+      return reply.send(successResponse(result))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to update item types'
       return reply.code(400).send({ success: false, message })
     }
   },

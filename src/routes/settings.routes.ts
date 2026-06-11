@@ -740,4 +740,91 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
     },
     handler: settingsController.updateRestrictedGoods,
   })
+
+  // ─── GET /settings/item-types ─────────────────────────────────────────────
+  const itemTypeSchema = z.object({
+    key: z.string(),
+    label: z.string(),
+    isActive: z.boolean(),
+  })
+
+  app.get('/item-types', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Settings - Item Types'],
+      summary: 'List standard item type categories (staff+)',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        includeInactive: z
+          .enum(['true', 'false'])
+          .transform((v) => v === 'true')
+          .optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            items: z.array(itemTypeSchema),
+            updatedAt: z.string().nullable(),
+          }),
+        }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: settingsController.listItemTypes,
+  })
+
+  // ─── PATCH /settings/item-types ───────────────────────────────────────────
+  app.patch('/item-types', {
+    preHandler: [authenticate, requireAdminOrAbove],
+    schema: {
+      tags: ['Settings - Item Types'],
+      summary: 'Add, update, or delete item type categories (superadmin)',
+      security: [{ bearerAuth: [] }],
+      body: z
+        .object({
+          items: z
+            .array(
+              z.object({
+                key: z.string().min(1),
+                label: z.string().min(1).optional(),
+                isActive: z.boolean().optional(),
+              }),
+            )
+            .optional(),
+          deleteKeys: z.array(z.string().min(1)).optional(),
+        })
+        .superRefine((value, ctx) => {
+          const hasAnyMutation =
+            (value.items?.length ?? 0) > 0 || (value.deleteKeys?.length ?? 0) > 0
+          if (!hasAnyMutation) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'Provide at least one item in items or deleteKeys',
+            })
+          }
+        }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            summary: z.object({
+              createdKeys: z.array(z.string()),
+              updatedKeys: z.array(z.string()),
+              deletedKeys: z.array(z.string()),
+            }),
+            settings: z.object({
+              items: z.array(itemTypeSchema),
+              updatedAt: z.string().nullable(),
+            }),
+          }),
+        }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: settingsController.updateItemTypes,
+  })
 }
