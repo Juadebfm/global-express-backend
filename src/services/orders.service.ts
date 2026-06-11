@@ -816,10 +816,13 @@ export class OrdersService {
 
       await tx.delete(orderPackages).where(eq(orderPackages.orderId, id))
 
+      const fallbackSupplierId =
+        existing.shipmentPayer === ShipmentPayer.SUPPLIER ? existing.billingSupplierId : null
+
       await tx.insert(orderPackages).values(
         normalizedPackages.map((pkg) => ({
           orderId: id,
-          supplierId: pkg.supplierId,
+          supplierId: pkg.supplierId ?? fallbackSupplierId,
           arrivalAt: pkg.arrivalAt,
           description: pkg.description,
           itemType: pkg.itemType,
