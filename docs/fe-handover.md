@@ -27,6 +27,7 @@ openapi-generator-cli generate \
   -g typescript-fetch -o src/api
 ```
 
+
 ---
 
 ## The 9 changes
