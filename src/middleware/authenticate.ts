@@ -76,8 +76,6 @@ function formatLabel(value: string | null | undefined): string {
 function buildNewCustomerSignupBody(input: {
   name: string | null
   email: string
-  userId: string
-  clerkId: string
   accountType?: string
   businessName?: string
   phone?: string
@@ -105,8 +103,6 @@ function buildNewCustomerSignupBody(input: {
     `State: ${formatOptional(input.addressState)}`,
     `Postal code: ${formatOptional(input.addressPostalCode)}`,
     `Preferred language: ${formatOptional(input.preferredLanguage)}`,
-    `Customer ID: ${input.userId}`,
-    `Clerk ID: ${input.clerkId}`,
     `Signup time: ${input.signupAt.toISOString()}`,
     'Profile status: Email verified, profile pending',
   ].join('\n')
@@ -494,8 +490,6 @@ export async function authenticate(
       body: buildNewCustomerSignupBody({
         name: customerName,
         email: primaryEmail.emailAddress,
-        userId: newUser.id,
-        clerkId,
         accountType,
         businessName,
         phone,
