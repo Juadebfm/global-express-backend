@@ -338,7 +338,7 @@ Results are ordered newest-first.`,
               ipAddress: z.string(),
               userAgent: z.string().nullable(),
               metadata: z.unknown().nullable(),
-              createdAt: z.date(),
+              createdAt: z.string(),
               actor: z.object({
                 id: z.string(),
                 firstName: z.string().nullable(),
