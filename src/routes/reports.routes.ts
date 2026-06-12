@@ -308,6 +308,58 @@ Set \`compareToLastPeriod=true\` to include a comparison with the equivalent pri
 
   // ── 7. Shipment Comparison (air vs sea) ─────────────────────────────────
 
+  app.get('/audit-logs', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Reports'],
+      summary: 'Staff activity audit log — paginated and filterable (superadmin)',
+      description: `Returns a paginated list of staff actions recorded in the audit log.
+Filterable by actor, action keyword, resource type, and date range.
+Results are ordered newest-first.`,
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        page: z.coerce.number().int().min(1).optional().describe('Page number. Defaults to 1.'),
+        limit: z.coerce.number().int().min(1).max(100).optional().describe('Results per page (1–100). Defaults to 50.'),
+        actorId: z.string().uuid().optional().describe('Filter by staff member UUID.'),
+        action: z.string().optional().describe('Filter by action keyword (partial match).'),
+        resourceType: z.string().optional().describe('Filter by resource type (e.g. order, payment, user).'),
+        from: z.string().datetime().optional().describe('Start date — ISO 8601.'),
+        to: z.string().datetime().optional().describe('End date — ISO 8601.'),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            logs: z.array(z.object({
+              id: z.string(),
+              action: z.string(),
+              resourceType: z.string(),
+              resourceId: z.string().nullable(),
+              ipAddress: z.string(),
+              userAgent: z.string().nullable(),
+              metadata: z.unknown().nullable(),
+              createdAt: z.date(),
+              actor: z.object({
+                id: z.string(),
+                firstName: z.string().nullable(),
+                lastName: z.string().nullable(),
+                role: z.string().nullable(),
+              }).nullable(),
+            })),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+        ...errorSchemas,
+      },
+    },
+    handler: reportsController.getAuditLogs,
+  })
+
   app.get('/shipment-comparison', {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {

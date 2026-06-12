@@ -1,6 +1,6 @@
-import { sql, gte, lte, and, eq, isNull } from 'drizzle-orm'
+import { sql, gte, lte, and, eq, isNull, desc, ilike, count } from 'drizzle-orm'
 import { db } from '../config/db'
-import { orders, payments, users } from '../../drizzle/schema'
+import { auditLogs, orders, payments, users } from '../../drizzle/schema'
 import { ShipmentStatusV2 } from '../types/enums'
 import { decrypt } from '../utils/encryption'
 
@@ -590,6 +590,83 @@ export class ReportsService {
 
         return result
       }),
+    }
+  }
+  // ── 8. Audit Logs ───────────────────────────────────────────────────────
+
+  async getAuditLogs(params: {
+    page: number
+    limit: number
+    actorId?: string
+    action?: string
+    resourceType?: string
+    from?: Date
+    to?: Date
+  }) {
+    const { page, limit } = params
+    const offset = (page - 1) * limit
+
+    const conditions = []
+    if (params.actorId) conditions.push(eq(auditLogs.userId, params.actorId))
+    if (params.action) conditions.push(ilike(auditLogs.action, `%${params.action}%`))
+    if (params.resourceType) conditions.push(eq(auditLogs.resourceType, params.resourceType))
+    if (params.from) conditions.push(gte(auditLogs.createdAt, params.from))
+    if (params.to) conditions.push(lte(auditLogs.createdAt, params.to))
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined
+
+    const [rows, totalResult] = await Promise.all([
+      db
+        .select({
+          id: auditLogs.id,
+          action: auditLogs.action,
+          resourceType: auditLogs.resourceType,
+          resourceId: auditLogs.resourceId,
+          ipAddress: auditLogs.ipAddress,
+          userAgent: auditLogs.userAgent,
+          metadata: auditLogs.metadata,
+          createdAt: auditLogs.createdAt,
+          actorId: users.id,
+          actorFirstName: users.firstName,
+          actorLastName: users.lastName,
+          actorRole: users.role,
+        })
+        .from(auditLogs)
+        .leftJoin(users, eq(auditLogs.userId, users.id))
+        .where(where)
+        .orderBy(desc(auditLogs.createdAt))
+        .limit(limit)
+        .offset(offset),
+      db.select({ total: count() }).from(auditLogs).where(where),
+    ])
+
+    const total = totalResult[0]?.total ?? 0
+
+    return {
+      logs: rows.map((r) => ({
+        id: r.id,
+        action: r.action,
+        resourceType: r.resourceType,
+        resourceId: r.resourceId,
+        ipAddress: r.ipAddress,
+        userAgent: r.userAgent,
+        metadata: r.metadata,
+        createdAt: r.createdAt,
+        actor: r.actorId
+          ? {
+              id: r.actorId,
+              firstName: r.actorFirstName ? decrypt(r.actorFirstName) : null,
+              lastName: r.actorLastName ? decrypt(r.actorLastName) : null,
+              role: r.actorRole,
+            }
+          : null,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
     }
   }
 }

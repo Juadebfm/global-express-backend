@@ -3,6 +3,7 @@ import { paymentsService } from '../services/payments.service'
 import { successResponse } from '../utils/response'
 import type { PaymentStatus } from '../types/enums'
 import { PaymentType, UserRole } from '../types/enums'
+import { createAuditLog } from '../utils/audit'
 
 export const paymentsController = {
   async initializePayment(
@@ -91,6 +92,15 @@ export const paymentsController = {
       verifiedBy: request.user.id,
       decision: request.body.decision,
       note: request.body.note,
+    })
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: request.body.decision === 'approve' ? 'payment_receipt_approved' : 'payment_receipt_rejected',
+      resourceType: 'payment',
+      resourceId: request.params.id,
+      request,
+      metadata: { decision: request.body.decision, note: request.body.note ?? null },
     })
 
     return reply.send(successResponse(payment))

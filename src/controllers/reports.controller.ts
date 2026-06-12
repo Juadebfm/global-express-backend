@@ -174,4 +174,41 @@ export const reportsController = {
     const data = await reportsService.getShipmentComparison({ from, to, isSuperAdmin })
     return reply.send(successResponse(data))
   },
+
+  // ── 8. Audit Logs ────────────────────────────────────────────────────────
+
+  async getAuditLogs(
+    request: FastifyRequest<{
+      Querystring: {
+        page?: string
+        limit?: string
+        actorId?: string
+        action?: string
+        resourceType?: string
+        from?: string
+        to?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const page = Math.max(Number(request.query.page) || 1, 1)
+    const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 100)
+    const from = request.query.from ? new Date(request.query.from) : undefined
+    const to = request.query.to ? new Date(request.query.to) : undefined
+
+    if ((from && isNaN(from.getTime())) || (to && isNaN(to.getTime()))) {
+      return reply.code(400).send({ success: false, message: 'Invalid date format' })
+    }
+
+    const data = await reportsService.getAuditLogs({
+      page,
+      limit,
+      actorId: request.query.actorId,
+      action: request.query.action,
+      resourceType: request.query.resourceType,
+      from,
+      to,
+    })
+    return reply.send(successResponse(data))
+  },
 }

@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 
 import { teamService } from '../services/team.service'
 import { successResponse } from '../utils/response'
+import { createAuditLog } from '../utils/audit'
 
 export const teamController = {
   async list(
@@ -35,6 +36,15 @@ export const teamController = {
     if (!member) {
       return reply.code(404).send({ success: false, message: 'Team member not found' })
     }
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: 'team_member_approved',
+      resourceType: 'user',
+      resourceId: member.id,
+      request,
+    })
+
     return reply.send(successResponse(member))
   },
 }

@@ -14,6 +14,7 @@ import {
 } from '../middleware/requireRole'
 import { enforceAdminIpAllowlist } from '../middleware/ipAllowlist'
 import { logSecurityEvent } from '../utils/security-events'
+import { createAuditLog } from '../utils/audit'
 import { UserRole } from '../types/enums'
 import { sendWelcomeCredentialsEmail } from '../notifications/email'
 import { webPushService } from '../services/web-push.service'
@@ -119,6 +120,14 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
       const mustEnrollMfa = mfaService.isMfaRequiredForRole(user.role)
       const token = internalAuthService.generateToken(user.id, user.role)
+
+      void createAuditLog({
+        userId: user.id,
+        action: 'staff_login',
+        resourceType: 'user',
+        resourceId: user.id,
+        request,
+      })
 
       return reply.send({
         success: true,
