@@ -268,7 +268,7 @@ export const ordersController = {
       targetRole: UserRole.STAFF,
       type: 'new_order',
       title: 'New Order Created',
-      body: `Order ${order.trackingNumber} was created`,
+      body: `Order ${order.trackingNumber} (${(shipmentType ?? 'standard').toUpperCase()}, ${request.body.weight ?? '?'}kg) — ${String(request.body.description || 'no description').slice(0, 80)}`,
       metadata: { orderId: order.id, trackingNumber: order.trackingNumber, senderId },
     })
 

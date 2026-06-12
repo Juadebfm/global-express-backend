@@ -154,7 +154,7 @@ export class PublicD2dIntakeService {
       targetRole: UserRole.STAFF,
       type: 'admin_alert',
       title: 'New Public D2D Intake',
-      body: `Public D2D intake ticket ${ticketPayload.ticket.ticketNumber} requires review.`,
+      body: `${input.fullName.trim()} (${input.city.trim()}, ${input.country.trim()}) submitted intake ${ticketPayload.ticket.ticketNumber} — ${String(input.goodsDescription).slice(0, 80)}`,
       metadata: {
         ticketId: ticketPayload.ticket.id,
         ticketNumber: ticketPayload.ticket.ticketNumber,

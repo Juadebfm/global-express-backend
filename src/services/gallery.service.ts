@@ -861,7 +861,7 @@ export class GalleryService {
         targetRole: UserRole.STAFF,
         type: 'admin_alert',
         title: 'New Anonymous Goods Claim',
-        body: `Claim submitted for ${lockedItem.trackingNumber}.`,
+        body: `${claimant.fullName} claimed "${lockedItem.title}" (${lockedItem.trackingNumber}).`,
         metadata: {
           claimId: claim.id,
           trackingNumber: lockedItem.trackingNumber,
@@ -993,7 +993,7 @@ export class GalleryService {
         targetRole: UserRole.STAFF,
         type: 'admin_alert',
         title: 'New Car Purchase Attempt',
-        body: `Purchase attempt received for ${lockedItem.trackingNumber}.`,
+        body: `${claimant.fullName} wants to buy "${lockedItem.title}" — ${lockedItem.priceCurrency} ${lockedItem.carPriceNgn} (${lockedItem.trackingNumber}).`,
         metadata: {
           claimId: claim.id,
           trackingNumber: lockedItem.trackingNumber,

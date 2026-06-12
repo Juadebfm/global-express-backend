@@ -273,10 +273,11 @@ export class PaymentsService {
       targetRole: UserRole.STAFF,
       type: 'payment_event',
       title: 'Payment Receipt Submitted',
-      body: `Receipt submitted for order ${target.orderId}. Awaiting superadmin verification.`,
+      body: `Receipt submitted for order ${target.trackingNumber}: ${currency} ${input.amount}. Awaiting verification.`,
       metadata: {
         paymentId: payment.id,
         orderId: target.orderId,
+        trackingNumber: target.trackingNumber,
         invoiceId: target.invoiceId,
         submittedBy: input.userId,
       },
@@ -338,6 +339,13 @@ export class PaymentsService {
       throw httpError('Payment not found', 404)
     }
 
+    const [orderRow] = await db
+      .select({ trackingNumber: orders.trackingNumber })
+      .from(orders)
+      .where(eq(orders.id, payment.orderId))
+      .limit(1)
+    const trackingNumber = orderRow?.trackingNumber ?? payment.orderId
+
     let warning: string | null = null
 
     if (isApproved) {
@@ -379,8 +387,8 @@ export class PaymentsService {
         targetRole: UserRole.STAFF,
         type: 'payment_received',
         title: 'Payment Receipt Approved',
-        body: `Receipt approved for order ${payment.orderId}.`,
-        metadata: { paymentId: payment.id, orderId: payment.orderId },
+        body: `Receipt approved for order ${trackingNumber}: ${payment.currency} ${payment.amount}${updated.note ? ` — ${updated.note}` : ''}.`,
+        metadata: { paymentId: payment.id, orderId: payment.orderId, trackingNumber },
       })
     } else {
       const [counts] = await db
@@ -407,8 +415,8 @@ export class PaymentsService {
         targetRole: UserRole.STAFF,
         type: 'payment_failed',
         title: 'Payment Receipt Rejected',
-        body: `Receipt rejected for order ${payment.orderId}.`,
-        metadata: { paymentId: payment.id, orderId: payment.orderId },
+        body: `Receipt rejected for order ${trackingNumber}: ${payment.currency} ${payment.amount}${updated.note ? ` — ${updated.note}` : ''}.`,
+        metadata: { paymentId: payment.id, orderId: payment.orderId, trackingNumber },
       })
     }
 
@@ -428,13 +436,7 @@ export class PaymentsService {
       },
     })
 
-    const [orderRow] = await db
-      .select({ trackingNumber: orders.trackingNumber })
-      .from(orders)
-      .where(eq(orders.id, updated.orderId))
-      .limit(1)
-
-    return { ...updated, trackingNumber: orderRow?.trackingNumber ?? '', warning }
+    return { ...updated, trackingNumber, warning }
   }
 
   private async resolvePaymentTarget(input: {
@@ -717,8 +719,8 @@ export class PaymentsService {
       targetRole: UserRole.STAFF,
       type: 'payment_received',
       title: 'Offline Payment Recorded',
-      body: `${currency} ${input.amount} recorded for order ${resolvedOrderId}.`,
-      metadata: { paymentId: payment.id, orderId: resolvedOrderId },
+      body: `${currency} ${input.amount} (${input.paymentType}) recorded for order ${target.trackingNumber}${input.note ? ` — ${input.note}` : ''}.`,
+      metadata: { paymentId: payment.id, orderId: resolvedOrderId, trackingNumber: target.trackingNumber },
     })
 
     void notifyUser({
@@ -808,13 +810,18 @@ export class PaymentsService {
       }
 
       // Fire-and-forget: notify superadmin of successful payment
-      void notificationsService.notifyRole({
-        targetRole: UserRole.STAFF,
-        type: 'payment_received',
-        title: 'Payment Received',
-        body: `Payment received for reference ${event.data.reference}`,
-        metadata: { paymentId: payment?.id ?? null, reference: event.data.reference },
-      })
+      void (async () => {
+        const tn = payment?.orderId
+          ? (await db.select({ t: orders.trackingNumber }).from(orders).where(eq(orders.id, payment.orderId)).limit(1))[0]?.t
+          : null
+        notificationsService.notifyRole({
+          targetRole: UserRole.STAFF,
+          type: 'payment_received',
+          title: 'Payment Received',
+          body: `Paystack payment received${tn ? ` for order ${tn}` : ''}: ${payment?.currency ?? ''} ${payment?.amount ?? ''}`.trim(),
+          metadata: { paymentId: payment?.id ?? null, reference: event.data.reference, trackingNumber: tn ?? null },
+        })
+      })()
 
       return { processed: true, paymentId: payment?.id ?? null }
     }
