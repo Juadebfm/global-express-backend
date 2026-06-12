@@ -198,8 +198,12 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
         return reply.code(201).send({ success: true, data: user })
       } catch (err: unknown) {
-        // Unique constraint violation — email already exists
-        if (err instanceof Error && err.message.includes('unique')) {
+        // Neon/Drizzle wraps PG errors as plain objects — check code + message
+        const e = err as Record<string, unknown>
+        const pgCode = (e?.code ?? (e?.cause as Record<string, unknown>)?.code) as string | undefined
+        const msg = String(e?.message ?? '').toLowerCase()
+        const isUnique = pgCode === '23505' || msg.includes('unique') || msg.includes('duplicate')
+        if (isUnique) {
           return reply.code(409).send({
             success: false,
             message: 'An account with that email already exists',

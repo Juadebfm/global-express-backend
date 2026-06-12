@@ -26,6 +26,13 @@ export function errorHandler(
         message: error.message,
         code: error.code,
         statusCode: error.statusCode,
+        // Include the underlying cause (e.g. the raw PostgreSQL error from Neon/Drizzle)
+        cause: error.cause
+          ? {
+              message: (error.cause as Error)?.message,
+              code: (error.cause as Record<string, unknown>)?.code,
+            }
+          : undefined,
         ...(isProduction ? {} : { stack: error.stack }),
       },
       requestId: request.id,
