@@ -59,7 +59,7 @@ export class InternalAuthService {
         role: input.role,
         isActive: false,
         mustChangePassword: true,
-        mustCompleteProfile: true,
+        mustCompleteProfile: false,
       })
       .returning()
 
