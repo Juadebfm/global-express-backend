@@ -597,7 +597,13 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
         nationalId: z.string().optional(),
       }),
       response: {
-        200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            message: z.string(),
+            isActive: z.boolean().describe('Whether the account is now active. If true, redirect to dashboard. If false, show pending approval screen.'),
+          }),
+        }),
         400: errorResponseSchema,
       },
     },
@@ -653,7 +659,17 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
         })
       }
 
-      return reply.send({ success: true, data: { message: 'Profile completed successfully' } })
+      // Re-fetch the updated user to get the actual isActive value
+      const [updated] = await db
+        .select({ isActive: users.isActive })
+        .from(users)
+        .where(eq(users.id, request.user.id))
+        .limit(1)
+
+      return reply.send({
+        success: true,
+        data: { message: 'Profile completed successfully', isActive: updated?.isActive ?? false },
+      })
     },
   })
 
