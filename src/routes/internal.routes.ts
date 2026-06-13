@@ -23,7 +23,7 @@ import { eq } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
 import { appSettings } from '../../drizzle/schema/app-settings'
-import { encrypt } from '../utils/encryption'
+import { encrypt, decrypt } from '../utils/encryption'
 
 const internalUserResponseSchema = z.object({
   id: z.string().uuid(),
@@ -252,6 +252,63 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       await internalAuthService.updatePassword(request.params.id, request.body.newPassword)
 
       return reply.send({ success: true, data: { message: 'Password updated successfully' } })
+    },
+  })
+
+  /**
+   * GET /api/v1/internal/me
+   * Returns the authenticated staff/superadmin's current account state,
+   * including onboarding flags the FE needs to gate routing decisions.
+   */
+  app.get('/me', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Auth'],
+      summary: 'Get current internal user state',
+      description: `Returns the authenticated staff or superadmin's account state.
+Use this on every page load to gate routing:
+- \`mustChangePassword: true\` → send to password change screen
+- \`mustCompleteProfile: true\` → send to profile completion screen
+- \`isActive: false\` → show pending approval screen
+- All clear → allow into the dashboard`,
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({ success: z.literal(true), data: internalUserResponseSchema }),
+        401: errorResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const [row] = await db
+        .select({
+          id: users.id,
+          clerkId: users.clerkId,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          role: users.role,
+          isActive: users.isActive,
+          mustChangePassword: users.mustChangePassword,
+          mustCompleteProfile: users.mustCompleteProfile,
+          createdAt: users.createdAt,
+          updatedAt: users.updatedAt,
+        })
+        .from(users)
+        .where(eq(users.id, request.user.id))
+        .limit(1)
+
+      if (!row) return reply.code(401).send({ success: false, message: 'User not found' })
+
+      return reply.send({
+        success: true,
+        data: {
+          ...row,
+          email: row.email ? decrypt(row.email) : row.email,
+          firstName: row.firstName ? decrypt(row.firstName) : row.firstName,
+          lastName: row.lastName ? decrypt(row.lastName) : row.lastName,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+        },
+      })
     },
   })
 
