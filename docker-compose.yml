@@ -1,21 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: globalexpress
-      POSTGRES_USER: gex
-      POSTGRES_PASSWORD: gex_local_password
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U gex -d globalexpress']
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   app:
     build:
       context: .
@@ -28,10 +11,4 @@ services:
       # Mount source so tsx watch picks up changes without rebuilding
       - .:/app
       - /app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: sh -c "npx tsx scripts/run-all-migrations.ts && npm run dev"
-
-volumes:
-  postgres_data:
+    command: npm run dev
