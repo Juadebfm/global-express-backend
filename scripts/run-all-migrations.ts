@@ -27,7 +27,8 @@ const files = readdirSync(MIGRATIONS_DIR)
   .filter((f) => f.endsWith('.sql'))
   .sort()
 
-const client = postgres(DATABASE_URL, { ssl: 'require', max: 1 })
+const isCloudDb = DATABASE_URL.includes('neon.tech') || DATABASE_URL.includes('render.com')
+const client = postgres(DATABASE_URL, { ssl: isCloudDb ? 'require' : false, max: 1 })
 
 /**
  * Split SQL into individual statements, correctly handling:
