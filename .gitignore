@@ -31,3 +31,4 @@ coverage/
 # Temp
 *.tmp
 *.temp
+.env.docker

@@ -1,0 +1,8 @@
+FROM node:20-alpine
+WORKDIR /app
+
+# Install dependencies only (source is mounted as a volume at runtime)
+COPY package*.json ./
+RUN npm ci
+
+EXPOSE 3000
