@@ -193,6 +193,11 @@ export const ordersController = {
     reply: FastifyReply,
   ) {
     const userRole = request.user.role as UserRole
+
+    if (userRole === UserRole.SUPPLIER) {
+      return reply.code(403).send({ success: false, message: 'Suppliers must submit a goods declaration instead of creating orders directly.' })
+    }
+
     const requestedShipmentType = request.body.shipmentType
     const selectedRecipientAddress = normalizeOptionalAddress(request.body.recipientAddress)
     const fixedAddressNormalized = FIXED_LAGOS_ADDRESS.toLowerCase()

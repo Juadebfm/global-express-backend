@@ -54,6 +54,8 @@ export interface CreateRoleNotificationInput {
   body: string
   metadata?: Record<string, unknown>
   createdBy?: string
+  /** Skip the generic sendAccountAlertEmail — use when the caller sends a dedicated email instead. */
+  skipEmail?: boolean
 }
 
 // ─── Role hierarchy helper ────────────────────────────────────────────────────
@@ -217,20 +219,22 @@ export class NotificationsService {
         })
         .catch((err) => console.error('[WebPush] Failed:', err))
 
-      // Email all active superadmins
-      const superadminEmails = matchingUsers
-        .filter((u) => u.role === UserRole.SUPER_ADMIN)
-        .map((sa) => decrypt(sa.email))
+      // Email all active superadmins (unless the caller is sending a dedicated email)
+      if (!input.skipEmail) {
+        const superadminEmails = matchingUsers
+          .filter((u) => u.role === UserRole.SUPER_ADMIN)
+          .map((sa) => decrypt(sa.email))
 
-      await Promise.allSettled(
-        superadminEmails.map((email) =>
-          sendAccountAlertEmail({
-            to: email,
-            subject: `[Global Express] ${input.title}`,
-            message: input.body,
-          }),
-        ),
-      )
+        await Promise.allSettled(
+          superadminEmails.map((email) =>
+            sendAccountAlertEmail({
+              to: email,
+              subject: `[Global Express] ${input.title}`,
+              message: input.body,
+            }),
+          ),
+        )
+      }
     } catch (err) {
       console.error('[Notifications] Failed to send role notification:', err)
     }

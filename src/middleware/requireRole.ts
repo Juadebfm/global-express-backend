@@ -56,11 +56,7 @@ export function requireRole(...allowedRoles: UserRole[]): RolePreHandler {
 }
 
 // Convenience guards
-export const requireSuperAdmin = requireRole(UserRole.SUPER_ADMIN)
-
-export const requireAdminOrAbove = requireRole(UserRole.SUPER_ADMIN, UserRole.STAFF)
-
-export const requireStaffOrAbove = requireRole(
-  UserRole.SUPER_ADMIN,
-  UserRole.STAFF,
-)
+export const requireSuperAdmin    = requireRole(UserRole.SUPER_ADMIN)
+export const requireAdminOrAbove  = requireRole(UserRole.SUPER_ADMIN, UserRole.STAFF)
+export const requireStaffOrAbove  = requireRole(UserRole.SUPER_ADMIN, UserRole.STAFF)
+export const requireSupplier      = requireRole(UserRole.SUPPLIER)

@@ -124,6 +124,69 @@ export async function sendAccountAlertEmail(params: {
   })
 }
 
+export async function sendNewDeclarationAlertEmail(params: {
+  to: string
+  supplierName: string | null
+  supplierBusiness: string | null
+  description: string
+  recipientName: string
+  recipientPhone: string
+  shipmentType: 'air' | 'ocean' | 'd2d'
+  declaredValueUsd: string
+  estimatedWeightKg: string | null
+  estimatedArrivalAt: string | null
+  declarationId: string
+}): Promise<void> {
+  const {
+    supplierName, supplierBusiness, description, recipientName,
+    recipientPhone, shipmentType, declaredValueUsd,
+    estimatedWeightKg, estimatedArrivalAt, declarationId,
+  } = params
+
+  const shipmentLabels = { air: 'Air freight', ocean: 'Ocean freight', d2d: 'Door-to-door (D2D)' }
+  const supplier = [supplierBusiness, supplierName].filter(Boolean).join(' — ') || 'Unknown supplier'
+
+  const rows: [string, string][] = [
+    ['Supplier', escapeHtml(supplier)],
+    ['Goods', escapeHtml(description)],
+    ['Recipient', `${escapeHtml(recipientName)} / ${escapeHtml(recipientPhone)}`],
+    ['Shipment type', shipmentLabels[shipmentType] ?? shipmentType],
+    ['Declared value', `USD ${escapeHtml(declaredValueUsd)}`],
+    ...(estimatedWeightKg ? [['Estimated weight', `${estimatedWeightKg} kg`] as [string, string]] : []),
+    ...(estimatedArrivalAt ? [['Expected at warehouse', escapeHtml(estimatedArrivalAt)] as [string, string]] : []),
+  ]
+
+  const tableRows = rows
+    .map(([label, value]) => `<tr><td style="padding:6px 16px 6px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${label}</td><td style="padding:6px 0;font-weight:500">${value}</td></tr>`)
+    .join('')
+
+  const html = `
+    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#111827">
+      <p style="font-size:16px;margin-bottom:24px">A new goods notice has been submitted and is waiting for your review.</p>
+      <table style="border-collapse:collapse;width:100%;margin-bottom:24px">${tableRows}</table>
+      <p style="font-size:13px;color:#6b7280">Declaration ID: ${escapeHtml(declarationId)}</p>
+      <p style="margin-top:24px">Log in to the staff dashboard to <strong>accept</strong> or <strong>reject</strong> this declaration.</p>
+    </div>
+  `
+
+  const text = [
+    'A new goods notice has been submitted.',
+    '',
+    ...rows.map(([label, value]) => `${label}: ${value}`),
+    '',
+    `Declaration ID: ${declarationId}`,
+    '',
+    'Log in to the staff dashboard to accept or reject this declaration.',
+  ].join('\n')
+
+  await sendEmail({
+    to: params.to,
+    subject: '[Global Express] New supplier goods notice — action required',
+    html,
+    text,
+  })
+}
+
 export async function sendWelcomeCredentialsEmail(params: {
   to: string
   firstName: string

@@ -18,6 +18,7 @@ import { createAuditLog } from '../utils/audit'
 import { UserRole } from '../types/enums'
 import { sendWelcomeCredentialsEmail } from '../notifications/email'
 import { webPushService } from '../services/web-push.service'
+import { supplierDeclarationsService } from '../services/supplier-declarations.service'
 import { env } from '../config/env'
 import { eq } from 'drizzle-orm'
 import { db } from '../config/db'
@@ -1044,6 +1045,196 @@ Use this on every page load to gate routing:
           scannedAt: status.scannedAt,
         },
       })
+    },
+  })
+
+  // ── Supplier declarations — staff review ──────────────────────────────────
+
+  const declarationSchema = z.object({
+    id: z.string(),
+    supplierId: z.string(),
+    supplierName: z.string().nullable(),
+    supplierBusinessName: z.string().nullable(),
+    recipientName: z.string(),
+    recipientPhone: z.string(),
+    recipientEmail: z.string().nullable(),
+    recipientAddress: z.string().nullable(),
+    description: z.string(),
+    quantity: z.number().nullable(),
+    declaredValueUsd: z.string(),
+    estimatedWeightKg: z.string().nullable(),
+    shipmentType: z.enum(['air', 'ocean', 'd2d']),
+    specialPackagingNotes: z.string().nullable(),
+    supplierNotes: z.string().nullable(),
+    estimatedArrivalAt: z.string().nullable(),
+    status: z.enum(['pending_review', 'accepted', 'rejected']),
+    rejectionReason: z.string().nullable(),
+    reviewedBy: z.string().nullable(),
+    reviewedAt: z.string().nullable(),
+    orderId: z.string().nullable(),
+    linkedCustomerId: z.string().nullable(),
+    linkedBy: z.string().nullable(),
+    linkedAt: z.string().nullable(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  })
+
+  app.get('/supplier-declarations', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Supplier Declarations'],
+      summary: 'List all supplier declarations (staff+)',
+      description: 'Returns all goods declarations submitted by suppliers. Filter by status to work the review queue.',
+      security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        status: z.enum(['pending_review', 'accepted', 'rejected']).optional(),
+        supplierId: z.string().uuid().optional(),
+        page: z.coerce.number().int().min(1).default(1),
+        limit: z.coerce.number().int().min(1).max(100).default(20),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.array(declarationSchema) }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const declarations = await supplierDeclarationsService.listAll(request.query)
+      return reply.send({ success: true, data: declarations })
+    },
+  })
+
+  app.get('/supplier-declarations/:id', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Supplier Declarations'],
+      summary: 'Get a single supplier declaration (staff+)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      response: {
+        200: z.object({ success: z.literal(true), data: declarationSchema }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const declaration = await supplierDeclarationsService.getOne(request.params.id)
+      if (!declaration) return reply.code(404).send({ success: false, message: 'Declaration not found' })
+      return reply.send({ success: true, data: declaration })
+    },
+  })
+
+  app.post('/supplier-declarations/:id/accept', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Supplier Declarations'],
+      summary: 'Accept a supplier declaration — creates a preorder (staff+)',
+      description: 'Accepts the declaration, creates a PREORDER_SUBMITTED order, and notifies the supplier with their tracking number.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            ok: z.literal(true),
+            declarationId: z.string(),
+            orderId: z.string(),
+            trackingNumber: z.string(),
+          }),
+        }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const result = await supplierDeclarationsService.accept(request.params.id, request.user.id)
+      if (!result.ok) return reply.code(400).send({ success: false, message: result.reason })
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: 'supplier_declaration_accepted',
+        resourceType: 'supplier_declaration',
+        resourceId: request.params.id,
+        request,
+        metadata: { orderId: result.orderId, trackingNumber: result.trackingNumber },
+      })
+
+      return reply.send({ success: true, data: result })
+    },
+  })
+
+  app.post('/supplier-declarations/:id/reject', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Supplier Declarations'],
+      summary: 'Reject a supplier declaration (staff+)',
+      description: 'Rejects the declaration with a reason. The supplier is notified and can correct and resubmit.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      body: z.object({
+        reason: z.string().min(1).describe('Plain-language reason — shown directly to the supplier'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ ok: z.literal(true) }) }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const result = await supplierDeclarationsService.reject(request.params.id, request.user.id, request.body.reason)
+      if (!result.ok) return reply.code(400).send({ success: false, message: result.reason })
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: 'supplier_declaration_rejected',
+        resourceType: 'supplier_declaration',
+        resourceId: request.params.id,
+        request,
+        metadata: { reason: request.body.reason },
+      })
+
+      return reply.send({ success: true, data: { ok: true as const } })
+    },
+  })
+
+  app.patch('/supplier-declarations/:id/link-customer', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Internal — Supplier Declarations'],
+      summary: 'Link declaration to a GE customer account (staff+)',
+      description: 'Attaches an existing GE customer account to this declaration. If a preorder was already created from this declaration, the order\'s sender is updated too.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      body: z.object({
+        customerId: z.string().uuid().describe('UUID of the existing GE customer account to link'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ ok: z.literal(true) }) }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const result = await supplierDeclarationsService.linkCustomer(request.params.id, request.body.customerId, request.user.id)
+      if (!result.ok) return reply.code(400).send({ success: false, message: result.reason })
+
+      await createAuditLog({
+        userId: request.user.id,
+        action: 'supplier_declaration_customer_linked',
+        resourceType: 'supplier_declaration',
+        resourceId: request.params.id,
+        request,
+        metadata: { customerId: request.body.customerId },
+      })
+
+      return reply.send({ success: true, data: { ok: true as const } })
     },
   })
 }
