@@ -62,25 +62,6 @@ const ALLOWED_BATCH_STATUSES = [
 export async function batchesRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>()
 
-  // ── Create a new open batch ────────────────────────────────────────────────
-  app.post('/', {
-    preHandler: [authenticate, requireAdminOrAbove],
-    schema: {
-      tags: ['Batches'],
-      summary: 'Open a new batch (staff+)',
-      description: 'Creates a new open batch for the given transport mode. Air and ocean batches are separate. Door-to-door goods travel in the air batch.',
-      security: [{ bearerAuth: [] }],
-      body: z.object({
-        transportMode: z.enum(['air', 'sea']).describe('air — for air freight and door-to-door goods. sea — for ocean freight.'),
-      }),
-      response: {
-        201: z.object({ success: z.literal(true), data: batchSchema }),
-        ...errorSchemas,
-      },
-    },
-    handler: batchesController.createBatch,
-  })
-
   // ── List batches ──────────────────────────────────────────────────────────
   app.get('/', {
     preHandler: [authenticate, requireAdminOrAbove],
@@ -121,6 +102,38 @@ export async function batchesRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   // ── Get a single batch (summary) ──────────────────────────────────────────
+  // ── Available orders for a batch ──────────────────────────────────────────
+  // Must be registered BEFORE /:batchId to avoid Fastify treating 'available-orders' as a batchId.
+  app.get('/:batchId/available-orders', {
+    preHandler: [authenticate, requireAdminOrAbove],
+    schema: {
+      tags: ['Batches'],
+      summary: 'Orders available to add to this batch (staff+)',
+      description:
+        'Returns all verified-and-priced orders that are not yet in any batch and match the transport mode of this batch (sea batch → ocean shipments; air batch → air and D2D shipments). Use this to populate the order picker in the batch detail UI.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ batchId: z.string().uuid() }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.array(z.object({
+            orderId: z.string(),
+            trackingNumber: z.string(),
+            shipmentType: z.string().nullable(),
+            weight: z.string().nullable(),
+            description: z.string().nullable(),
+            customerId: z.string(),
+            customerName: z.string().nullable(),
+            customerLastName: z.string().nullable(),
+            shippingMark: z.string().nullable(),
+          })),
+        }),
+        ...errorSchemas,
+      },
+    },
+    handler: batchesController.getAvailableOrders,
+  })
+
   app.get('/:batchId', {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {

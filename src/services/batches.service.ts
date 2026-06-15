@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../config/db'
 import {
   batchCustomerSlots,
@@ -231,13 +231,13 @@ export class BatchesService {
         .select({
           batch: dispatchBatches,
           customerCount: sql<number>`(
-            SELECT count(*)::int FROM batch_customer_slots bcs WHERE bcs.batch_id = ${dispatchBatches.id}
+            SELECT count(*)::int FROM batch_customer_slots bcs WHERE bcs.batch_id = "dispatch_batches"."id"
           )`,
           orderCount: sql<number>`(
-            SELECT count(*)::int FROM orders o WHERE o.dispatch_batch_id = ${dispatchBatches.id} AND o.deleted_at IS NULL
+            SELECT count(*)::int FROM orders o WHERE o.dispatch_batch_id = "dispatch_batches"."id" AND o.deleted_at IS NULL
           )`,
           totalWeightKg: sql<string>`(
-            SELECT coalesce(sum(o.weight), 0)::text FROM orders o WHERE o.dispatch_batch_id = ${dispatchBatches.id} AND o.deleted_at IS NULL
+            SELECT coalesce(sum(o.weight), 0)::text FROM orders o WHERE o.dispatch_batch_id = "dispatch_batches"."id" AND o.deleted_at IS NULL
           )`,
         })
         .from(dispatchBatches)
@@ -354,7 +354,7 @@ export class BatchesService {
         customerName: [safeDecrypt(slot.firstName), safeDecrypt(slot.lastName)]
           .filter(Boolean)
           .join(' ') || 'Unknown',
-        shippingMark: slot.shippingMark,
+        shippingMark: safeDecrypt(slot.shippingMark),
         batchTrackingNumber: slot.primaryTrackingNumber,
         orderCount: customerOrders.length,
         totalWeightKg: customerWeight.toFixed(3),
@@ -441,59 +441,82 @@ export class BatchesService {
       .orderBy(asc(dispatchBatches.createdAt))
       .limit(1)
 
-    if (!openBatch) {
-      return {
-        ok: false as const,
-        reason: `No open ${batchMode === 'air' ? 'air' : 'ocean'} batch found. Please ask a staff member to open a new batch first.`,
-      }
+    let resolvedBatch = openBatch
+    if (!resolvedBatch) {
+      // Auto-create the batch — no manual "Create batch" step needed
+      const created = await this.createBatch({ transportMode: batchMode, actorId: params.actorId })
+      const [row] = await db.select().from(dispatchBatches).where(eq(dispatchBatches.id, created.id)).limit(1)
+      if (!row) return { ok: false as const, reason: 'Failed to create batch.' }
+      resolvedBatch = row
     }
 
-    // Check if customer already has a slot in this batch
+    return this.linkOrderToBatch({ order, batchId: resolvedBatch.id, masterTrackingNumber: resolvedBatch.masterTrackingNumber })
+  }
+
+  private async linkOrderToBatch(params: {
+    order: Pick<typeof orders.$inferSelect, 'id' | 'senderId' | 'trackingNumber'>
+    batchId: string
+    masterTrackingNumber: string
+  }) {
+    const { order, batchId, masterTrackingNumber } = params
+
     const [existingSlot] = await db
       .select()
       .from(batchCustomerSlots)
-      .where(
-        and(
-          eq(batchCustomerSlots.batchId, openBatch.id),
-          eq(batchCustomerSlots.customerId, order.senderId),
-        ),
-      )
+      .where(and(eq(batchCustomerSlots.batchId, batchId), eq(batchCustomerSlots.customerId, order.senderId!)))
       .limit(1)
 
     if (!existingSlot) {
-      // First order for this customer in this batch — create their slot
       await db.insert(batchCustomerSlots).values({
-        batchId: openBatch.id,
-        customerId: order.senderId,
+        batchId,
+        customerId: order.senderId!,
         primaryTrackingNumber: order.trackingNumber,
-      })
+      }).onConflictDoNothing()
     }
 
-    // Link the order to the batch
     await db
       .update(orders)
-      .set({ dispatchBatchId: openBatch.id, updatedAt: new Date() })
-      .where(eq(orders.id, params.orderId))
+      .set({ dispatchBatchId: batchId, updatedAt: new Date() })
+      .where(and(eq(orders.id, order.id), isNull(orders.dispatchBatchId)))
 
-    const slot = existingSlot ?? (
-      await db
-        .select()
-        .from(batchCustomerSlots)
-        .where(
-          and(
-            eq(batchCustomerSlots.batchId, openBatch.id),
-            eq(batchCustomerSlots.customerId, order.senderId),
-          ),
-        )
-        .limit(1)
-    )[0]
+    const slot = existingSlot ?? (await db
+      .select()
+      .from(batchCustomerSlots)
+      .where(and(eq(batchCustomerSlots.batchId, batchId), eq(batchCustomerSlots.customerId, order.senderId!)))
+      .limit(1))[0]
 
     return {
       ok: true as const,
-      batchId: openBatch.id,
-      masterTrackingNumber: openBatch.masterTrackingNumber,
+      batchId,
+      masterTrackingNumber,
       batchTrackingNumber: slot?.primaryTrackingNumber ?? order.trackingNumber,
       isNewSlot: !existingSlot,
+    }
+  }
+
+  // Called fire-and-forget from orders.service after warehouse verification sets dispatch_batch_id.
+  // Ensures the customer slot exists in batch_customer_slots.
+  async ensureCustomerSlotForOrder(params: { orderId: string; batchId: string }) {
+    const [order] = await db
+      .select({ id: orders.id, senderId: orders.senderId, trackingNumber: orders.trackingNumber })
+      .from(orders)
+      .where(and(eq(orders.id, params.orderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order?.senderId) return
+
+    const [existing] = await db
+      .select()
+      .from(batchCustomerSlots)
+      .where(and(eq(batchCustomerSlots.batchId, params.batchId), eq(batchCustomerSlots.customerId, order.senderId)))
+      .limit(1)
+
+    if (!existing) {
+      await db.insert(batchCustomerSlots).values({
+        batchId: params.batchId,
+        customerId: order.senderId,
+        primaryTrackingNumber: order.trackingNumber,
+      }).onConflictDoNothing()
     }
   }
 
@@ -746,6 +769,56 @@ export class BatchesService {
 
     if (!batch) return null
     return mapBatch(batch)
+  }
+
+  async getAvailableOrdersForBatch(batchId: string) {
+    const [batch] = await db
+      .select({ id: dispatchBatches.id, transportMode: dispatchBatches.transportMode })
+      .from(dispatchBatches)
+      .where(and(eq(dispatchBatches.id, batchId), isNull(dispatchBatches.deletedAt)))
+      .limit(1)
+
+    if (!batch) return null
+
+    // sea batch → ocean shipments only; air batch → air + d2d
+    const batchMode = batch.transportMode as 'air' | 'sea'
+    const eligibleTypes = batchMode === 'sea' ? ['ocean'] : ['air', 'd2d']
+
+    const rows = await db
+      .select({
+        orderId: orders.id,
+        trackingNumber: orders.trackingNumber,
+        shipmentType: orders.shipmentType,
+        weight: orders.weight,
+        description: orders.description,
+        customerName: users.firstName,
+        customerLastName: users.lastName,
+        customerShippingMark: users.shippingMark,
+        customerId: users.id,
+      })
+      .from(orders)
+      .innerJoin(users, eq(users.id, orders.senderId))
+      .where(
+        and(
+          eq(orders.statusV2, ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED),
+          isNull(orders.dispatchBatchId),
+          isNull(orders.deletedAt),
+          inArray(orders.shipmentType, eligibleTypes as ('air' | 'ocean' | 'd2d')[]),
+        ),
+      )
+      .orderBy(asc(orders.createdAt))
+
+    return rows.map((r) => ({
+      orderId: r.orderId,
+      trackingNumber: r.trackingNumber,
+      shipmentType: r.shipmentType,
+      weight: r.weight,
+      description: r.description,
+      customerName: safeDecrypt(r.customerName),
+      customerLastName: safeDecrypt(r.customerLastName),
+      shippingMark: safeDecrypt(r.customerShippingMark),
+      customerId: r.customerId,
+    }))
   }
 }
 

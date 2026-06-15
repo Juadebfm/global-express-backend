@@ -172,6 +172,17 @@ export const batchesController = {
     return reply.send(successResponse(result))
   },
 
+  async getAvailableOrders(
+    request: FastifyRequest<{ Params: { batchId: string } }>,
+    reply: FastifyReply,
+  ) {
+    const result = await batchesService.getAvailableOrdersForBatch(request.params.batchId)
+    if (!result) {
+      return reply.code(404).send({ success: false, message: 'Batch not found' })
+    }
+    return reply.send(successResponse(result))
+  },
+
   async getStatusLabels(_request: FastifyRequest, reply: FastifyReply) {
     const labels = Object.entries(STATUS_LABELS).map(([status, info]) => ({
       status,

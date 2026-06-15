@@ -23,6 +23,7 @@ import { pricingV2Service, SEA_CBM_TO_KG_FACTOR } from './pricing-v2.service'
 import { settingsFxRateService } from './settings-fx-rate.service'
 import { settingsTemplatesService } from './settings-templates.service'
 import { dispatchBatchesService } from './dispatch-batches.service'
+import { batchesService } from './batches.service'
 import {
   normalizeTransportMode,
   resolveTransportModeFromShipmentType,
@@ -338,6 +339,17 @@ export class OrdersService {
       .returning()
 
     if (!updated) return null
+
+    // Auto-assign to the open batch when an order reaches WAREHOUSE_VERIFIED_PRICED
+    // (covers the manual status-update path; warehouse verification handles its own hook separately)
+    if (
+      input.statusV2 === ShipmentStatusV2.WAREHOUSE_VERIFIED_PRICED &&
+      !existing.dispatchBatchId
+    ) {
+      batchesService.addOrderToBatch({ orderId: updated.id, actorId: input.updatedBy }).catch((err) => {
+        console.error('Failed to auto-assign order to batch after status update', err)
+      })
+    }
 
     await dispatchBatchesService.handleDepartureStatus({
       orderId: updated.id,
@@ -894,6 +906,11 @@ export class OrdersService {
         .set({ dispatchBatchId: openBatch.id, updatedAt: new Date() })
         .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
     }
+
+    // Ensure the customer slot exists in batch_customer_slots so the batch roster shows this customer
+    batchesService.ensureCustomerSlotForOrder({ orderId: id, batchId: openBatch.id }).catch((err) => {
+      console.error('Failed to ensure customer slot after warehouse verification', err)
+    })
 
     // If the order was already marked PAID_IN_FULL before warehouse verification,
     // check whether the total received covers the now-confirmed charge.
