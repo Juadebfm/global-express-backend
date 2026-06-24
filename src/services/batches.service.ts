@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../config/db'
 import {
   batchCustomerSlots,
@@ -11,7 +11,7 @@ import { DispatchBatchStatus, ShipmentStatusV2 } from '../types/enums'
 import { decrypt } from '../utils/encryption'
 import { dispatchBatchesService } from './dispatch-batches.service'
 import { notifyUser } from './notifications.service'
-import { randomBytes } from 'crypto'
+import { generateMasterTrackingNumber, generateSlotTrackingNumber } from '../utils/tracking'
 
 // ─── Status labels ────────────────────────────────────────────────────────────
 // Plain English labels for every order status — shown to staff and customers.
@@ -144,12 +144,19 @@ const TRANSPORT_LABELS: Record<string, string> = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function generateMasterTrackingNumber(transportMode: string): string {
-  const mode = transportMode.toUpperCase()
-  const d = new Date()
-  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-  const rand = randomBytes(3).toString('hex').toUpperCase()
-  return `GEX-MASTER-${mode}-${date}-${rand}`
+async function nextMasterSequence(mode: 'air' | 'sea'): Promise<number> {
+  const startOfYear = new Date(new Date().getFullYear(), 0, 1)
+  const [row] = await db
+    .select({ total: count() })
+    .from(dispatchBatches)
+    .where(
+      and(
+        eq(dispatchBatches.transportMode, mode),
+        gte(dispatchBatches.createdAt, startOfYear),
+        isNull(dispatchBatches.deletedAt),
+      ),
+    )
+  return (row?.total ?? 0) + 1
 }
 
 // D2D travels by air; all other orders use their declared transport mode.
@@ -180,6 +187,8 @@ function mapBatch(b: typeof dispatchBatches.$inferSelect) {
     oceanTrackingNumber: b.oceanTrackingNumber,
     d2dTrackingNumber: b.d2dTrackingNumber,
     voyageOrFlightNumber: b.voyageOrFlightNumber,
+    billOfLadingNumber: b.billOfLadingNumber,
+    vesselName: b.vesselName,
     estimatedDepartureAt: b.estimatedDepartureAt?.toISOString() ?? null,
     estimatedArrivalAt: b.estimatedArrivalAt?.toISOString() ?? null,
     closedAt: b.closedAt?.toISOString() ?? null,
@@ -196,7 +205,9 @@ export class BatchesService {
   // ── 1. Create a batch ────────────────────────────────────────────────────
 
   async createBatch(params: { transportMode: 'air' | 'sea'; actorId: string }) {
-    const masterTrackingNumber = generateMasterTrackingNumber(params.transportMode)
+    const now = new Date()
+    const yearSeq = await nextMasterSequence(params.transportMode)
+    const masterTrackingNumber = generateMasterTrackingNumber(params.transportMode, now, yearSeq)
 
     const [batch] = await db
       .insert(dispatchBatches)
@@ -467,10 +478,24 @@ export class BatchesService {
       .limit(1)
 
     if (!existingSlot) {
+      const [batchRow] = await db
+        .select({ createdAt: dispatchBatches.createdAt })
+        .from(dispatchBatches)
+        .where(eq(dispatchBatches.id, batchId))
+        .limit(1)
+
+      const [{ slotCount }] = await db
+        .select({ slotCount: count() })
+        .from(batchCustomerSlots)
+        .where(eq(batchCustomerSlots.batchId, batchId))
+
+      const position = (slotCount ?? 0) + 1
+      const slotTrackingNumber = generateSlotTrackingNumber(batchRow!.createdAt, position)
+
       await db.insert(batchCustomerSlots).values({
         batchId,
         customerId: order.senderId!,
-        primaryTrackingNumber: order.trackingNumber,
+        primaryTrackingNumber: slotTrackingNumber,
       }).onConflictDoNothing()
     }
 
@@ -512,10 +537,24 @@ export class BatchesService {
       .limit(1)
 
     if (!existing) {
+      const [batchRow] = await db
+        .select({ createdAt: dispatchBatches.createdAt })
+        .from(dispatchBatches)
+        .where(eq(dispatchBatches.id, params.batchId))
+        .limit(1)
+
+      const [{ slotCount }] = await db
+        .select({ slotCount: count() })
+        .from(batchCustomerSlots)
+        .where(eq(batchCustomerSlots.batchId, params.batchId))
+
+      const position = (slotCount ?? 0) + 1
+      const slotTrackingNumber = generateSlotTrackingNumber(batchRow!.createdAt, position)
+
       await db.insert(batchCustomerSlots).values({
         batchId: params.batchId,
         customerId: order.senderId,
-        primaryTrackingNumber: order.trackingNumber,
+        primaryTrackingNumber: slotTrackingNumber,
       }).onConflictDoNothing()
     }
   }

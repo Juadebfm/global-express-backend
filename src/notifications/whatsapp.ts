@@ -106,6 +106,20 @@ export async function sendPaymentConfirmationWhatsApp(params: {
   )
 }
 
+export async function sendSupplierBookingRequestWhatsApp(params: {
+  phone: string
+  supplierName: string
+  customerName: string
+  description?: string | null
+}): Promise<void> {
+  const descLine = params.description?.trim() ? `\nGoods: ${params.description.trim()}` : ''
+
+  await sendPhoneNotification(
+    params.phone,
+    `Hi ${params.supplierName}! A customer (${params.customerName}) has named you as their supplier for a new Global Express shipment.${descLine}\nPlease ship the goods to our Korea warehouse. Our team will follow up with details.`,
+  )
+}
+
 export async function sendSupplierInvoiceWhatsApp(params: {
   phone: string
   recipientName: string

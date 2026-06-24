@@ -109,6 +109,10 @@ export const orders = pgTable(
       .notNull()
       .references(() => users.id),
     packageCount: integer('package_count').notNull().default(1),
+    sourcingSupplierId: uuid('sourcing_supplier_id').references(() => users.id),
+    sourcingSupplierName: text('sourcing_supplier_name'),
+    sourcingSupplierPhone: text('sourcing_supplier_phone'),
+    sourcingSupplierEmail: text('sourcing_supplier_email'),
     // Soft delete — no cascading hard deletes on orders
     deletedAt: timestamp('deleted_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -120,6 +124,7 @@ export const orders = pgTable(
     index('orders_transport_mode_idx').on(table.transportMode),
     index('orders_shipment_payer_idx').on(table.shipmentPayer),
     index('orders_billing_supplier_id_idx').on(table.billingSupplierId),
+    index('orders_sourcing_supplier_id_idx').on(table.sourcingSupplierId),
     index('orders_dispatch_batch_id_idx').on(table.dispatchBatchId),
     index('orders_tracking_number_idx').on(table.trackingNumber),
     index('orders_created_at_idx').on(table.createdAt),

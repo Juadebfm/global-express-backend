@@ -439,6 +439,8 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
           oceanTrackingNumber: z.string().min(1).nullable().optional(),
           d2dTrackingNumber: z.string().min(1).nullable().optional(),
           voyageOrFlightNumber: z.string().min(1).nullable().optional(),
+          billOfLadingNumber: z.string().min(1).nullable().optional(),
+          vesselName: z.string().min(1).nullable().optional(),
           estimatedDepartureAt: z.string().datetime().nullable().optional(),
           estimatedArrivalAt: z.string().datetime().nullable().optional(),
           notes: z.string().min(1).nullable().optional(),

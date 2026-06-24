@@ -242,6 +242,8 @@ export const shipmentsController = {
         oceanTrackingNumber?: string | null
         d2dTrackingNumber?: string | null
         voyageOrFlightNumber?: string | null
+        billOfLadingNumber?: string | null
+        vesselName?: string | null
         estimatedDepartureAt?: string | null
         estimatedArrivalAt?: string | null
         notes?: string | null
@@ -271,6 +273,8 @@ export const shipmentsController = {
         oceanTrackingNumber: request.body.oceanTrackingNumber,
         d2dTrackingNumber: request.body.d2dTrackingNumber,
         voyageOrFlightNumber: request.body.voyageOrFlightNumber,
+        billOfLadingNumber: request.body.billOfLadingNumber,
+        vesselName: request.body.vesselName,
         ...(hasEstimatedDepartureAt
           ? {
               estimatedDepartureAt: request.body.estimatedDepartureAt

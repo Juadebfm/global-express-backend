@@ -1,24 +1,55 @@
 import { randomBytes } from 'crypto'
 
 /**
- * Generates a unique shipment tracking number.
- * Format: GEX-YYYYMMDD-XXXXXXXX (e.g. GEX-20260219-A3F9C21B)
+ * Generates an internal-only reference at order creation time.
+ * Never shown to customers — they use their slot tracking number (YYYYMMDD-NNNN)
+ * which is assigned when their order is placed into a dispatch batch.
  */
 export function generateTrackingNumber(): string {
-  const date = new Date()
-  const datePart = date.toISOString().slice(0, 10).replace(/-/g, '')
-  const randomPart = randomBytes(4).toString('hex').toUpperCase()
-  return `GEX-${datePart}-${randomPart}`
+  return `TEMP-${randomBytes(8).toString('hex').toUpperCase()}`
+}
+
+/**
+ * Generates the customer-facing tracking number for a batch slot.
+ * Format: YYYYMMDD-NNNN (e.g. 20260615-0020)
+ * Date is the batch creation date; position is the customer's sequential slot number in this batch.
+ */
+export function generateSlotTrackingNumber(batchCreatedAt: Date, position: number): string {
+  const d = batchCreatedAt
+  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  const pos = String(position).padStart(4, '0')
+  return `${date}-${pos}`
+}
+
+/**
+ * Generates the internal batch master tracking number.
+ * Format: AIR-YYYYMMDD-NNNN or SEA-YYYYMMDD-NNNN
+ * Date is the batch creation date; yearSequence is how many batches of this mode exist this calendar year (including this one).
+ */
+export function generateMasterTrackingNumber(mode: 'air' | 'sea', batchCreatedAt: Date, yearSequence: number): string {
+  const prefix = mode.toUpperCase()
+  const d = batchCreatedAt
+  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  const seq = String(yearSequence).padStart(4, '0')
+  return `${prefix}-${date}-${seq}`
 }
 
 /**
  * Masks a tracking number for public display.
- * Example: GEX-20260219-A3F9C21B -> GEX-20260219-****C21B
+ * New format (YYYYMMDD-NNNN):   20260615-0020 → 20260615-****
+ * Legacy format (GEX-YYYYMMDD-XX): GEX-20260219-A3F9C21B → GEX-20260219-****C21B
  */
 export function maskTrackingNumber(trackingNumber: string): string {
-  const match = /^([A-Z]+-\d{8}-)([A-Z0-9]{8})$/.exec(trackingNumber)
-  if (match) {
-    const [, prefix, tail] = match
+  // New customer-facing format: YYYYMMDD-NNNN
+  const newFormat = /^(\d{8}-)(\d{4})$/.exec(trackingNumber)
+  if (newFormat) {
+    return `${newFormat[1]}****`
+  }
+
+  // Legacy format: GEX-YYYYMMDD-XXXXXXXX
+  const legacyFormat = /^([A-Z]+-\d{8}-)([A-Z0-9]{8})$/.exec(trackingNumber)
+  if (legacyFormat) {
+    const [, prefix, tail] = legacyFormat
     return `${prefix}****${tail.slice(-4)}`
   }
 

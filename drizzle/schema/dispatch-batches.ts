@@ -24,6 +24,8 @@ export const dispatchBatches = pgTable(
     oceanTrackingNumber: text('ocean_tracking_number'),
     d2dTrackingNumber: text('d2d_tracking_number'),
     voyageOrFlightNumber: text('voyage_or_flight_number'),
+    billOfLadingNumber: text('bill_of_lading_number'),
+    vesselName: text('vessel_name'),
     estimatedDepartureAt: timestamp('estimated_departure_at'),
     estimatedArrivalAt: timestamp('estimated_arrival_at'),
     notes: text('notes'),

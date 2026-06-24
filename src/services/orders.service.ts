@@ -15,8 +15,9 @@ import { encrypt, decrypt } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { generateTrackingNumber } from '../utils/tracking'
 import { broadcastToUser } from '../websocket/handlers'
-import { sendOrderStatusUpdateEmail } from '../notifications/email'
-import { sendOrderStatusWhatsApp } from '../notifications/whatsapp'
+import { sendOrderStatusUpdateEmail, sendSupplierBookingRequestEmail } from '../notifications/email'
+import { sendOrderStatusWhatsApp, sendSupplierBookingRequestWhatsApp } from '../notifications/whatsapp'
+import { usersService } from './users.service'
 import { notifyUser } from './notifications.service'
 import { orderStatusEventsService } from './order-status-events.service'
 import { pricingV2Service, SEA_CBM_TO_KG_FACTOR } from './pricing-v2.service'
@@ -133,6 +134,10 @@ export interface CreateOrderInput {
   createdBy: string
   pickupRepName?: string
   pickupRepPhone?: string
+  sourcingSupplierId?: string | null
+  sourcingSupplierName?: string | null
+  sourcingSupplierPhone?: string | null
+  sourcingSupplierEmail?: string | null
 }
 
 export interface UpdateOrderStatusInput {
@@ -252,6 +257,10 @@ export class OrdersService {
         createdBy: input.createdBy,
         pickupRepName: input.pickupRepName ? encrypt(input.pickupRepName) : null,
         pickupRepPhone: input.pickupRepPhone ? encrypt(input.pickupRepPhone) : null,
+        sourcingSupplierId: input.sourcingSupplierId ?? null,
+        sourcingSupplierName: input.sourcingSupplierName ?? null,
+        sourcingSupplierPhone: input.sourcingSupplierPhone ?? null,
+        sourcingSupplierEmail: input.sourcingSupplierEmail ?? null,
       })
       .returning()
 
@@ -283,6 +292,21 @@ export class OrdersService {
         subtitle: trackingNumber,
         body: 'A new shipment has been created for you. We will update you as it progresses.',
         createdBy: input.createdBy,
+      }).catch(() => {})
+    }
+
+    // Notify the sourcing supplier about the booking request (fire-and-forget)
+    if (input.sourcingSupplierId || input.sourcingSupplierEmail || input.sourcingSupplierPhone) {
+      this.notifySupplierOfBookingRequest({
+        orderId: order.id,
+        createdBy: input.createdBy,
+        senderName: null,
+        senderId: input.senderId,
+        description: input.description ?? null,
+        sourcingSupplierId: input.sourcingSupplierId ?? null,
+        sourcingSupplierName: input.sourcingSupplierName ?? null,
+        sourcingSupplierPhone: input.sourcingSupplierPhone ?? null,
+        sourcingSupplierEmail: input.sourcingSupplierEmail ?? null,
       }).catch(() => {})
     }
 
@@ -1412,6 +1436,85 @@ export class OrdersService {
     }
 
     return { paymentNote, estimatedChargeUsd }
+  }
+
+  private async notifySupplierOfBookingRequest(params: {
+    orderId: string
+    createdBy: string
+    senderName: string | null
+    senderId: string
+    description: string | null
+    sourcingSupplierId: string | null
+    sourcingSupplierName: string | null
+    sourcingSupplierPhone: string | null
+    sourcingSupplierEmail: string | null
+  }) {
+    let supplierName = params.sourcingSupplierName ?? 'Supplier'
+    let supplierEmail = params.sourcingSupplierEmail
+    let supplierPhone = params.sourcingSupplierPhone
+
+    // Look up the customer's display name for the notification body
+    const sender = await usersService.getUserById(params.senderId).catch(() => null)
+    const customerName =
+      sender?.firstName && sender?.lastName
+        ? `${sender.firstName} ${sender.lastName}`.trim()
+        : sender?.businessName ?? 'a customer'
+
+    if (params.sourcingSupplierId) {
+      const supplierUser = await usersService.getUserById(params.sourcingSupplierId).catch(() => null)
+      if (supplierUser) {
+        supplierName =
+          supplierUser.firstName && supplierUser.lastName
+            ? `${supplierUser.firstName} ${supplierUser.lastName}`.trim()
+            : supplierUser.businessName ?? supplierName
+        supplierEmail ??= supplierUser.email
+        supplierPhone ??= supplierUser.phone ?? null
+      }
+
+      // In-app notification for known GEX supplier
+      await notifyUser({
+        userId: params.sourcingSupplierId,
+        orderId: params.orderId,
+        type: 'order_status_update',
+        title: 'New shipment request',
+        subtitle: customerName,
+        body: `${customerName} has named you as the supplier for a new shipment. Please ship the goods to our Korea warehouse.`,
+        createdBy: params.createdBy,
+      }).catch(() => {})
+    }
+
+    if (supplierEmail) {
+      await sendSupplierBookingRequestEmail({
+        to: supplierEmail,
+        supplierName,
+        customerName,
+        description: params.description,
+      }).catch(() => {})
+    }
+
+    if (supplierPhone) {
+      await sendSupplierBookingRequestWhatsApp({
+        phone: supplierPhone,
+        supplierName,
+        customerName,
+        description: params.description,
+      }).catch(() => {})
+    }
+  }
+
+  async getCustomerRequestsForSupplier(supplierId: string) {
+    const rows = await db
+      .select()
+      .from(orders)
+      .where(
+        and(
+          eq(orders.sourcingSupplierId, supplierId),
+          isNull(orders.deletedAt),
+        ),
+      )
+      .orderBy(desc(orders.createdAt))
+
+    return rows.map((o) => this.decryptOrder(o))
   }
 
   private decryptOrder(order: typeof orders.$inferSelect, totalPaidUsd?: number) {

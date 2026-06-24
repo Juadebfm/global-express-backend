@@ -9,6 +9,7 @@ import { internalAuthService } from '../services/internal-auth.service'
 import { successResponse } from '../utils/response'
 import { createAuditLog } from '../utils/audit'
 import { UserRole } from '../types/enums'
+import { ordersService } from '../services/orders.service'
 
 const declarationSchema = z.object({
   id: z.string(),
@@ -194,6 +195,28 @@ Once accepted, bring the goods to our warehouse. We handle the rest.`,
       const declaration = await supplierDeclarationsService.getForSupplier(request.params.id, request.user.id)
       if (!declaration) return reply.code(404).send({ success: false, message: 'Declaration not found' })
       return reply.send(successResponse(declaration))
+    },
+  })
+
+  // ── Booking requests (Flow 1) ────────────────────────────────────────────
+  app.get('/orders/requests', {
+    preHandler: [authenticate, requireSupplier],
+    schema: {
+      tags: ['Supplier'],
+      summary: 'List shipment requests where this supplier has been named by a customer',
+      description: 'Returns all orders where a customer has named this supplier account as their sourcing supplier.',
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.array(z.any()),
+        }),
+        ...errorSchemas,
+      },
+    },
+    handler: async (request, reply) => {
+      const requests = await ordersService.getCustomerRequestsForSupplier(request.user.id)
+      return reply.send(successResponse(requests))
     },
   })
 }

@@ -413,3 +413,37 @@ export async function sendSupplierInvoiceEmail(params: {
       .join('\n'),
   })
 }
+
+export async function sendSupplierBookingRequestEmail(params: {
+  to: string
+  supplierName: string
+  customerName: string
+  description?: string | null
+}): Promise<void> {
+  const descLine = params.description?.trim()
+    ? `<p><strong>Goods description:</strong> ${escapeHtml(params.description.trim())}</p>`
+    : ''
+
+  await sendEmail({
+    to: params.to,
+    subject: 'New Shipment Request — Global Express',
+    html: `
+      <h2>You have a new shipment request</h2>
+      <p>Hi ${escapeHtml(params.supplierName)},</p>
+      <p>A customer (<strong>${escapeHtml(params.customerName)}</strong>) has named you as their supplier for a new shipment through Global Express.</p>
+      ${descLine}
+      <p>Please ship the goods to our Korea warehouse at your earliest convenience. Our team will be in touch with further details.</p>
+      <p>Thank you,<br>Global Express Team</p>
+    `,
+    text: [
+      `Hi ${params.supplierName},`,
+      '',
+      `A customer (${params.customerName}) has named you as their supplier for a new shipment through Global Express.`,
+      params.description?.trim() ? `Goods: ${params.description.trim()}` : '',
+      '',
+      'Please ship the goods to our Korea warehouse at your earliest convenience.',
+    ]
+      .filter((l) => l !== '')
+      .join('\n'),
+  })
+}

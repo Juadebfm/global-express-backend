@@ -188,6 +188,12 @@ export const ordersController = {
         billingSupplierId?: string
         pickupRepName?: string
         pickupRepPhone?: string
+        sourcingSupplier?: {
+          supplierId?: string
+          name?: string
+          phone?: string
+          email?: string
+        }
       }
     }>,
     reply: FastifyReply,
@@ -258,6 +264,10 @@ export const ordersController = {
       createdBy: request.user.id,
       pickupRepName: request.body.pickupRepName,
       pickupRepPhone: request.body.pickupRepPhone,
+      sourcingSupplierId: request.body.sourcingSupplier?.supplierId ?? null,
+      sourcingSupplierName: request.body.sourcingSupplier?.name ?? null,
+      sourcingSupplierPhone: request.body.sourcingSupplier?.phone ?? null,
+      sourcingSupplierEmail: request.body.sourcingSupplier?.email ?? null,
     })
 
     await createAuditLog({

@@ -55,6 +55,10 @@ const orderResponseSchema = z.object({
   estimatedChargeUsd: z.string().nullable().describe('Estimated charge in USD from declared weight × default rates — only set before warehouse verification, null for D2D or when final price is confirmed'),
   pickupRepName: z.string().nullable().describe('Pickup representative name (if someone other than the customer will collect)'),
   pickupRepPhone: z.string().nullable().describe('Pickup representative phone number'),
+  sourcingSupplierId: z.string().uuid().nullable().describe('UUID of the known GEX supplier who will ship the goods'),
+  sourcingSupplierName: z.string().nullable().describe('Name of external supplier (when not a GEX account)'),
+  sourcingSupplierPhone: z.string().nullable().describe('Phone of external supplier'),
+  sourcingSupplierEmail: z.string().nullable().describe('Email of external supplier'),
   createdBy: z.string().uuid().describe('UUID of the staff/user who created the order'),
   deletedAt: z.string().nullable(),
   createdAt: z.string(),
@@ -293,6 +297,15 @@ For **D2D**, the destination defaults to the Lagos office address, but users can
           billingSupplierId: z.string().uuid().optional().describe('Required when shipmentPayer is SUPPLIER'),
           pickupRepName: z.string().min(1).optional().describe('Pickup representative name (if someone else will collect)'),
           pickupRepPhone: z.string().min(1).optional().describe('Pickup representative phone number'),
+          sourcingSupplier: z
+            .object({
+              supplierId: z.string().uuid().optional().describe('UUID of a known GEX supplier account'),
+              name: z.string().min(1).optional().describe('Name of external supplier not on GEX'),
+              phone: z.string().min(1).optional().describe('Phone number of the supplier'),
+              email: z.string().email().optional().describe('Email address of the supplier'),
+            })
+            .optional()
+            .describe('Optional supplier who will ship goods to the GEX Korea warehouse on behalf of the customer'),
         })
         .superRefine((value, ctx) => {
           if (value.shipmentPayer === ShipmentPayer.SUPPLIER && !value.billingSupplierId) {

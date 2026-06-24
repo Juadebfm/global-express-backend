@@ -7,7 +7,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { randomUUID } from 'crypto'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
-import { packageImages, orders } from '../../drizzle/schema'
+import { batchDocuments, packageImages, orders } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
 import { avScanService } from './av-scan.service'
@@ -117,6 +117,49 @@ export class UploadsService {
       contentType: params.contentType,
       originalFileName: params.originalFileName,
     })
+  }
+
+  async generateBatchDocumentPresignedUrl(params: {
+    batchId: string
+    contentType: string
+    originalFileName?: string
+  }): Promise<PresignedUrlResult> {
+    return this.generateScopedPresignedUrl({
+      scope: 'orders',
+      scopeId: `batches/${params.batchId}`,
+      contentType: params.contentType,
+      originalFileName: params.originalFileName,
+    })
+  }
+
+  async confirmBatchDocumentUpload(params: {
+    batchId: string
+    r2Key: string
+    documentType: 'mawb' | 'bill_of_lading' | 'container_photo' | 'vessel_photo' | 'other'
+    fileName?: string
+    uploadedBy: string
+  }) {
+    const publicUrl = `${env.R2_PUBLIC_URL}/${params.r2Key}`
+    const [doc] = await db
+      .insert(batchDocuments)
+      .values({
+        batchId: params.batchId,
+        documentType: params.documentType,
+        fileUrl: publicUrl,
+        fileName: params.fileName ?? null,
+        uploadedBy: params.uploadedBy,
+      })
+      .returning()
+    return { ...doc, createdAt: doc.createdAt.toISOString() }
+  }
+
+  async listBatchDocuments(batchId: string) {
+    const rows = await db
+      .select()
+      .from(batchDocuments)
+      .where(eq(batchDocuments.batchId, batchId))
+      .orderBy(batchDocuments.createdAt)
+    return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }))
   }
 
   async generateGalleryItemMediaPresignedUrl(params: {

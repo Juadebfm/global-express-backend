@@ -1,5 +1,4 @@
-import { randomBytes } from 'crypto'
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../config/db'
 import {
   dispatchBatches,
@@ -21,7 +20,7 @@ import {
   UserRole,
 } from '../types/enums'
 import { settingsFxRateService } from './settings-fx-rate.service'
-import { generateTrackingNumber } from '../utils/tracking'
+import { generateMasterTrackingNumber, generateTrackingNumber } from '../utils/tracking'
 
 const FINALIZABLE_INVOICE_STATUSES: Array<'draft' | 'finalized'> = ['draft', 'finalized']
 const DEPARTED_STATUSES = new Set<ShipmentStatusV2>([
@@ -128,10 +127,19 @@ function isDepartedStatus(status: ShipmentStatusV2): boolean {
   return DEPARTED_STATUSES.has(status)
 }
 
-function generateMasterTrackingNumber(): string {
-  const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const randomPart = randomBytes(4).toString('hex').toUpperCase()
-  return `GEX-MASTER-${datePart}-${randomPart}`
+async function nextMasterSequence(mode: TransportMode): Promise<number> {
+  const startOfYear = new Date(new Date().getFullYear(), 0, 1)
+  const [row] = await db
+    .select({ total: count() })
+    .from(dispatchBatches)
+    .where(
+      and(
+        eq(dispatchBatches.transportMode, mode),
+        gte(dispatchBatches.createdAt, startOfYear),
+        isNull(dispatchBatches.deletedAt),
+      ),
+    )
+  return (row?.total ?? 0) + 1
 }
 
 function generateInvoiceNumber(orderId: string): string {
@@ -175,10 +183,12 @@ export class DispatchBatchesService {
 
     if (existing) return existing
 
+    const now = new Date()
+    const yearSeq = await nextMasterSequence(mode)
     const [created] = await executor
       .insert(dispatchBatches)
       .values({
-        masterTrackingNumber: generateMasterTrackingNumber(),
+        masterTrackingNumber: generateMasterTrackingNumber(mode, now, yearSeq),
         transportMode: mode,
         status: 'open',
         createdBy: actorId,
@@ -327,10 +337,12 @@ export class DispatchBatchesService {
 
     if (existingFuture) return existingFuture
 
+    const now = new Date()
+    const yearSeq = await nextMasterSequence(mode)
     const [created] = await db
       .insert(dispatchBatches)
       .values({
-        masterTrackingNumber: generateMasterTrackingNumber(),
+        masterTrackingNumber: generateMasterTrackingNumber(mode, now, yearSeq),
         transportMode: mode,
         status: 'open',
         createdBy: actorId,
@@ -400,6 +412,8 @@ export class DispatchBatchesService {
     oceanTrackingNumber?: string | null
     d2dTrackingNumber?: string | null
     voyageOrFlightNumber?: string | null
+    billOfLadingNumber?: string | null
+    vesselName?: string | null
     estimatedDepartureAt?: Date | null
     estimatedArrivalAt?: Date | null
     notes?: string | null
@@ -422,6 +436,12 @@ export class DispatchBatchesService {
 
     const voyageOrFlightNumber = normalizeOptionalText(params.voyageOrFlightNumber)
     if (voyageOrFlightNumber !== undefined) patch.voyageOrFlightNumber = voyageOrFlightNumber
+
+    const billOfLadingNumber = normalizeOptionalText(params.billOfLadingNumber)
+    if (billOfLadingNumber !== undefined) patch.billOfLadingNumber = billOfLadingNumber
+
+    const vesselName = normalizeOptionalText(params.vesselName)
+    if (vesselName !== undefined) patch.vesselName = vesselName
 
     if (params.estimatedDepartureAt !== undefined) {
       patch.estimatedDepartureAt = params.estimatedDepartureAt
@@ -685,7 +705,7 @@ export class DispatchBatchesService {
         await db
           .insert(orders)
           .values({
-            trackingNumber: `GEX-CUST-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomBytes(3).toString('hex').toUpperCase()}`,
+            trackingNumber: generateTrackingNumber(),
             senderId: input.customerId,
             recipientName: encrypt(customerName),
             recipientAddress: encrypt('58B Awoniyi Elemo Street, Ajao Estate, Lagos, Nigeria'),
@@ -1255,6 +1275,8 @@ export class DispatchBatchesService {
       oceanTrackingNumber: batch.oceanTrackingNumber,
       d2dTrackingNumber: batch.d2dTrackingNumber,
       voyageOrFlightNumber: batch.voyageOrFlightNumber,
+      billOfLadingNumber: batch.billOfLadingNumber,
+      vesselName: batch.vesselName,
       estimatedDepartureAt: batch.estimatedDepartureAt?.toISOString() ?? null,
       estimatedArrivalAt: batch.estimatedArrivalAt?.toISOString() ?? null,
       notes: batch.notes,
