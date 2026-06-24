@@ -304,6 +304,20 @@ For **D2D**, the destination defaults to the Lagos office address, but users can
               phone: z.string().min(1).optional().describe('Phone number of the supplier'),
               email: z.string().email().optional().describe('Email address of the supplier'),
             })
+            .superRefine((s, ctx) => {
+              if (s.supplierId && (s.name ?? s.phone ?? s.email)) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: 'Provide either supplierId (known GEX account) or name/phone/email (external supplier) — not both.',
+                })
+              }
+              if (!s.supplierId && !s.name && !s.email && !s.phone) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: 'sourcingSupplier must include supplierId or at least one of name, phone, email.',
+                })
+              }
+            })
             .optional()
             .describe('Optional supplier who will ship goods to the GEX Korea warehouse on behalf of the customer'),
         })

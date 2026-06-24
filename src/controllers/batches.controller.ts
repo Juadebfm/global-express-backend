@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { batchesService, STATUS_LABELS } from '../services/batches.service'
+import { uploadsService } from '../services/uploads.service'
 import { successResponse } from '../utils/response'
 import { createAuditLog } from '../utils/audit'
 import { ShipmentStatusV2 } from '../types/enums'
@@ -190,5 +191,56 @@ export const batchesController = {
       description: info.description,
     }))
     return reply.send(successResponse(labels))
+  },
+
+  async presignBatchDocument(
+    request: FastifyRequest<{ Params: { batchId: string }; Body: { contentType: string; fileName?: string } }>,
+    reply: FastifyReply,
+  ) {
+    const result = await uploadsService.generateBatchDocumentPresignedUrl({
+      batchId: request.params.batchId,
+      contentType: request.body.contentType,
+      originalFileName: request.body.fileName,
+    })
+    if (!result) return reply.code(404).send({ success: false, message: 'Batch not found.' })
+    return reply.send(successResponse(result))
+  },
+
+  async confirmBatchDocument(
+    request: FastifyRequest<{
+      Params: { batchId: string }
+      Body: { r2Key: string; documentType: 'mawb' | 'bill_of_lading' | 'container_photo' | 'vessel_photo' | 'other'; fileName?: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const result = await uploadsService.confirmBatchDocumentUpload({
+      batchId: request.params.batchId,
+      r2Key: request.body.r2Key,
+      documentType: request.body.documentType,
+      fileName: request.body.fileName,
+      uploadedBy: request.user.id,
+    })
+    if (result.error === 'batch_not_found') return reply.code(404).send({ success: false, message: 'Batch not found.' })
+    if (result.error === 'invalid_r2_key') return reply.code(422).send({ success: false, message: 'r2Key does not belong to this batch.' })
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: 'batch_document_uploaded',
+      resourceType: 'batch',
+      resourceId: request.params.batchId,
+      request,
+      metadata: { documentType: request.body.documentType, fileName: request.body.fileName ?? null },
+    })
+
+    return reply.send(successResponse(result.doc))
+  },
+
+  async listBatchDocuments(
+    request: FastifyRequest<{ Params: { batchId: string } }>,
+    reply: FastifyReply,
+  ) {
+    const result = await uploadsService.listBatchDocuments(request.params.batchId)
+    if (result.error === 'batch_not_found') return reply.code(404).send({ success: false, message: 'Batch not found.' })
+    return reply.send(successResponse(result.rows))
   },
 }

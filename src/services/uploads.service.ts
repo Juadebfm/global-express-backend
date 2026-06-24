@@ -7,7 +7,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { randomUUID } from 'crypto'
 import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../config/db'
-import { batchDocuments, packageImages, orders } from '../../drizzle/schema'
+import { batchDocuments, dispatchBatches, packageImages, orders } from '../../drizzle/schema'
 import { env } from '../config/env'
 import { UserRole } from '../types/enums'
 import { avScanService } from './av-scan.service'
@@ -39,7 +39,7 @@ function isExternalViewerRole(role: UserRole): boolean {
 
 export class UploadsService {
   private async generateScopedPresignedUrl(params: {
-    scope: 'orders' | 'invoices' | 'payments' | 'gallery-claims' | 'gallery-items'
+    scope: 'orders' | 'invoices' | 'payments' | 'gallery-claims' | 'gallery-items' | 'batches'
     scopeId: string
     contentType: string
     originalFileName?: string
@@ -123,10 +123,17 @@ export class UploadsService {
     batchId: string
     contentType: string
     originalFileName?: string
-  }): Promise<PresignedUrlResult> {
+  }): Promise<PresignedUrlResult | null> {
+    const [batch] = await db
+      .select({ id: dispatchBatches.id })
+      .from(dispatchBatches)
+      .where(and(eq(dispatchBatches.id, params.batchId), isNull(dispatchBatches.deletedAt)))
+      .limit(1)
+    if (!batch) return null
+
     return this.generateScopedPresignedUrl({
-      scope: 'orders',
-      scopeId: `batches/${params.batchId}`,
+      scope: 'batches',
+      scopeId: params.batchId,
       contentType: params.contentType,
       originalFileName: params.originalFileName,
     })
@@ -138,9 +145,19 @@ export class UploadsService {
     documentType: 'mawb' | 'bill_of_lading' | 'container_photo' | 'vessel_photo' | 'other'
     fileName?: string
     uploadedBy: string
-  }) {
+  }): Promise<{ doc: { id: string; batchId: string; documentType: string; fileUrl: string; fileName: string | null; uploadedBy: string; createdAt: string }; error?: never } | { error: 'batch_not_found' | 'invalid_r2_key'; doc?: never }> {
+    const [batch] = await db
+      .select({ id: dispatchBatches.id })
+      .from(dispatchBatches)
+      .where(and(eq(dispatchBatches.id, params.batchId), isNull(dispatchBatches.deletedAt)))
+      .limit(1)
+    if (!batch) return { error: 'batch_not_found' }
+
+    const expectedPrefix = `batches/${params.batchId}/`
+    if (!params.r2Key.startsWith(expectedPrefix)) return { error: 'invalid_r2_key' }
+
     const publicUrl = `${env.R2_PUBLIC_URL}/${params.r2Key}`
-    const [doc] = await db
+    const [row] = await db
       .insert(batchDocuments)
       .values({
         batchId: params.batchId,
@@ -150,16 +167,23 @@ export class UploadsService {
         uploadedBy: params.uploadedBy,
       })
       .returning()
-    return { ...doc, createdAt: doc.createdAt.toISOString() }
+    return { doc: { ...row, createdAt: row.createdAt.toISOString() } }
   }
 
-  async listBatchDocuments(batchId: string) {
+  async listBatchDocuments(batchId: string): Promise<{ rows: { id: string; batchId: string; documentType: string; fileUrl: string; fileName: string | null; uploadedBy: string; createdAt: string }[]; error?: never } | { error: 'batch_not_found'; rows?: never }> {
+    const [batch] = await db
+      .select({ id: dispatchBatches.id })
+      .from(dispatchBatches)
+      .where(and(eq(dispatchBatches.id, batchId), isNull(dispatchBatches.deletedAt)))
+      .limit(1)
+    if (!batch) return { error: 'batch_not_found' }
+
     const rows = await db
       .select()
       .from(batchDocuments)
       .where(eq(batchDocuments.batchId, batchId))
       .orderBy(batchDocuments.createdAt)
-    return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }))
+    return { rows: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })) }
   }
 
   async generateGalleryItemMediaPresignedUrl(params: {

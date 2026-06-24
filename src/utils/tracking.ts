@@ -16,7 +16,7 @@ export function generateTrackingNumber(): string {
  */
 export function generateSlotTrackingNumber(batchCreatedAt: Date, position: number): string {
   const d = batchCreatedAt
-  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  const date = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`
   const pos = String(position).padStart(4, '0')
   return `${date}-${pos}`
 }
@@ -29,7 +29,7 @@ export function generateSlotTrackingNumber(batchCreatedAt: Date, position: numbe
 export function generateMasterTrackingNumber(mode: 'air' | 'sea', batchCreatedAt: Date, yearSequence: number): string {
   const prefix = mode.toUpperCase()
   const d = batchCreatedAt
-  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  const date = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`
   const seq = String(yearSequence).padStart(4, '0')
   return `${prefix}-${date}-${seq}`
 }

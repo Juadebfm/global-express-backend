@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, timestamp, uniqueIndex, index, unique } from 'drizzle-orm/pg-core'
 import { users } from './users'
 import { dispatchBatches } from './dispatch-batches'
 
@@ -24,6 +24,7 @@ export const batchCustomerSlots = pgTable(
   },
   (table) => [
     uniqueIndex('batch_customer_slots_unique_idx').on(table.batchId, table.customerId),
+    unique('batch_customer_slots_tracking_unique').on(table.batchId, table.primaryTrackingNumber),
     index('batch_customer_slots_batch_id_idx').on(table.batchId),
     index('batch_customer_slots_customer_id_idx').on(table.customerId),
     index('batch_customer_slots_tracking_idx').on(table.primaryTrackingNumber),

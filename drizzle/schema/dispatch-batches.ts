@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, index, pgEnum } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, timestamp, integer, index, pgEnum } from 'drizzle-orm/pg-core'
 import { users } from './users'
 
 export const dispatchBatchStatusEnum = pgEnum('dispatch_batch_status', [
@@ -29,6 +29,7 @@ export const dispatchBatches = pgTable(
     estimatedDepartureAt: timestamp('estimated_departure_at'),
     estimatedArrivalAt: timestamp('estimated_arrival_at'),
     notes: text('notes'),
+    slotCounter: integer('slot_counter').notNull().default(0),
     createdBy: uuid('created_by').notNull().references(() => users.id),
     deletedAt: timestamp('deleted_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),

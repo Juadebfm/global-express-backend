@@ -11,6 +11,7 @@ Phase 1 — Schema migration          ██████████████
 Phase 2 — Tracking number logic     ████████████████████ 100%  ✅ done
 Phase 3 — Sea carrier info + docs   ████████████████████ 100%  ✅ done
 Phase 4 — Flow 1: customer booking  ████████████████████ 100%  ✅ done
+Phase 5 — Code review fixes         ████████████████████ 100%  ✅ done
 ```
 
 ### Phase 1 — Schema ✅
@@ -43,6 +44,19 @@ Phase 4 — Flow 1: customer booking  ██████████████
 - [x] `getCustomerRequestsForSupplier(supplierId)` service method
 - [x] `GET /supplier/orders/requests` → list orders where `sourcingSupplierId = me`
 - [x] `orderResponseSchema` → exposes all four `sourcingSupplier*` fields
+
+### Phase 5 — Code Review Fixes ✅
+- [x] **#1 Race condition** — slot counter is now an atomic `UPDATE … SET slot_counter = slot_counter + 1 RETURNING` on `dispatch_batches`; unique constraint `(batch_id, primary_tracking_number)` added to `batch_customer_slots`
+- [x] **#2 sourcingSupplier validation** — `superRefine` rejects `supplierId` + `name/phone/email` together; also rejects an empty object
+- [x] **#3 Silent notification drop** — `console.error` logged when `sourcingSupplierId` user record not found
+- [x] **#4 R2 path** — batch documents now use `batches/{batchId}/…` scope (was `orders/batches/{batchId}/…`)
+- [x] **#5 Architecture violation** — document endpoints moved to `batchesController`; audit log written on confirm
+- [x] **#6 Missing batch existence check** — `confirmBatchDocumentUpload` and `listBatchDocuments` return typed error codes instead of throwing FK errors
+- [x] **#7 r2Key not bound to batch** — confirm validates `r2Key.startsWith('batches/{batchId}/')` before inserting
+- [x] **#9 Tracking date timezone** — `getDate/Month/FullYear` → `getUTCDate/UTCMonth/UTCFullYear` in `tracking.ts`
+- [x] **#10 Supplier PII leak** — `getCustomerRequestsForSupplier` returns a projection (no PII, no financials); route schema uses explicit Zod shape
+- [x] **#10a nextMasterSequence duplicated** — removed from `batches.service.ts`, now imported from `dispatch-batches.service.ts`
+- [x] Migration: `2026-06-24_review_fixes.sql`
 
 ---
 

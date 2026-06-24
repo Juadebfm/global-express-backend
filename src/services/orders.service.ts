@@ -1462,6 +1462,9 @@ export class OrdersService {
 
     if (params.sourcingSupplierId) {
       const supplierUser = await usersService.getUserById(params.sourcingSupplierId).catch(() => null)
+      if (!supplierUser) {
+        console.error(`[notifySupplierOfBookingRequest] Known supplier ${params.sourcingSupplierId} not found — in-app notification skipped`)
+      }
       if (supplierUser) {
         supplierName =
           supplierUser.firstName && supplierUser.lastName
@@ -1504,7 +1507,20 @@ export class OrdersService {
 
   async getCustomerRequestsForSupplier(supplierId: string) {
     const rows = await db
-      .select()
+      .select({
+        id: orders.id,
+        trackingNumber: orders.trackingNumber,
+        description: orders.description,
+        weight: orders.weight,
+        declaredValue: orders.declaredValue,
+        shipmentType: orders.shipmentType,
+        statusV2: orders.statusV2,
+        sourcingSupplierName: orders.sourcingSupplierName,
+        sourcingSupplierPhone: orders.sourcingSupplierPhone,
+        sourcingSupplierEmail: orders.sourcingSupplierEmail,
+        createdAt: orders.createdAt,
+        updatedAt: orders.updatedAt,
+      })
       .from(orders)
       .where(
         and(
@@ -1514,7 +1530,11 @@ export class OrdersService {
       )
       .orderBy(desc(orders.createdAt))
 
-    return rows.map((o) => this.decryptOrder(o))
+    return rows.map((r) => ({
+      ...r,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    }))
   }
 
   private decryptOrder(order: typeof orders.$inferSelect, totalPaidUsd?: number) {

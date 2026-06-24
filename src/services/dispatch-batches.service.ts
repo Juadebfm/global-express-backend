@@ -127,7 +127,7 @@ function isDepartedStatus(status: ShipmentStatusV2): boolean {
   return DEPARTED_STATUSES.has(status)
 }
 
-async function nextMasterSequence(mode: TransportMode): Promise<number> {
+export async function nextMasterSequence(mode: TransportMode): Promise<number> {
   const startOfYear = new Date(new Date().getFullYear(), 0, 1)
   const [row] = await db
     .select({ total: count() })

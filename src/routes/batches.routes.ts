@@ -5,8 +5,7 @@ import { errorResponseSchema } from '../utils/problem-details'
 import { batchesController } from '../controllers/batches.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireSuperAdmin } from '../middleware/requireRole'
-import { uploadsService } from '../services/uploads.service'
-import { successResponse } from '../utils/response'
+
 
 const errorSchemas = {
   400: errorResponseSchema,
@@ -378,16 +377,7 @@ Only allowed on closed batches.`,
         ...errorSchemas,
       },
     },
-    handler: async (request, reply) => {
-      const { batchId } = request.params as { batchId: string }
-      const body = request.body as { contentType: string; fileName?: string }
-      const result = await uploadsService.generateBatchDocumentPresignedUrl({
-        batchId,
-        contentType: body.contentType,
-        originalFileName: body.fileName,
-      })
-      return reply.send(successResponse(result))
-    },
+    handler: batchesController.presignBatchDocument,
   })
 
   app.post('/:batchId/documents/confirm', {
@@ -407,18 +397,7 @@ Only allowed on closed batches.`,
         ...errorSchemas,
       },
     },
-    handler: async (request, reply) => {
-      const { batchId } = request.params as { batchId: string }
-      const body = request.body as { r2Key: string; documentType: 'mawb' | 'bill_of_lading' | 'container_photo' | 'vessel_photo' | 'other'; fileName?: string }
-      const doc = await uploadsService.confirmBatchDocumentUpload({
-        batchId,
-        r2Key: body.r2Key,
-        documentType: body.documentType,
-        fileName: body.fileName,
-        uploadedBy: request.user.id,
-      })
-      return reply.send(successResponse(doc))
-    },
+    handler: batchesController.confirmBatchDocument,
   })
 
   app.get('/:batchId/documents', {
@@ -433,10 +412,6 @@ Only allowed on closed batches.`,
         ...errorSchemas,
       },
     },
-    handler: async (request, reply) => {
-      const { batchId } = request.params as { batchId: string }
-      const docs = await uploadsService.listBatchDocuments(batchId)
-      return reply.send(successResponse(docs))
-    },
+    handler: batchesController.listBatchDocuments,
   })
 }
