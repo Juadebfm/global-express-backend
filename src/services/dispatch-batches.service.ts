@@ -184,18 +184,34 @@ export class DispatchBatchesService {
     if (existing) return existing
 
     const now = new Date()
-    const yearSeq = await nextMasterSequence(mode)
-    const [created] = await executor
-      .insert(dispatchBatches)
-      .values({
-        masterTrackingNumber: generateMasterTrackingNumber(mode, now, yearSeq),
-        transportMode: mode,
-        status: 'open',
-        createdBy: actorId,
-      })
-      .returning()
+    // Retry once on unique constraint violation (error code 23505) — two concurrent
+    // batch creations of the same mode+day could both get the same COUNT and collide
+    // on the unique masterTrackingNumber constraint.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const yearSeq = await nextMasterSequence(mode)
+      try {
+        const [created] = await executor
+          .insert(dispatchBatches)
+          .values({
+            masterTrackingNumber: generateMasterTrackingNumber(mode, now, yearSeq),
+            transportMode: mode,
+            status: 'open',
+            createdBy: actorId,
+          })
+          .returning()
+        return created
+      } catch (err: unknown) {
+        const pgCode = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code
+        if (pgCode === '23505' && attempt === 0) {
+          // Unique constraint violation on master_tracking_number — retry with a fresh count
+          continue
+        }
+        throw err
+      }
+    }
 
-    return created
+    // Should not be reached — the second attempt either succeeds or rethrows
+    throw new Error('Failed to create dispatch batch after retry')
   }
 
   async getOrCreateOpenBatch(mode: TransportMode, actorId: string) {
@@ -338,18 +354,30 @@ export class DispatchBatchesService {
     if (existingFuture) return existingFuture
 
     const now = new Date()
-    const yearSeq = await nextMasterSequence(mode)
-    const [created] = await db
-      .insert(dispatchBatches)
-      .values({
-        masterTrackingNumber: generateMasterTrackingNumber(mode, now, yearSeq),
-        transportMode: mode,
-        status: 'open',
-        createdBy: actorId,
-      })
-      .returning()
+    // Retry once on unique constraint violation (error code 23505) — same race as getOrCreateOpenBatchOnExecutor
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const yearSeq = await nextMasterSequence(mode)
+      try {
+        const [created] = await db
+          .insert(dispatchBatches)
+          .values({
+            masterTrackingNumber: generateMasterTrackingNumber(mode, now, yearSeq),
+            transportMode: mode,
+            status: 'open',
+            createdBy: actorId,
+          })
+          .returning()
+        return created
+      } catch (err: unknown) {
+        const pgCode = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code
+        if (pgCode === '23505' && attempt === 0) {
+          continue
+        }
+        throw err
+      }
+    }
 
-    return created
+    throw new Error('Failed to create dispatch batch after retry')
   }
 
   async requestCutoff(batchId: string, actorId: string) {

@@ -191,20 +191,34 @@ export class BatchesService {
 
   async createBatch(params: { transportMode: 'air' | 'sea'; actorId: string }) {
     const now = new Date()
-    const yearSeq = await nextMasterSequence(params.transportMode as TransportMode)
-    const masterTrackingNumber = generateMasterTrackingNumber(params.transportMode, now, yearSeq)
 
-    const [batch] = await db
-      .insert(dispatchBatches)
-      .values({
-        masterTrackingNumber,
-        transportMode: params.transportMode,
-        status: DispatchBatchStatus.OPEN,
-        createdBy: params.actorId,
-      })
-      .returning()
+    // Retry once on unique constraint violation (error code 23505) — two concurrent
+    // batch creations of the same mode+day could both get the same COUNT and collide
+    // on the unique masterTrackingNumber constraint.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const yearSeq = await nextMasterSequence(params.transportMode as TransportMode)
+      const masterTrackingNumber = generateMasterTrackingNumber(params.transportMode, now, yearSeq)
+      try {
+        const [batch] = await db
+          .insert(dispatchBatches)
+          .values({
+            masterTrackingNumber,
+            transportMode: params.transportMode,
+            status: DispatchBatchStatus.OPEN,
+            createdBy: params.actorId,
+          })
+          .returning()
+        return mapBatch(batch)
+      } catch (err: unknown) {
+        const pgCode = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code
+        if (pgCode === '23505' && attempt === 0) {
+          continue
+        }
+        throw err
+      }
+    }
 
-    return mapBatch(batch)
+    throw new Error('Failed to create dispatch batch after retry')
   }
 
   // ── 2. List batches ──────────────────────────────────────────────────────
@@ -456,47 +470,54 @@ export class BatchesService {
   }) {
     const { order, batchId, masterTrackingNumber } = params
 
-    const [existingSlot] = await db
-      .select()
-      .from(batchCustomerSlots)
-      .where(and(eq(batchCustomerSlots.batchId, batchId), eq(batchCustomerSlots.customerId, order.senderId!)))
-      .limit(1)
+    let isNewSlot = false
 
-    if (!existingSlot) {
-      // Atomic increment — serialises concurrent slot creation for this batch
-      const [updated] = await db
-        .update(dispatchBatches)
-        .set({ slotCounter: sql`${dispatchBatches.slotCounter} + 1` })
-        .where(and(eq(dispatchBatches.id, batchId), isNull(dispatchBatches.deletedAt)))
-        .returning({ slotCounter: dispatchBatches.slotCounter, createdAt: dispatchBatches.createdAt })
+    // Wrap SELECT + UPDATE + INSERT in a transaction to eliminate the TOCTOU race
+    // where two concurrent requests both see "no existing slot" and burn two slot counter increments.
+    await db.transaction(async (tx) => {
+      const [existingSlot] = await tx
+        .select()
+        .from(batchCustomerSlots)
+        .where(and(eq(batchCustomerSlots.batchId, batchId), eq(batchCustomerSlots.customerId, order.senderId!)))
+        .limit(1)
 
-      if (updated) {
-        const slotTrackingNumber = generateSlotTrackingNumber(updated.createdAt, updated.slotCounter)
-        await db.insert(batchCustomerSlots).values({
-          batchId,
-          customerId: order.senderId!,
-          primaryTrackingNumber: slotTrackingNumber,
-        }).onConflictDoNothing()
+      if (!existingSlot) {
+        isNewSlot = true
+        // Atomic increment — serialises concurrent slot creation for this batch
+        const [updated] = await tx
+          .update(dispatchBatches)
+          .set({ slotCounter: sql`${dispatchBatches.slotCounter} + 1` })
+          .where(and(eq(dispatchBatches.id, batchId), isNull(dispatchBatches.deletedAt)))
+          .returning({ slotCounter: dispatchBatches.slotCounter, createdAt: dispatchBatches.createdAt })
+
+        if (updated) {
+          const slotTrackingNumber = generateSlotTrackingNumber(updated.createdAt, updated.slotCounter)
+          await tx.insert(batchCustomerSlots).values({
+            batchId,
+            customerId: order.senderId!,
+            primaryTrackingNumber: slotTrackingNumber,
+          }).onConflictDoNothing()
+        }
       }
-    }
+    })
 
     await db
       .update(orders)
       .set({ dispatchBatchId: batchId, updatedAt: new Date() })
       .where(and(eq(orders.id, order.id), isNull(orders.dispatchBatchId)))
 
-    const slot = existingSlot ?? (await db
+    const [slot] = await db
       .select()
       .from(batchCustomerSlots)
       .where(and(eq(batchCustomerSlots.batchId, batchId), eq(batchCustomerSlots.customerId, order.senderId!)))
-      .limit(1))[0]
+      .limit(1)
 
     return {
       ok: true as const,
       batchId,
       masterTrackingNumber,
       batchTrackingNumber: slot?.primaryTrackingNumber ?? order.trackingNumber,
-      isNewSlot: !existingSlot,
+      isNewSlot,
     }
   }
 
@@ -511,28 +532,32 @@ export class BatchesService {
 
     if (!order?.senderId) return
 
-    const [existing] = await db
-      .select()
-      .from(batchCustomerSlots)
-      .where(and(eq(batchCustomerSlots.batchId, params.batchId), eq(batchCustomerSlots.customerId, order.senderId)))
-      .limit(1)
+    // Wrap SELECT + UPDATE + INSERT in a transaction to eliminate the TOCTOU race
+    // where two concurrent requests both see "no existing slot" and burn two slot counter increments.
+    await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(batchCustomerSlots)
+        .where(and(eq(batchCustomerSlots.batchId, params.batchId), eq(batchCustomerSlots.customerId, order.senderId!)))
+        .limit(1)
 
-    if (!existing) {
-      const [updated] = await db
-        .update(dispatchBatches)
-        .set({ slotCounter: sql`${dispatchBatches.slotCounter} + 1` })
-        .where(and(eq(dispatchBatches.id, params.batchId), isNull(dispatchBatches.deletedAt)))
-        .returning({ slotCounter: dispatchBatches.slotCounter, createdAt: dispatchBatches.createdAt })
+      if (!existing) {
+        const [updated] = await tx
+          .update(dispatchBatches)
+          .set({ slotCounter: sql`${dispatchBatches.slotCounter} + 1` })
+          .where(and(eq(dispatchBatches.id, params.batchId), isNull(dispatchBatches.deletedAt)))
+          .returning({ slotCounter: dispatchBatches.slotCounter, createdAt: dispatchBatches.createdAt })
 
-      if (updated) {
-        const slotTrackingNumber = generateSlotTrackingNumber(updated.createdAt, updated.slotCounter)
-        await db.insert(batchCustomerSlots).values({
-          batchId: params.batchId,
-          customerId: order.senderId,
-          primaryTrackingNumber: slotTrackingNumber,
-        }).onConflictDoNothing()
+        if (updated) {
+          const slotTrackingNumber = generateSlotTrackingNumber(updated.createdAt, updated.slotCounter)
+          await tx.insert(batchCustomerSlots).values({
+            batchId: params.batchId,
+            customerId: order.senderId!,
+            primaryTrackingNumber: slotTrackingNumber,
+          }).onConflictDoNothing()
+        }
       }
-    }
+    })
   }
 
   // ── 5. Remove an order from a batch ─────────────────────────────────────

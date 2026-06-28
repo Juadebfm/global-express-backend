@@ -193,6 +193,21 @@ function isExternalViewerRole(role: UserRole): boolean {
 
 export class OrdersService {
   async createOrder(input: CreateOrderInput) {
+    // Fix 1: Validate that sourcingSupplierId refers to a user with role='supplier'
+    if (input.sourcingSupplierId) {
+      const [supplierUser] = await db
+        .select({ id: users.id, role: users.role })
+        .from(users)
+        .where(and(eq(users.id, input.sourcingSupplierId), isNull(users.deletedAt)))
+        .limit(1)
+
+      if (!supplierUser || supplierUser.role !== UserRole.SUPPLIER) {
+        const error = new Error('The specified supplier account does not exist or is not a supplier') as Error & { statusCode: number }
+        error.statusCode = 400
+        throw error
+      }
+    }
+
     const trackingNumber = generateTrackingNumber()
     const inferredTransportMode = resolveTransportModeFromShipmentType(input.shipmentType)
     const shouldAttachToBatch = Boolean(inferredTransportMode) && !(input.isPreorder ?? false)
@@ -1505,36 +1520,51 @@ export class OrdersService {
     }
   }
 
-  async getCustomerRequestsForSupplier(supplierId: string) {
-    const rows = await db
-      .select({
-        id: orders.id,
-        trackingNumber: orders.trackingNumber,
-        description: orders.description,
-        weight: orders.weight,
-        declaredValue: orders.declaredValue,
-        shipmentType: orders.shipmentType,
-        statusV2: orders.statusV2,
-        sourcingSupplierName: orders.sourcingSupplierName,
-        sourcingSupplierPhone: orders.sourcingSupplierPhone,
-        sourcingSupplierEmail: orders.sourcingSupplierEmail,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-      })
-      .from(orders)
-      .where(
-        and(
-          eq(orders.sourcingSupplierId, supplierId),
-          isNull(orders.deletedAt),
-        ),
-      )
-      .orderBy(desc(orders.createdAt))
+  async getCustomerRequestsForSupplier(supplierId: string, params: PaginationParams) {
+    const offset = getPaginationOffset(params.page, params.limit)
 
-    return rows.map((r) => ({
-      ...r,
-      createdAt: r.createdAt.toISOString(),
-      updatedAt: r.updatedAt.toISOString(),
-    }))
+    const baseWhere = and(
+      eq(orders.sourcingSupplierId, supplierId),
+      isNull(orders.deletedAt),
+    )
+
+    const [rows, countResult] = await Promise.all([
+      db
+        .select({
+          id: orders.id,
+          trackingNumber: orders.trackingNumber,
+          description: orders.description,
+          weight: orders.weight,
+          declaredValue: orders.declaredValue,
+          shipmentType: orders.shipmentType,
+          statusV2: orders.statusV2,
+          sourcingSupplierName: orders.sourcingSupplierName,
+          sourcingSupplierPhone: orders.sourcingSupplierPhone,
+          sourcingSupplierEmail: orders.sourcingSupplierEmail,
+          createdAt: orders.createdAt,
+          updatedAt: orders.updatedAt,
+        })
+        .from(orders)
+        .where(baseWhere)
+        .orderBy(desc(orders.createdAt))
+        .limit(params.limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(orders)
+        .where(baseWhere),
+    ])
+
+    const total = countResult[0]?.count ?? 0
+    return buildPaginatedResult(
+      rows.map((r) => ({
+        ...r,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+      total,
+      params,
+    )
   }
 
   private decryptOrder(order: typeof orders.$inferSelect, totalPaidUsd?: number) {

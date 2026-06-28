@@ -361,7 +361,15 @@ Only allowed on closed batches.`,
       security: [{ bearerAuth: [] }],
       params: z.object({ batchId: z.string().uuid() }),
       body: z.object({
-        contentType: z.string().min(1),
+        contentType: z.enum([
+          'application/pdf',
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+          'image/webp',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+        ]),
         fileName: z.string().optional(),
       }),
       response: {

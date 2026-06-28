@@ -206,29 +206,44 @@ Once accepted, bring the goods to our warehouse. We handle the rest.`,
       summary: 'List shipment requests where this supplier has been named by a customer',
       description: 'Returns all orders where a customer has named this supplier account as their sourcing supplier.',
       security: [{ bearerAuth: [] }],
+      querystring: z.object({
+        page: z.coerce.number().int().positive().optional().default(1).describe('Page number'),
+        limit: z.coerce.number().int().min(1).max(50).optional().default(20).describe('Results per page (max 50)'),
+      }),
       response: {
         200: z.object({
           success: z.literal(true),
-          data: z.array(z.object({
-            id: z.string(),
-            trackingNumber: z.string(),
-            description: z.string().nullable(),
-            weight: z.string().nullable(),
-            declaredValue: z.string().nullable(),
-            shipmentType: z.string().nullable(),
-            statusV2: z.string().nullable(),
-            sourcingSupplierName: z.string().nullable(),
-            sourcingSupplierPhone: z.string().nullable(),
-            sourcingSupplierEmail: z.string().nullable(),
-            createdAt: z.string(),
-            updatedAt: z.string(),
-          })),
+          data: z.object({
+            data: z.array(z.object({
+              id: z.string(),
+              trackingNumber: z.string(),
+              description: z.string().nullable(),
+              weight: z.string().nullable(),
+              declaredValue: z.string().nullable(),
+              shipmentType: z.string().nullable(),
+              statusV2: z.string().nullable(),
+              sourcingSupplierName: z.string().nullable(),
+              sourcingSupplierPhone: z.string().nullable(),
+              sourcingSupplierEmail: z.string().nullable(),
+              createdAt: z.string(),
+              updatedAt: z.string(),
+            })),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
         }),
         ...errorSchemas,
       },
     },
     handler: async (request, reply) => {
-      const requests = await ordersService.getCustomerRequestsForSupplier(request.user.id)
+      const requests = await ordersService.getCustomerRequestsForSupplier(request.user.id, {
+        page: request.query.page,
+        limit: request.query.limit,
+      })
       return reply.send(successResponse(requests))
     },
   })
