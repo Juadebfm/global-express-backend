@@ -42,6 +42,11 @@ export function hashEmail(email: string): string {
  * Decrypts a value previously encrypted with `encrypt()`.
  */
 export function decrypt(encryptedValue: string): string {
+  // Guard against accidental null/undefined at runtime despite the TS type.
+  if (encryptedValue == null) {
+    const e = new Error(`decrypt() received ${encryptedValue} — caller must null-check before calling`)
+    throw e
+  }
   const key = getKey()
   const parts = encryptedValue.split(':')
 

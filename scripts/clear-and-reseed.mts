@@ -150,6 +150,9 @@ async function main() {
   // ════════════════════════════════════════════════════════════
   console.log('\n── Phase 4: Creating seed users ──')
 
+  // Remove any leftover seed users from a previous run
+  await sql`DELETE FROM users WHERE clerk_id IN ('user_seed_amaka001','user_seed_seun001','user_seed_tope001','user_seed_kim001')`
+
   const amakaId = randomUUID()
   const seunId  = randomUUID()
   const topeId  = randomUUID()
@@ -714,6 +717,9 @@ async function main() {
   // PHASE 10 — DORMANT LEDGER CLIENTS
   // ════════════════════════════════════════════════════════════
   console.log('\n── Phase 10: Creating dormant ledger clients ──')
+
+  // Remove any previous dormant stubs (no clerkId, role=user) before reinserting
+  await sql`DELETE FROM users WHERE clerk_id IS NULL AND role = 'user' AND is_active = false`
 
   const LEDGER_CLIENTS = [
     { firstName: 'FESTUS',     lastName: null,          shippingMark: 'FESTUS',                phone: '07030500757' },
