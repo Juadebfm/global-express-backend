@@ -17,7 +17,10 @@ export const users = pgTable('users', {
   emailHash: text('email_hash').unique(),
 
   // ─── Identity (PII — AES-256 encrypted at rest) ───────────────────────────
-  email: text('email').notNull().unique(),
+  // Nullable to support dormant clients created without an email address.
+  // Staff-provisioned active clients always have an email; dormant stubs created
+  // via POST /admin/clients/dormant may have email=null until they are activated.
+  email: text('email').unique(),
   // firstName + lastName are nullable to support business accounts that use businessName only
   firstName: text('first_name'),
   lastName: text('last_name'),

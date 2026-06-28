@@ -438,7 +438,7 @@ export const ordersController = {
         statusV2: request.body.statusV2,
         updatedBy: request.user.id,
         actorRole: request.user.role as UserRole,
-        senderEmail: sender?.email,
+        senderEmail: sender?.email ?? undefined,
         senderPhone: sender?.phone ?? undefined,
         notifyEmailAlerts: sender?.notifyEmailAlerts,
         notifySmsAlerts: sender?.notifySmsAlerts,

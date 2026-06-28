@@ -167,12 +167,12 @@ async function main() {
       ${enc('amaka.okonkwo@gmail.com')},
       ${enc('Amaka')}, ${enc('Okonkwo')},
       ${enc('+2348031234567')},
-      ${enc('GE-AO-K1X3Y2')},
+      ${enc('AmakaO')},
       'user', 'Lagos', 'Lagos', 'Nigeria',
       ${now}, ${now}
     )
   `
-  console.log(`  ✓ Amaka Okonkwo (${amakaId})  mark: GE-AO-K1X3Y2`)
+  console.log(`  ✓ Amaka Okonkwo (${amakaId})  mark: AmakaO`)
 
   // Seun Bello — customer (Abuja)
   await sql`
@@ -184,12 +184,12 @@ async function main() {
       ${enc('seun.bello@outlook.com')},
       ${enc('Seun')}, ${enc('Bello')},
       ${enc('+2348052345678')},
-      ${enc('GE-SB-N8P2Q5')},
+      ${enc('SeunB')},
       'user', 'Abuja', 'FCT', 'Nigeria',
       ${now}, ${now}
     )
   `
-  console.log(`  ✓ Seun Bello   (${seunId})  mark: GE-SB-N8P2Q5`)
+  console.log(`  ✓ Seun Bello   (${seunId})  mark: SeunB`)
 
   // Tope Adeyemi — customer (Port Harcourt)
   await sql`
@@ -201,12 +201,12 @@ async function main() {
       ${enc('tope.adeyemi@yahoo.com')},
       ${enc('Tope')}, ${enc('Adeyemi')},
       ${enc('+2348074567890')},
-      ${enc('GE-TA-M4R7Z9')},
+      ${enc('TopeA')},
       'user', 'Port Harcourt', 'Rivers', 'Nigeria',
       ${now}, ${now}
     )
   `
-  console.log(`  ✓ Tope Adeyemi (${topeId})  mark: GE-TA-M4R7Z9`)
+  console.log(`  ✓ Tope Adeyemi (${topeId})  mark: TopeA`)
 
   // Kim Electronics — supplier (Seoul)
   await sql`
@@ -711,12 +711,55 @@ async function main() {
   console.log(`  ✓ Supplier declaration: Kim → Amaka (linked to O12, status: accepted)`)
 
   // ════════════════════════════════════════════════════════════
+  // PHASE 10 — DORMANT LEDGER CLIENTS
+  // ════════════════════════════════════════════════════════════
+  console.log('\n── Phase 10: Creating dormant ledger clients ──')
+
+  const LEDGER_CLIENTS = [
+    { firstName: 'FESTUS',     lastName: null,          shippingMark: 'FESTUS',                phone: '07030500757' },
+    { firstName: 'JOSHUA',     lastName: 'EMMANUEL',    shippingMark: 'JOSHUA EMMANUEL',       phone: null },
+    { firstName: 'PRINCESS',   lastName: null,          shippingMark: 'Classy ChiDivine',      phone: '08075113522' },
+    { firstName: 'JENNIFER',   lastName: 'NNAOBI',      shippingMark: 'Ossyjenny',             phone: '08037584818' },
+    { firstName: 'FESTUS',     lastName: 'LOUIS',       shippingMark: 'FESTUS LOUIS',          phone: '09138109121' },
+    { firstName: 'ZAYNAB',     lastName: 'ODUSOTE',     shippingMark: 'BeautyByDaz',           phone: '08034411151' },
+    { firstName: 'TOSIN',      lastName: 'DADA',        shippingMark: 'RW-JEMMY',              phone: '07066760331' },
+    { firstName: 'VICTOR',     lastName: null,          shippingMark: 'Premium Royalty',       phone: '08037617941' },
+    { firstName: 'SPLENDID',   lastName: null,          shippingMark: 'The Bolden Co.',        phone: '+14698199369' },
+    { firstName: 'CHINWE',     lastName: 'UDEH',        shippingMark: 'Xulcee Store',          phone: '08033138535' },
+    { firstName: 'LILIAN',     lastName: 'UNACHUKWU',   shippingMark: 'Liam Mart',             phone: '08139544470' },
+    { firstName: 'SYLVIMAK',   lastName: null,          shippingMark: 'SYLVIMAK',              phone: '07043296833' },
+    { firstName: 'SOLOMON',    lastName: null,          shippingMark: 'ATEC',                  phone: '+12268082327' },
+    { firstName: 'NNEOMA',     lastName: null,          shippingMark: 'LADIES CITY COSMETICS', phone: '08139416788' },
+    { firstName: 'UCHUBUAGBO', lastName: 'OSELE',       shippingMark: 'Nature Guide',          phone: '07034832800' },
+    { firstName: 'CHIKELUBA',  lastName: 'TAGBO',       shippingMark: 'Tbone Concepts',        phone: '08033456148' },
+  ] as const
+
+  for (const client of LEDGER_CLIENTS) {
+    const clientId = randomUUID()
+    await sql`
+      INSERT INTO users
+        (id, clerk_id, email, email_hash, first_name, last_name, phone, shipping_mark,
+         role, is_active, created_at, updated_at)
+      VALUES (
+        ${clientId}, null, null, null,
+        ${client.firstName ? enc(client.firstName) : null},
+        ${client.lastName ? enc(client.lastName) : null},
+        ${client.phone ? enc(client.phone) : null},
+        ${enc(client.shippingMark)},
+        'user', false,
+        ${now}, ${now}
+      )
+    `
+    console.log(`  ✓ ${client.shippingMark} (${client.firstName}${client.lastName ? ' ' + client.lastName : ''})`)
+  }
+
+  // ════════════════════════════════════════════════════════════
   // DONE
   // ════════════════════════════════════════════════════════════
   console.log('\n═══════════════════════════════════════════')
   console.log('✅  Reseed complete!')
   console.log('\nSummary:')
-  console.log('  Users:      3 customers + 1 supplier')
+  console.log('  Users:      3 active customers + 1 supplier + 16 dormant ledger clients')
   console.log('  Batches:    2 open (1 air, 1 sea) + 3 closed')
   console.log('  Orders:     13 across all pipeline stages')
   console.log('  Slots:      8 batch-customer slots')

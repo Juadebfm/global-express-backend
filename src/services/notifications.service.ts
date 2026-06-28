@@ -222,8 +222,8 @@ export class NotificationsService {
       // Email all active superadmins (unless the caller is sending a dedicated email)
       if (!input.skipEmail) {
         const superadminEmails = matchingUsers
-          .filter((u) => u.role === UserRole.SUPER_ADMIN)
-          .map((sa) => decrypt(sa.email))
+          .filter((u) => u.role === UserRole.SUPER_ADMIN && u.email != null)
+          .map((sa) => decrypt(sa.email!))
 
         await Promise.allSettled(
           superadminEmails.map((email) =>

@@ -210,7 +210,7 @@ interface SupplierUserRow {
   firstName: string | null
   lastName: string | null
   businessName: string | null
-  email: string
+  email: string | null
   phone: string | null
   whatsappNumber: string | null
   shippingMark: string | null
@@ -1501,7 +1501,8 @@ export class UsersService {
       firstName,
       lastName,
       businessName,
-      email: decrypt(supplier.email),
+      // Suppliers always have email; non-null assertion safe here
+      email: decrypt(supplier.email!),
       phone: supplier.phone ? decrypt(supplier.phone) : null,
       whatsappNumber: supplier.whatsappNumber ? decrypt(supplier.whatsappNumber) : null,
       shippingMark: supplier.shippingMark ? decrypt(supplier.shippingMark) : null,
@@ -1628,7 +1629,7 @@ export class UsersService {
   private decryptUser(user: typeof users.$inferSelect) {
     return {
       ...user,
-      email: decrypt(user.email),
+      email: user.email ? decrypt(user.email) : null,
       firstName: user.firstName ? decrypt(user.firstName) : null,
       lastName: user.lastName ? decrypt(user.lastName) : null,
       businessName: user.businessName ? decrypt(user.businessName) : null,

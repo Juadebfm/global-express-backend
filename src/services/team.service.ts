@@ -112,7 +112,8 @@ export class TeamService {
 
     return {
       id: user.id,
-      email: decrypt(user.email),
+      // Team members (staff/superadmin) always have email set
+      email: decrypt(user.email!),
       firstName,
       lastName,
       displayName,

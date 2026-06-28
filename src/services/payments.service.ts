@@ -957,7 +957,7 @@ export class PaymentsService {
 
     if (!user) throw httpError('Customer not found', 404)
 
-    const email = decrypt(user.email)
+    const email = user.email ? decrypt(user.email) : null
     const firstName = user.firstName ? decrypt(user.firstName) : null
     const lastName = user.lastName ? decrypt(user.lastName) : null
     const businessName = user.businessName ? decrypt(user.businessName) : null
@@ -976,7 +976,7 @@ export class PaymentsService {
 
     const sends: Promise<void>[] = []
 
-    if (user.notifyEmailAlerts) {
+    if (user.notifyEmailAlerts && email) {
       sends.push(sendPaymentRequestEmail({ to: email, ...notifParams }).catch(() => undefined))
     }
     if (user.notifySmsAlerts) {
@@ -1034,7 +1034,7 @@ export class PaymentsService {
 
     if (!user) return
 
-    const email = decrypt(user.email)
+    const email = user.email ? decrypt(user.email) : null
     const firstName = user.firstName ? decrypt(user.firstName) : null
     const lastName = user.lastName ? decrypt(user.lastName) : null
     const businessName = user.businessName ? decrypt(user.businessName) : null
@@ -1050,7 +1050,7 @@ export class PaymentsService {
       remainingBalanceUsd: params.remainingBalanceUsd,
     }
 
-    if (user.notifyEmailAlerts) {
+    if (user.notifyEmailAlerts && email) {
       await sendPaymentConfirmationEmail({ to: email, ...notifParams }).catch(() => null)
     }
 

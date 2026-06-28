@@ -113,7 +113,7 @@ export function generateGdprExportPdf(data: GdprExportData): PDFKit.PDFDocument 
 
   addKeyValueRow(doc, 'Name', fullName)
   addKeyValueRow(doc, 'Business Name', profile.businessName ?? 'N/A')
-  addKeyValueRow(doc, 'Email', profile.email)
+  addKeyValueRow(doc, 'Email', profile.email ?? 'N/A')
   addKeyValueRow(doc, 'Phone', profile.phone ?? 'N/A')
   addKeyValueRow(doc, 'WhatsApp', profile.whatsappNumber ?? 'N/A')
   addKeyValueRow(doc, 'Address', formatAddress(profile))

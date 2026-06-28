@@ -278,7 +278,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         data: {
           user: {
             id: userRow.id,
-            email: userRow.email,
+            // Internal (staff/superadmin) users always have email
+            email: userRow.email!,
             firstName: userRow.firstName,
             lastName: userRow.lastName,
             role: userRow.role,
@@ -356,7 +357,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         data: {
           user: {
             id: userRow.id,
-            email: userRow.email,
+            // Internal (staff/superadmin) users always have email
+            email: userRow.email!,
             firstName: userRow.firstName,
             lastName: userRow.lastName,
             role: userRow.role,
@@ -394,7 +396,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         success: true,
         data: {
           id: user.id,
-          email: user.email,
+          // Internal (staff/superadmin) users always have email
+          email: user.email!,
           firstName: user.firstName ?? null,
           lastName: user.lastName ?? null,
           role: user.role,

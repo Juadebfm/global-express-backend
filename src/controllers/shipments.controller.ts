@@ -148,7 +148,7 @@ export const shipmentsController = {
       if (!customerId && request.body.shippingMark) {
         const resolved = await resolveCustomerIdByShippingMark(request.body.shippingMark)
         if (!resolved) {
-          return reply.code(404).send({ success: false, message: `No customer found with shipping mark "${request.body.shippingMark}"` })
+          return reply.code(404).send({ success: false, code: 'CUSTOMER_NOT_FOUND', searchedMark: request.body.shippingMark, message: `No customer found with shipping mark "${request.body.shippingMark}"` })
         }
         customerId = resolved
       }

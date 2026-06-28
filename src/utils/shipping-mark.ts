@@ -1,25 +1,22 @@
 import { randomInt } from 'crypto'
 
 /**
- * Shipping mark — a personal alias the customer scrawls on physical boxes so
- * the Korean consolidation warehouse and the Lagos receiving office can match
- * the freight to the right person without scanning a barcode.
+ * Shipping mark — a freeform business alias the customer scrawls on physical
+ * boxes so the Korean consolidation warehouse and the Lagos receiving office
+ * can match the freight to the right person without scanning a barcode.
  *
  * This is NOT a tracking number — we already have tracking numbers (GEX-…).
- * Industry practice for groupage / LCL personal-effects freight is short,
- * customer-chosen aliases: `JAY`, `QUEEN`, `JUADEB`, `HAYOMZ`, etc. The mark
- * is hand-written on boxes and matched visually at intake.
+ * Real marks from the operations ledger look like: "Ossyjenny", "BeautyByDaz",
+ * "Classy ChiDivine", "RW-JEMMY", "The Bolden Co.", "LADIES CITY COSMETICS".
+ * They can have spaces, mixed case, hyphens, dots — no format restriction.
  *
  * Format:
- *   - 3–20 characters
- *   - Lowercase letters + digits (we normalise uppercase input to lowercase)
- *   - Must start with a letter
+ *   - 1–100 characters (any printable content)
  *
  * Auto-generated at customer signup from whatever name we have (Julius
  * Adebowale → `julade`). The customer can replace it ONCE via
- * `PATCH /api/v1/users/me` to use their actual nickname (a 3-char mark like
- * `jay` is perfectly valid). Staff can change it any time via
- * `PATCH /api/v1/users/:id` (no one-time limit on the staff path).
+ * `PATCH /api/v1/users/me` to use their actual nickname. Staff can change it
+ * any time via `PATCH /api/v1/users/:id` (no one-time limit on the staff path).
  *
  * Uniqueness is best-effort, not enforced. Two customers ending up with the
  * same mark is operationally awkward but not catastrophic — the forwarder can
@@ -28,9 +25,8 @@ import { randomInt } from 'crypto'
  * and a partial-unique index.
  */
 
-export const SHIPPING_MARK_MIN_LENGTH = 3
-export const SHIPPING_MARK_MAX_LENGTH = 20
-export const SHIPPING_MARK_REGEX = /^[a-z][a-z0-9]{2,19}$/
+export const SHIPPING_MARK_MIN_LENGTH = 1
+export const SHIPPING_MARK_MAX_LENGTH = 100
 
 /**
  * Normalise customer input before validation: strip whitespace, lowercase,
@@ -89,5 +85,6 @@ export function generateShippingMark(source: ShippingMarkSource): string {
 }
 
 export function isValidShippingMark(value: string): boolean {
-  return SHIPPING_MARK_REGEX.test(value)
+  const trimmed = value.trim()
+  return trimmed.length >= SHIPPING_MARK_MIN_LENGTH && trimmed.length <= SHIPPING_MARK_MAX_LENGTH
 }

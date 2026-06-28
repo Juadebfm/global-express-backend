@@ -6,7 +6,6 @@ import { logSecurityEvent } from '../utils/security-events'
 import {
   isValidShippingMark,
   normaliseShippingMarkInput,
-  SHIPPING_MARK_REGEX,
 } from '../utils/shipping-mark'
 import { successResponse } from '../utils/response'
 import { PreferredLanguage, SupplierUpdateRequestStatus, UserRole } from '../types/enums'
@@ -103,7 +102,7 @@ export const usersController = {
         if (!isValidShippingMark(requestedShippingMark)) {
           return reply.code(400).send({
             success: false,
-            message: `Shipping mark must match ${SHIPPING_MARK_REGEX.source} — 3–20 chars, lowercase letters and digits, must start with a letter. Examples: jay, juadeb, queen24, plural99.`,
+            message: 'Shipping mark must be 1–100 characters (freeform). Examples: Jay, JUADEB, RW-JEMMY, Classy ChiDivine.',
           })
         }
 

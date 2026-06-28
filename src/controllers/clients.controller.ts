@@ -274,7 +274,7 @@ export const clientsController = {
         recipientAddress:
           request.body.recipientAddress?.trim() || buildFallbackRecipientAddress(client),
         recipientPhone: request.body.recipientPhone?.trim() || client.phone || '',
-        recipientEmail: request.body.recipientEmail?.trim() || client.email,
+        recipientEmail: request.body.recipientEmail?.trim() || client.email || undefined,
         orderDirection: request.body.orderDirection ?? OrderDirection.OUTBOUND,
         description: request.body.description?.trim(),
         shipmentType: request.body.shipmentType ?? ShipmentType.AIR,
@@ -454,5 +454,88 @@ export const clientsController = {
       const message = error instanceof Error ? error.message : 'Login-link dispatch failed'
       return reply.code(statusCode).send({ success: false, message })
     }
+  },
+
+  async createDormantClient(
+    request: FastifyRequest<{
+      Body: {
+        firstName?: string
+        lastName?: string
+        phone: string
+        shippingMark: string
+        whatsappNumber?: string
+        email?: string
+        addressCity?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    if (!request.body.firstName && !request.body.lastName) {
+      return reply.code(400).send({
+        success: false,
+        message: 'At least one of firstName or lastName is required.',
+      })
+    }
+
+    const stub = await clientsService.createDormantClient({
+      firstName: request.body.firstName,
+      lastName: request.body.lastName,
+      phone: request.body.phone,
+      shippingMark: request.body.shippingMark,
+      whatsappNumber: request.body.whatsappNumber,
+      email: request.body.email,
+      addressCity: request.body.addressCity,
+    })
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: `Created dormant client (shippingMark: ${request.body.shippingMark})`,
+      resourceType: 'user',
+      resourceId: stub.id,
+      request,
+      metadata: { shippingMark: request.body.shippingMark },
+    })
+
+    return reply.code(201).send(
+      successResponse({
+        id: stub.id,
+        firstName: request.body.firstName ?? null,
+        lastName: request.body.lastName ?? null,
+        phone: request.body.phone,
+        shippingMark: request.body.shippingMark,
+        isActive: false,
+        createdAt: stub.createdAt instanceof Date ? stub.createdAt.toISOString() : String(stub.createdAt),
+      }),
+    )
+  },
+
+  async activateClient(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) {
+    const result = await clientsService.activateClient(request.params.id)
+
+    if (result.status === 'not_found') {
+      return reply.code(404).send({ success: false, message: 'Client not found' })
+    }
+    if (result.status === 'already_active') {
+      return reply.code(409).send({ success: false, message: 'Client is already active' })
+    }
+    if (result.status === 'no_email') {
+      return reply.code(422).send({
+        success: false,
+        message: 'Client has no email address — add an email before activating.',
+      })
+    }
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: `Activated dormant client ${request.params.id}`,
+      resourceType: 'user',
+      resourceId: request.params.id,
+      request,
+    })
+
+    return reply.send(successResponse(result.client))
   },
 }

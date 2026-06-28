@@ -202,6 +202,63 @@ Use \`dryRun=true\` to validate and preview actions without writing to the datab
     handler: clientsController.createClient,
   })
 
+  // ─── POST /admin/clients/dormant ─────────────────────────────────────────
+  // NOTE: must be registered before /clients/:id/* routes to avoid matching
+  // "dormant" as an :id param.
+  app.post('/clients/dormant', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Admin — Clients'],
+      summary: 'Create a dormant client account (no Clerk invite sent)',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        firstName: z.string().min(1).optional(),
+        lastName: z.string().min(1).optional(),
+        phone: z.string().min(1),
+        shippingMark: z.string().min(1).max(100),
+        whatsappNumber: z.string().optional(),
+        email: z.string().email().optional(),
+        addressCity: z.string().optional(),
+      }),
+      response: {
+        201: z.object({
+          success: z.literal(true),
+          data: z.object({
+            id: z.string(),
+            firstName: z.string().nullable(),
+            lastName: z.string().nullable(),
+            phone: z.string().nullable(),
+            shippingMark: z.string().nullable(),
+            isActive: z.boolean(),
+            createdAt: z.string(),
+          }),
+        }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: clientsController.createDormantClient,
+  })
+
+  // ─── POST /admin/clients/:id/activate ────────────────────────────────────
+  app.post('/clients/:id/activate', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Admin — Clients'],
+      summary: 'Activate a dormant client (set isActive:true + send Clerk invite)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.any() }),
+        404: errorResponseSchema,
+        409: errorResponseSchema,
+        422: errorResponseSchema,
+      },
+    },
+    handler: clientsController.activateClient,
+  })
+
   // ─── POST /admin/clients/:id/send-invite ─────────────────────────────────
   app.post('/clients/:id/send-invite', {
     preHandler: [authenticate, requireStaffOrAbove],

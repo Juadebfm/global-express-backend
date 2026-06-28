@@ -232,6 +232,65 @@ export class ClientsService {
     return clerk.invitations.createInvitation({ emailAddress: email })
   }
 
+  /**
+   * Creates a dormant client stub without requiring an email address.
+   * No Clerk account is provisioned; isActive is false until activateClient is called.
+   * shippingMark is required (caller must provide a non-empty value).
+   */
+  async createDormantClient(input: {
+    firstName?: string
+    lastName?: string
+    businessName?: string
+    phone?: string
+    whatsappNumber?: string
+    email?: string
+    shippingMark: string
+    addressCity?: string
+  }) {
+    const [stub] = await db
+      .insert(users)
+      .values({
+        clerkId: null,
+        email: input.email ? encrypt(input.email) : null,
+        emailHash: input.email ? hashEmail(input.email) : null,
+        firstName: input.firstName ? encrypt(input.firstName) : null,
+        lastName: input.lastName ? encrypt(input.lastName) : null,
+        businessName: input.businessName ? encrypt(input.businessName) : null,
+        phone: input.phone ? encrypt(input.phone) : null,
+        whatsappNumber: input.whatsappNumber ? encrypt(input.whatsappNumber) : null,
+        shippingMark: encrypt(input.shippingMark),
+        addressCity: input.addressCity ?? null,
+        role: UserRole.USER,
+        isActive: false,
+      })
+      .returning()
+
+    return stub
+  }
+
+  /**
+   * Activates a dormant client: sets isActive=true and sends a Clerk invitation.
+   * Returns a discriminated union so the controller can map status codes cleanly.
+   */
+  async activateClient(id: string): Promise<
+    | { status: 'ok'; client: NonNullable<Awaited<ReturnType<ClientsService['getClientById']>>> }
+    | { status: 'not_found' }
+    | { status: 'already_active' }
+    | { status: 'no_email' }
+  > {
+    const client = await this.getClientById(id)
+    if (!client) return { status: 'not_found' }
+    if (client.isActive) return { status: 'already_active' }
+    if (!client.email) return { status: 'no_email' }
+
+    await db.update(users).set({ isActive: true, updatedAt: new Date() }).where(eq(users.id, id))
+
+    await this.sendClerkInvite(client.email)
+
+    const updated = await this.getClientById(id)
+    return { status: 'ok', client: updated! }
+  }
+
   async canActorProvisionClientLoginLinks(actorId: string, actorRole: UserRole): Promise<boolean> {
     if (actorRole === UserRole.SUPER_ADMIN) return true
     if (actorRole !== UserRole.STAFF) return false
@@ -358,6 +417,9 @@ export class ClientsService {
       clientRow = created
     }
 
+    if (!clientRow.email) {
+      throw httpError('Client has no email address — cannot provision login link.', 422)
+    }
     const emailAddress = decrypt(clientRow.email)
     const login = await this.createClientLoginLink({
       clerkId: clientRow.clerkId,
@@ -432,6 +494,9 @@ export class ClientsService {
       if (updated) clientRow = updated
     }
 
+    if (!clientRow.email) {
+      throw httpError('Client has no email address — cannot resend login link.', 422)
+    }
     const emailAddress = decrypt(clientRow.email)
     const login = await this.createClientLoginLink({
       clerkId: clientRow.clerkId,
@@ -534,7 +599,7 @@ export class ClientsService {
   private formatClient(
     row: {
       id: string
-      email: string
+      email: string | null
       firstName: string | null
       lastName: string | null
       businessName: string | null
@@ -567,7 +632,7 @@ export class ClientsService {
 
     const base = {
       id: row.id,
-      email: decrypt(row.email),
+      email: row.email ? decrypt(row.email) : null,
       firstName,
       lastName,
       businessName,

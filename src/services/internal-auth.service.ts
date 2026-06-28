@@ -172,7 +172,8 @@ export class InternalAuthService {
     return {
       id: user.id,
       clerkId: user.clerkId,
-      email: decrypt(user.email),
+      // Internal users (staff/superadmin) always have email; non-null assertion is safe here
+      email: decrypt(user.email!),
       firstName: user.firstName ? decrypt(user.firstName) : null,
       lastName: user.lastName ? decrypt(user.lastName) : null,
       role: user.role,

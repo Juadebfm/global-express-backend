@@ -196,7 +196,7 @@ export async function authenticate(
         id: user.id,
         clerkId: null, // internal users have no Clerk account
         role: user.role,
-        email: decrypt(user.email),
+        email: decrypt(user.email!),
       }
     } catch (err) {
       request.log.error({ err }, 'Internal auth database lookup failed')
@@ -249,7 +249,7 @@ export async function authenticate(
         id: existingUser.id,
         clerkId: existingUser.clerkId,
         role: existingUser.role,
-        email: decrypt(existingUser.email),
+        email: decrypt(existingUser.email!),
       }
       return
     }

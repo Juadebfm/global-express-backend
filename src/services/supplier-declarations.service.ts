@@ -112,10 +112,10 @@ class SupplierDeclarationsService {
           .where(and(inArray(users.role, [UserRole.SUPER_ADMIN]), eq(users.isActive, true), isNull(users.deletedAt)))
 
         await Promise.allSettled(
-          superadmins.map((sa) => {
+          superadmins.filter((sa) => sa.email != null).map((sa) => {
             try {
               return sendNewDeclarationAlertEmail({
-                to: decrypt(sa.email),
+                to: decrypt(sa.email!),
                 supplierName,
                 supplierBusiness,
                 description: input.description,

@@ -303,7 +303,8 @@ Use this on every page load to gate routing:
         success: true,
         data: {
           ...row,
-          email: row.email ? decrypt(row.email) : row.email,
+          // Internal (staff/superadmin) users always have email set
+          email: decrypt(row.email!),
           firstName: row.firstName ? decrypt(row.firstName) : row.firstName,
           lastName: row.lastName ? decrypt(row.lastName) : row.lastName,
           createdAt: row.createdAt.toISOString(),
@@ -343,7 +344,7 @@ Use this on every page load to gate routing:
       }
 
       const valid = await internalAuthService.validateCredentials(
-        profile.email,
+        profile.email!,
         request.body.currentPassword,
       )
 
@@ -420,7 +421,7 @@ Use this on every page load to gate routing:
         return reply.code(404).send({ success: false, message: 'User not found' })
       }
       try {
-        const result = await mfaService.beginEnrollment(request.user.id, profile.email)
+        const result = await mfaService.beginEnrollment(request.user.id, profile.email!)
         return reply.send({ success: true, data: result })
       } catch (err) {
         const e = err as { statusCode?: number; message?: string }
@@ -517,7 +518,7 @@ Use this on every page load to gate routing:
       }
 
       const credCheck = await internalAuthService.validateCredentials(
-        profile.email,
+        profile.email!,
         request.body.currentPassword,
       )
       if (!credCheck.ok) {

@@ -79,8 +79,8 @@ export class AdminNotificationsService {
 
       // 4. Email all active superadmins
       const superadminEmails = adminUsers
-        .filter((u) => u.role === UserRole.SUPER_ADMIN)
-        .map((sa) => decrypt(sa.email))
+        .filter((u) => u.role === UserRole.SUPER_ADMIN && u.email != null)
+        .map((sa) => decrypt(sa.email!))
 
       await Promise.allSettled(
         superadminEmails.map((email) =>
