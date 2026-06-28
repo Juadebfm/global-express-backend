@@ -1,4 +1,4 @@
-import { eq, and, isNull, sql, desc } from 'drizzle-orm'
+import { eq, and, isNull, isNotNull, sql, desc } from 'drizzle-orm'
 import { createClerkClient } from '@clerk/backend'
 import { db } from '../config/db'
 import { users, orders, payments } from '../../drizzle/schema'
@@ -247,6 +247,23 @@ export class ClientsService {
     shippingMark: string
     addressCity?: string
   }) {
+    // Enforce shipping mark uniqueness (application-level, marks are AES-GCM encrypted
+    // so there is no DB-level unique constraint — decrypt-and-compare is the only option).
+    const normalised = input.shippingMark.trim().toLowerCase()
+    const candidates = await db
+      .select({ id: users.id, shippingMark: users.shippingMark })
+      .from(users)
+      .where(and(eq(users.role, UserRole.USER), isNull(users.deletedAt), isNotNull(users.shippingMark)))
+    const collision = candidates.find(
+      (row) => row.shippingMark && decrypt(row.shippingMark).toLowerCase() === normalised,
+    )
+    if (collision) {
+      throw Object.assign(
+        new Error('Shipping mark is already in use by another customer.'),
+        { statusCode: 409 },
+      )
+    }
+
     const [stub] = await db
       .insert(users)
       .values({
@@ -283,9 +300,12 @@ export class ClientsService {
     if (client.isActive) return { status: 'already_active' }
     if (!client.email) return { status: 'no_email' }
 
-    await db.update(users).set({ isActive: true, updatedAt: new Date() }).where(eq(users.id, id))
-
+    // Send the Clerk invite BEFORE updating the DB. If Clerk throws, the DB stays
+    // unchanged (client remains dormant). If the DB update fails after a successful
+    // invite, the Clerk webhook will set isActive=true when the customer signs up.
     await this.sendClerkInvite(client.email)
+
+    await db.update(users).set({ isActive: true, updatedAt: new Date() }).where(eq(users.id, id))
 
     const updated = await this.getClientById(id)
     return { status: 'ok', client: updated! }

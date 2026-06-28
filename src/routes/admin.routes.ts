@@ -207,18 +207,23 @@ Use \`dryRun=true\` to validate and preview actions without writing to the datab
   // "dormant" as an :id param.
   app.post('/clients/dormant', {
     preHandler: [authenticate, requireStaffOrAbove],
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
     schema: {
       tags: ['Admin — Clients'],
       summary: 'Create a dormant client account (no Clerk invite sent)',
       security: [{ bearerAuth: [] }],
       body: z.object({
-        firstName: z.string().min(1).optional(),
-        lastName: z.string().min(1).optional(),
-        phone: z.string().min(1),
+        firstName: z.string().min(1).max(100).optional(),
+        lastName: z.string().min(1).max(100).optional(),
+        phone: z.string().min(1).max(30),
         shippingMark: z.string().min(1).max(100),
-        whatsappNumber: z.string().optional(),
-        email: z.string().email().optional(),
-        addressCity: z.string().optional(),
+        whatsappNumber: z.string().max(30).optional(),
+        email: z
+          .string()
+          .email()
+          .regex(/^[^\r\n\t]*$/, 'Email must not contain line breaks')
+          .optional(),
+        addressCity: z.string().max(100).optional(),
       }),
       response: {
         201: z.object({
@@ -244,6 +249,7 @@ Use \`dryRun=true\` to validate and preview actions without writing to the datab
   // ─── POST /admin/clients/:id/activate ────────────────────────────────────
   app.post('/clients/:id/activate', {
     preHandler: [authenticate, requireStaffOrAbove],
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     schema: {
       tags: ['Admin — Clients'],
       summary: 'Activate a dormant client (set isActive:true + send Clerk invite)',

@@ -145,7 +145,19 @@ export const shipmentsController = {
     try {
       let customerId = request.body.customerId
 
-      if (!customerId && request.body.shippingMark) {
+      if (customerId) {
+        // When customerId is provided directly, verify the target is actually a customer.
+        // resolveCustomerIdByShippingMark already enforces role=USER; this closes the
+        // equivalent gap for the direct-ID path.
+        const [target] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.id, customerId), eq(users.role, UserRole.USER), isNull(users.deletedAt)))
+          .limit(1)
+        if (!target) {
+          return reply.code(404).send({ success: false, message: 'Customer not found' })
+        }
+      } else if (request.body.shippingMark) {
         const resolved = await resolveCustomerIdByShippingMark(request.body.shippingMark)
         if (!resolved) {
           return reply.code(404).send({ success: false, code: 'CUSTOMER_NOT_FOUND', searchedMark: request.body.shippingMark, message: `No customer found with shipping mark "${request.body.shippingMark}"` })
