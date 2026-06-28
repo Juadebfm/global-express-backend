@@ -17,7 +17,7 @@ import {
 
 const clientSchema = z.object({
   id: z.string().uuid(),
-  email: z.string(),
+  email: z.string().nullable(),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   businessName: z.string().nullable(),
