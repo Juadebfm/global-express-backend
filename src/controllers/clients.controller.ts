@@ -509,6 +509,67 @@ export const clientsController = {
     )
   },
 
+  async updateClientDetails(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: {
+        firstName?: string
+        lastName?: string
+        businessName?: string
+        email?: string
+        phone?: string
+        whatsappNumber?: string
+        shippingMark?: string
+        addressCity?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const body = request.body
+    const hasAtLeastOneField =
+      body.firstName !== undefined ||
+      body.lastName !== undefined ||
+      body.businessName !== undefined ||
+      body.email !== undefined ||
+      body.phone !== undefined ||
+      body.whatsappNumber !== undefined ||
+      body.shippingMark !== undefined ||
+      body.addressCity !== undefined
+
+    if (!hasAtLeastOneField) {
+      return reply.code(400).send({
+        success: false,
+        message: 'Provide at least one field to update.',
+      })
+    }
+
+    const result = await clientsService.updateClientDetails(request.params.id, body)
+
+    if (result.status === 'not_found') {
+      return reply.code(404).send({ success: false, message: 'Client not found' })
+    }
+
+    if (result.status === 'shipping_mark_conflict') {
+      return reply.code(409).send({
+        success: false,
+        message: 'Shipping mark is already in use by another customer.',
+      })
+    }
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: `Updated client details for ${request.params.id}`,
+      resourceType: 'user',
+      resourceId: request.params.id,
+      request,
+      metadata: {
+        updatedFields: Object.keys(body).filter((k) => body[k as keyof typeof body] !== undefined),
+      },
+    })
+
+    return reply.send(successResponse(result.client))
+  },
+
   async activateClient(
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,

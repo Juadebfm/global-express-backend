@@ -265,6 +265,43 @@ Use \`dryRun=true\` to validate and preview actions without writing to the datab
     handler: clientsController.activateClient,
   })
 
+  // ─── PATCH /admin/clients/:id ────────────────────────────────────────────
+  app.patch('/clients/:id', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    schema: {
+      tags: ['Admin — Clients'],
+      summary: 'Update client details (staff+)',
+      description:
+        'Patches a dormant or active client\'s contact/identity fields. Only the fields provided in the request body are updated. Enforces shipping mark uniqueness and encrypts all PII before storage.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid() }),
+      body: z.object({
+        firstName: z.string().min(1).max(100).optional(),
+        lastName: z.string().min(1).max(100).optional(),
+        businessName: z.string().min(1).max(200).optional(),
+        email: z
+          .string()
+          .email()
+          .regex(/^[^\r\n\t]*$/, 'Email must not contain line breaks')
+          .optional(),
+        phone: z.string().min(1).max(30).optional(),
+        whatsappNumber: z.string().min(1).max(30).optional(),
+        shippingMark: z.string().min(1).max(100).optional(),
+        addressCity: z.string().min(1).max(100).optional(),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: clientDetailSchema }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+        409: errorResponseSchema,
+      },
+    },
+    handler: clientsController.updateClientDetails,
+  })
+
   // ─── POST /admin/clients/:id/send-invite ─────────────────────────────────
   app.post('/clients/:id/send-invite', {
     preHandler: [authenticate, requireStaffOrAbove],

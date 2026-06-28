@@ -311,6 +311,76 @@ export class ClientsService {
     return { status: 'ok', client: updated! }
   }
 
+  /**
+   * Patches a client's details (staff-initiated). Only provided fields are updated.
+   * Enforces shipping-mark uniqueness (decrypt-and-compare, excluding the same client).
+   * Returns a discriminated union so the controller can map status codes cleanly.
+   */
+  async updateClientDetails(
+    id: string,
+    input: {
+      firstName?: string
+      lastName?: string
+      businessName?: string
+      email?: string
+      phone?: string
+      whatsappNumber?: string
+      shippingMark?: string
+      addressCity?: string
+    },
+  ): Promise<
+    | { status: 'ok'; client: NonNullable<Awaited<ReturnType<ClientsService['getClientById']>>> }
+    | { status: 'not_found' }
+    | { status: 'shipping_mark_conflict' }
+  > {
+    // Fetch raw row so we can read encrypted fields without the JOIN aggregates
+    const [existing] = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, id), eq(users.role, UserRole.USER), isNull(users.deletedAt)))
+      .limit(1)
+
+    if (!existing) return { status: 'not_found' }
+
+    // Shipping mark uniqueness — decrypt-and-compare, skip if the mark is the
+    // same one already held by this client.
+    if (input.shippingMark !== undefined) {
+      const normalised = input.shippingMark.trim().toLowerCase()
+      const candidates = await db
+        .select({ id: users.id, shippingMark: users.shippingMark })
+        .from(users)
+        .where(and(eq(users.role, UserRole.USER), isNull(users.deletedAt), isNotNull(users.shippingMark)))
+
+      const collision = candidates.find((row) => {
+        if (row.id === id) return false
+        return row.shippingMark && decrypt(row.shippingMark).toLowerCase() === normalised
+      })
+
+      if (collision) return { status: 'shipping_mark_conflict' }
+    }
+
+    // Build update patch — only include keys that were explicitly provided.
+    const patch: Partial<typeof users.$inferInsert> = { updatedAt: new Date() }
+
+    if (input.firstName !== undefined) patch.firstName = input.firstName ? encrypt(input.firstName) : null
+    if (input.lastName !== undefined) patch.lastName = input.lastName ? encrypt(input.lastName) : null
+    if (input.businessName !== undefined) patch.businessName = input.businessName ? encrypt(input.businessName) : null
+    if (input.phone !== undefined) patch.phone = input.phone ? encrypt(input.phone) : null
+    if (input.whatsappNumber !== undefined) patch.whatsappNumber = input.whatsappNumber ? encrypt(input.whatsappNumber) : null
+    if (input.shippingMark !== undefined) patch.shippingMark = input.shippingMark ? encrypt(input.shippingMark) : null
+    if (input.addressCity !== undefined) patch.addressCity = input.addressCity || null
+
+    if (input.email !== undefined) {
+      patch.email = input.email ? encrypt(input.email) : null
+      patch.emailHash = input.email ? hashEmail(input.email) : null
+    }
+
+    await db.update(users).set(patch).where(eq(users.id, id))
+
+    const updated = await this.getClientById(id)
+    return { status: 'ok', client: updated! }
+  }
+
   async canActorProvisionClientLoginLinks(actorId: string, actorRole: UserRole): Promise<boolean> {
     if (actorRole === UserRole.SUPER_ADMIN) return true
     if (actorRole !== UserRole.STAFF) return false
