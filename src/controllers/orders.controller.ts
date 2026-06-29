@@ -278,14 +278,29 @@ export const ordersController = {
       request,
     })
 
-    // Fire-and-forget: notify superadmin of new order
-    void notificationsService.notifyRole({
-      targetRole: UserRole.STAFF,
-      type: 'new_order',
-      title: 'New Order Created',
-      body: `Order ${order.trackingNumber} (${(shipmentType ?? 'standard').toUpperCase()}, ${request.body.weight ?? '?'}kg) — ${String(request.body.description || 'no description').slice(0, 80)}`,
-      metadata: { orderId: order.id, trackingNumber: order.trackingNumber, senderId },
-    })
+    // Fire-and-forget: fetch sender profile then send rich admin alert
+    void usersService.getUserById(senderId).then((senderProfile) =>
+      notificationsService.notifyNewOrder({
+        orderId: order.id,
+        trackingNumber: order.trackingNumber,
+        senderId,
+        shipmentType: shipmentType ?? 'air',
+        weight: request.body.weight ?? null,
+        declaredValue: request.body.declaredValue ?? null,
+        description: String(request.body.description || ''),
+        recipientName: request.body.recipientName ?? '',
+        recipientPhone: request.body.recipientPhone ?? '',
+        senderProfile: senderProfile
+          ? {
+              firstName: senderProfile.firstName,
+              lastName: senderProfile.lastName,
+              businessName: senderProfile.businessName,
+              phone: senderProfile.phone,
+              shippingMark: senderProfile.shippingMark,
+            }
+          : null,
+      }),
+    )
 
     return reply.code(201).send(successResponse(maskOrderForExternalViewer(order, userRole)))
   },

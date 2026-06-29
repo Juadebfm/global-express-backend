@@ -6,7 +6,7 @@ import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import type { PaginationParams } from '../types'
 import { UserRole } from '../types/enums'
 import { decrypt } from '../utils/encryption'
-import { sendAccountAlertEmail } from '../notifications/email'
+import { sendAccountAlertEmail, sendNewOrderAlertEmail } from '../notifications/email'
 import { webPushService } from './web-push.service'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -671,6 +671,101 @@ export class NotificationsService {
       isSaved,
       createdBy: row.createdBy,
       createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
+    }
+  }
+
+  /**
+   * Rich new-order alert for superadmins — fires in-app notification, web push,
+   * and a detailed HTML email with customer name, shipping mark, goods, weight,
+   * declared value, and recipient.
+   *
+   * Designed to be called fire-and-forget from the order creation controller.
+   */
+  async notifyNewOrder(params: {
+    orderId: string
+    trackingNumber: string
+    senderId: string | null
+    shipmentType: string
+    weight: string | null
+    declaredValue: string | null
+    description: string
+    recipientName: string
+    recipientPhone: string
+    senderProfile: {
+      firstName: string | null
+      lastName: string | null
+      businessName?: string | null
+      phone: string | null
+      shippingMark: string | null
+    } | null
+  }): Promise<void> {
+    try {
+      const {
+        orderId, trackingNumber, shipmentType, weight, declaredValue,
+        description, recipientName, recipientPhone, senderProfile,
+      } = params
+
+      const typeLabels: Record<string, string> = {
+        air: 'Air Freight', ocean: 'Ocean Freight', d2d: 'D2D',
+      }
+      const typeLabel = typeLabels[shipmentType] ?? shipmentType.toUpperCase()
+
+      const customerName = senderProfile
+        ? ([senderProfile.firstName, senderProfile.lastName].filter(Boolean).join(' ') || senderProfile.businessName || 'Unknown')
+        : 'Unknown'
+      const shippingMark = senderProfile?.shippingMark ?? null
+      const customerPhone = senderProfile?.phone ?? null
+
+      const pushBody = [
+        `${customerName}${shippingMark ? ` (${shippingMark})` : ''}`,
+        typeLabel,
+        weight ?? null,
+        description.slice(0, 50),
+      ].filter(Boolean).join(' · ')
+
+      // In-app + WebSocket + push (no email — we send a richer dedicated one below)
+      await this.notifyRole({
+        targetRole: UserRole.STAFF,
+        type: 'new_order',
+        title: `New ${typeLabel} Order`,
+        body: pushBody,
+        metadata: { orderId, trackingNumber },
+        skipEmail: true,
+      })
+
+      // Rich email to superadmins only
+      const superadmins = await db
+        .select({ email: users.email })
+        .from(users)
+        .where(
+          and(
+            eq(users.role, UserRole.SUPER_ADMIN),
+            eq(users.isActive, true),
+            isNull(users.deletedAt),
+          ),
+        )
+
+      await Promise.allSettled(
+        superadmins
+          .filter((u) => u.email != null)
+          .map((u) =>
+            sendNewOrderAlertEmail({
+              to: decrypt(u.email!),
+              shipmentType,
+              customerName,
+              shippingMark,
+              customerPhone,
+              description,
+              weight,
+              declaredValue,
+              recipientName,
+              recipientPhone,
+              orderId,
+            }),
+          ),
+      )
+    } catch (err) {
+      console.error('[Notifications] Failed to send new-order alert:', err)
     }
   }
 }

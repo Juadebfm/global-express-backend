@@ -28,6 +28,9 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required'),
   RESEND_FROM_EMAIL: z.email({ message: 'RESEND_FROM_EMAIL must be a valid email' }),
   RESEND_FROM_NAME: z.string().min(1, 'RESEND_FROM_NAME is required'),
+  // Publicly accessible logo URL used in transactional email headers.
+  // Defaults to the R2-hosted brand asset — override only if the logo moves.
+  EMAIL_LOGO_URL: z.url().optional(),
 
   // ─── Termii SMS / WhatsApp (optional) ────────────────────────────────────
   TERMII_API_KEY: z.string().optional(),
