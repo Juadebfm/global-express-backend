@@ -653,7 +653,7 @@ Use this on every page load to gate routing:
         emergencyContactName: z.string().min(1, 'Emergency contact name is required'),
         emergencyContactPhone: z.string().min(1, 'Emergency contact phone is required'),
         emergencyContactRelationship: z.string().min(1, 'Emergency contact relationship is required'),
-        nationalId: z.string().optional(),
+        nationalId: z.string().nullish(),
       }),
       response: {
         200: z.object({
@@ -699,7 +699,7 @@ Use this on every page load to gate routing:
           emergencyContactName: encrypt(body.emergencyContactName),
           emergencyContactPhone: encrypt(body.emergencyContactPhone),
           emergencyContactRelationship: body.emergencyContactRelationship,
-          ...(body.nationalId ? { nationalId: encrypt(body.nationalId) } : {}),
+          ...(body.nationalId !== undefined ? { nationalId: body.nationalId ? encrypt(body.nationalId) : null } : {}),
           mustCompleteProfile: false,
           isActive: true,
           updatedAt: new Date(),
