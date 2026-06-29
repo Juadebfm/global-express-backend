@@ -760,6 +760,78 @@ async function main() {
   }
 
   // ════════════════════════════════════════════════════════════
+  // PHASE 11 — SUPPORT TICKETS
+  // ════════════════════════════════════════════════════════════
+  console.log('\n── Phase 11: Seeding support tickets ──')
+
+  const t1Id = randomUUID()
+  const t2Id = randomUUID()
+  const t3Id = randomUUID()
+  const t4Id = randomUUID()
+  const t5Id = randomUUID()
+  const t6Id = randomUUID()
+  const t7Id = randomUUID()
+
+  await sql`
+    INSERT INTO support_tickets (id, ticket_number, user_id, category, status, subject, created_at, updated_at)
+    VALUES
+      (${t1Id}, 'TKT-62619001001', ${amakaId}, 'shipment_inquiry', 'open',
+       'Where is my package? It has been 3 weeks', ${new Date('2026-06-01T09:00:00Z')}, ${new Date('2026-06-01T09:00:00Z')}),
+      (${t2Id}, 'TKT-62619001002', ${seunId}, 'payment_issue', 'open',
+       'I was charged twice for the same order', ${new Date('2026-06-05T14:30:00Z')}, ${new Date('2026-06-05T14:30:00Z')}),
+      (${t3Id}, 'TKT-62619001003', ${topeId}, 'damaged_goods', 'open',
+       'Shipment arrived with damaged items inside', ${new Date('2026-06-10T11:00:00Z')}, ${new Date('2026-06-10T11:00:00Z')}),
+      (${t4Id}, 'TKT-62619001004', ${amakaId}, 'document_request', 'in_progress',
+       'Need customs clearance document for my sea batch', ${new Date('2026-06-12T08:00:00Z')}, ${new Date('2026-06-15T10:00:00Z')}),
+      (${t5Id}, 'TKT-62619001005', ${seunId}, 'general', 'in_progress',
+       'How do I update my delivery address?', ${new Date('2026-06-18T16:00:00Z')}, ${new Date('2026-06-20T09:00:00Z')}),
+      (${t6Id}, 'TKT-62619001006', ${topeId}, 'shipment_inquiry', 'resolved',
+       'Tracking number not showing correct status', ${new Date('2026-06-08T12:00:00Z')}, ${new Date('2026-06-09T15:00:00Z')}),
+      (${t7Id}, 'TKT-62619001007', ${amakaId}, 'account_issue', 'closed',
+       'Cannot log in to my account', ${new Date('2026-05-20T10:00:00Z')}, ${new Date('2026-05-21T11:00:00Z')})
+  `
+
+  await sql`
+    INSERT INTO support_messages (id, ticket_id, author_id, body, is_internal, created_at)
+    VALUES
+      (${randomUUID()}, ${t1Id}, ${amakaId},
+       'Hi, I placed an order 3 weeks ago but the tracking shows no update. Can you check what happened?',
+       false, ${new Date('2026-06-01T09:00:00Z')}),
+      (${randomUUID()}, ${t2Id}, ${seunId},
+       'I checked my bank statement and there are two charges of ₦15,000 on June 3rd for the same order. Please refund one.',
+       false, ${new Date('2026-06-05T14:30:00Z')}),
+      (${randomUUID()}, ${t3Id}, ${topeId},
+       'When my package arrived the box was torn and one of the items was cracked. I have photos. How do I file a claim?',
+       false, ${new Date('2026-06-10T11:00:00Z')}),
+      (${randomUUID()}, ${t4Id}, ${amakaId},
+       'I need the customs clearance certificate for my shipment in the current sea batch. My agent is asking for it.',
+       false, ${new Date('2026-06-12T08:00:00Z')}),
+      (${randomUUID()}, ${t4Id}, ${deleId},
+       'Hello Amaka, we are currently processing your document request. It should be ready within 2 business days.',
+       false, ${new Date('2026-06-15T10:00:00Z')}),
+      (${randomUUID()}, ${t5Id}, ${seunId},
+       'I want to change my delivery address for the upcoming batch. New address: 14 Opebi Road, Ikeja, Lagos.',
+       false, ${new Date('2026-06-18T16:00:00Z')}),
+      (${randomUUID()}, ${t6Id}, ${topeId},
+       'My tracking page has been showing AT_ORIGIN_AIRPORT for 5 days. Is there a delay?',
+       false, ${new Date('2026-06-08T12:00:00Z')}),
+      (${randomUUID()}, ${t6Id}, ${deleId},
+       'Hi Tope, there was a brief delay at the origin airport due to customs inspection. Your shipment departed yesterday and is now en route. Tracking will update within 24 hours.',
+       false, ${new Date('2026-06-09T15:00:00Z')}),
+      (${randomUUID()}, ${t7Id}, ${amakaId},
+       'I cannot log in. I keep getting invalid password even though I have not changed it.',
+       false, ${new Date('2026-05-20T10:00:00Z')}),
+      (${randomUUID()}, ${t7Id}, ${deleId},
+       'Hi Amaka, your account was locked due to too many failed login attempts. I have reset it — please try logging in again.',
+       false, ${new Date('2026-05-21T11:00:00Z')})
+  `
+
+  await sql`UPDATE support_tickets SET closed_at = ${new Date('2026-05-21T12:00:00Z')} WHERE id = ${t7Id}`
+
+  console.log('  ✓ 7 support tickets (3 open, 2 in_progress, 1 resolved, 1 closed)')
+  console.log('  ✓ 10 support messages')
+
+  // ════════════════════════════════════════════════════════════
   // DONE
   // ════════════════════════════════════════════════════════════
   console.log('\n═══════════════════════════════════════════')
@@ -770,6 +842,7 @@ async function main() {
   console.log('  Orders:     13 across all pipeline stages')
   console.log('  Slots:      8 batch-customer slots')
   console.log('  Events:    ', events.length, 'status history events')
+  console.log('  Support:    7 tickets (3 open, 2 in_progress, 1 resolved, 1 closed) + 10 messages')
   console.log('\nCustomer tracking numbers:')
   console.log(`  Seun  in ${openAirMTN}:  ${openAirSeunSlot}`)
   console.log(`  Tope  in ${openAirMTN}:  ${openAirTopeSlot}`)
