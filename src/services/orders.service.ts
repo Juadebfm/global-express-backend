@@ -1204,8 +1204,15 @@ export class OrdersService {
 
     const [data, countResult] = await Promise.all([
       db
-        .select()
+        .select({
+          order: orders,
+          senderFirstName: users.firstName,
+          senderLastName: users.lastName,
+          senderBusinessName: users.businessName,
+          senderShippingMark: users.shippingMark,
+        })
         .from(orders)
+        .leftJoin(users, eq(orders.senderId, users.id))
         .where(baseWhere)
         .orderBy(desc(orders.createdAt))
         .limit(params.limit)
@@ -1218,7 +1225,17 @@ export class OrdersService {
 
     const total = countResult[0]?.count ?? 0
     return buildPaginatedResult(
-      data.map((o) => this.decryptOrder(o)),
+      data.map(({ order, senderFirstName, senderLastName, senderBusinessName, senderShippingMark }) => {
+        const decrypted = this.decryptOrder(order)
+        const firstName = senderFirstName ? decrypt(senderFirstName) : null
+        const lastName = senderLastName ? decrypt(senderLastName) : null
+        const businessName = senderBusinessName ? decrypt(senderBusinessName) : null
+        const senderName =
+          firstName && lastName ? `${firstName} ${lastName}` :
+          firstName ?? businessName ?? null
+        const shippingMark = senderShippingMark ? decrypt(senderShippingMark) : null
+        return { ...decrypted, senderName, shippingMark }
+      }),
       total,
       params,
     )
