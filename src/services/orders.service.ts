@@ -1615,7 +1615,47 @@ export class OrdersService {
       deletedAt: order.deletedAt?.toISOString() ?? null,
       departureDate: order.departureDate?.toISOString() ?? null,
       eta: order.eta?.toISOString() ?? null,
+      escalatedAt: order.escalatedAt?.toISOString() ?? null,
     }
+  }
+
+  async escalateOrder(id: string, note: string) {
+    const [existing] = await db
+      .select({ statusV2: orders.statusV2 })
+      .from(orders)
+      .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!existing) return null
+    if (existing.statusV2 !== ShipmentStatusV2.ON_HOLD) {
+      throw new Error('Only ON_HOLD orders can be escalated')
+    }
+
+    const [updated] = await db
+      .update(orders)
+      .set({
+        flaggedForAdminReview: true,
+        escalatedAt: new Date(),
+        escalationNote: note,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
+      .returning()
+    return updated ? this.decryptOrder(updated) : null
+  }
+
+  async clearEscalation(id: string) {
+    const [updated] = await db
+      .update(orders)
+      .set({
+        flaggedForAdminReview: false,
+        escalatedAt: null,
+        escalationNote: null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(orders.id, id), isNull(orders.deletedAt)))
+      .returning()
+    return updated ? this.decryptOrder(updated) : null
   }
 }
 

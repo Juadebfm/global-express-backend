@@ -554,6 +554,43 @@ export const ordersController = {
     }
   },
 
+  async escalateOrder(
+    request: FastifyRequest<{ Params: { id: string }; Body: { note: string } }>,
+    reply: FastifyReply,
+  ) {
+    const updated = await ordersService.escalateOrder(request.params.id, request.body.note)
+    if (!updated) return reply.code(404).send({ success: false, message: 'Order not found' })
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: `Escalated order ${updated.trackingNumber} for supervisor review`,
+      resourceType: 'order',
+      resourceId: updated.id,
+      request,
+      metadata: { note: request.body.note },
+    })
+
+    return reply.send(successResponse(updated))
+  },
+
+  async clearEscalation(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) {
+    const updated = await ordersService.clearEscalation(request.params.id)
+    if (!updated) return reply.code(404).send({ success: false, message: 'Order not found' })
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: `Cleared escalation on order ${updated.trackingNumber}`,
+      resourceType: 'order',
+      resourceId: updated.id,
+      request,
+    })
+
+    return reply.send(successResponse(updated))
+  },
+
   async deleteOrder(
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,

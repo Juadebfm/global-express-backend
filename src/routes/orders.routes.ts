@@ -4,7 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { errorResponseSchema } from '../utils/problem-details'
 import { ordersController } from '../controllers/orders.controller'
 import { authenticate } from '../middleware/authenticate'
-import { requireAdminOrAbove, requireStaffOrAbove } from '../middleware/requireRole'
+import { requireAdminOrAbove, requireStaffOrAbove, requireSuperAdmin } from '../middleware/requireRole'
 import { checkIdempotencyKey } from '../middleware/idempotency'
 import {
   OrderDirection,
@@ -63,6 +63,10 @@ const orderResponseSchema = z.object({
   deletedAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  senderName: z.string().nullable().optional().describe('Decrypted sender full name — populated on list endpoints for staff+'),
+  shippingMark: z.string().nullable().optional().describe('Decrypted sender shipping mark — populated on list endpoints for staff+'),
+  escalatedAt: z.string().nullable().optional().describe('ISO timestamp when a staff member escalated this hold to the superadmin — null when not escalated'),
+  escalationNote: z.string().nullable().optional().describe('Required note written by the staff member explaining why the hold was escalated'),
 })
 
 const warehouseVerifyPackageSchema = z
@@ -610,6 +614,44 @@ This endpoint stores:
       },
     },
     handler: ordersController.verifyOrderAtWarehouse,
+  })
+
+  app.patch('/:id/escalate', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Orders'],
+      summary: 'Escalate an on-hold order to supervisor (staff+)',
+      description: 'Marks an on-hold order as requiring superadmin attention. Sets `escalatedAt` and stores the required context note. The order remains ON_HOLD but is locked from further staff action until the superadmin clears the flag.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Order UUID') }),
+      body: z.object({ note: z.string().min(1).describe('Required context note explaining why the hold is being escalated') }),
+      response: {
+        200: z.object({ success: z.literal(true), data: orderResponseSchema }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: ordersController.escalateOrder,
+  })
+
+  app.patch('/:id/clear-escalation', {
+    preHandler: [authenticate, requireSuperAdmin],
+    schema: {
+      tags: ['Orders'],
+      summary: 'Clear escalation flag on an order (superadmin only)',
+      description: 'Removes the escalation flag set by a staff member, returning the order to the normal staff hold queue. Does not release the hold itself — use PATCH /orders/:id/status with the appropriate status to release.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Order UUID') }),
+      response: {
+        200: z.object({ success: z.literal(true), data: orderResponseSchema }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: ordersController.clearEscalation,
   })
 
   app.delete('/:id', {

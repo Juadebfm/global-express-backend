@@ -105,6 +105,8 @@ export const orders = pgTable(
     pickupRepName: text('pickup_rep_name'),
     pickupRepPhone: text('pickup_rep_phone'),
     flaggedForAdminReview: boolean('flagged_for_admin_review').notNull().default(false),
+    escalatedAt: timestamp('escalated_at'),
+    escalationNote: text('escalation_note'),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),
