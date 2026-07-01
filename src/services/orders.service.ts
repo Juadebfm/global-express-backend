@@ -665,6 +665,18 @@ export class OrdersService {
       throw new Error('At least one package is required for warehouse verification.')
     }
 
+    const orderCreatedAt = existing.createdAt
+    for (const pkg of input.packages) {
+      if (pkg.arrivalAt && pkg.arrivalAt < orderCreatedAt) {
+        throw new Error(
+          `Arrival date cannot be before the order was created (${orderCreatedAt.toISOString()}).`,
+        )
+      }
+      if (pkg.arrivalAt && pkg.arrivalAt > new Date()) {
+        throw new Error('Arrival date cannot be in the future.')
+      }
+    }
+
     // ── Look up special packaging surcharge types from app_settings ──
     const surchargeMap = new Map<string, number>()
     const packagesHaveSpecialType = input.packages.some((p) => p.specialPackagingType)
