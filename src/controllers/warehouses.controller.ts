@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { warehousesService } from '../services/warehouses.service'
+import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
 
 export const warehousesController = {
@@ -16,6 +17,15 @@ export const warehousesController = {
     reply: FastifyReply,
   ) {
     const warehouse = await warehousesService.createWarehouse(request.body)
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: 'warehouse.created',
+      resourceType: 'warehouse',
+      resourceId: warehouse.id,
+      request,
+    })
+
     return reply.code(201).send(successResponse(warehouse))
   },
 
@@ -27,6 +37,15 @@ export const warehousesController = {
     reply: FastifyReply,
   ) {
     const warehouse = await warehousesService.updateWarehouse(request.params.id, request.body)
+
+    await createAuditLog({
+      userId: request.user.id,
+      action: 'warehouse.updated',
+      resourceType: 'warehouse',
+      resourceId: warehouse.id,
+      request,
+    })
+
     return reply.send(successResponse(warehouse))
   },
 }

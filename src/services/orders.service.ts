@@ -140,6 +140,7 @@ export interface CreateOrderInput {
   sourcingSupplierName?: string | null
   sourcingSupplierPhone?: string | null
   sourcingSupplierEmail?: string | null
+  warehouseId?: string | null
 }
 
 export interface UpdateOrderStatusInput {
@@ -180,6 +181,7 @@ export interface VerifyOrderAtWarehouseInput {
   transportMode?: TransportMode
   departureDate?: Date
   packages: WarehouseVerifyPackageInput[]
+  warehouseId?: string
 }
 
 function roundTo(n: number, decimals: number): number {
@@ -278,6 +280,7 @@ export class OrdersService {
         sourcingSupplierName: input.sourcingSupplierName ?? null,
         sourcingSupplierPhone: input.sourcingSupplierPhone ?? null,
         sourcingSupplierEmail: input.sourcingSupplierEmail ?? null,
+        warehouseId: input.warehouseId ?? null,
       })
       .returning()
 
@@ -935,6 +938,7 @@ export class OrdersService {
           deltaFromSkCbm: '0.000000',
           measuredBy: input.verifiedBy,
           measuredAt: new Date(),
+          warehouseId: input.warehouseId ?? null,
         })
         .onConflictDoUpdate({
           target: [shipmentMeasurements.orderId, shipmentMeasurements.checkpoint],
@@ -946,6 +950,7 @@ export class OrdersService {
             measuredBy: input.verifiedBy,
             measuredAt: new Date(),
             updatedAt: new Date(),
+            warehouseId: input.warehouseId ?? null,
           },
         })
     })

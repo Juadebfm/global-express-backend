@@ -194,6 +194,7 @@ export const ordersController = {
           phone?: string
           email?: string
         }
+        warehouseId?: string
       }
     }>,
     reply: FastifyReply,
@@ -268,6 +269,7 @@ export const ordersController = {
       sourcingSupplierName: request.body.sourcingSupplier?.name ?? null,
       sourcingSupplierPhone: request.body.sourcingSupplier?.phone ?? null,
       sourcingSupplierEmail: request.body.sourcingSupplier?.email ?? null,
+      warehouseId: request.body.warehouseId ?? null,
     })
 
     await createAuditLog({
@@ -488,6 +490,7 @@ export const ordersController = {
       Body: {
         transportMode?: TransportMode
         departureDate?: string
+        warehouseId?: string
         packages: Array<{
           supplierId?: string
           arrivalAt?: string
@@ -525,6 +528,7 @@ export const ordersController = {
         verifiedBy: request.user.id,
         transportMode: request.body.transportMode,
         departureDate: request.body.departureDate ? new Date(request.body.departureDate) : undefined,
+        warehouseId: request.body.warehouseId,
         packages: request.body.packages.map((pkg) => ({
           ...pkg,
           arrivalAt: pkg.arrivalAt ? new Date(pkg.arrivalAt) : undefined,

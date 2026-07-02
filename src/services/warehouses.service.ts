@@ -4,11 +4,8 @@ import { warehouses } from '../../drizzle/schema'
 
 export class WarehousesService {
   async listWarehouses(includeInactive?: boolean) {
-    const query = db.select().from(warehouses)
-    if (!includeInactive) {
-      query.where(eq(warehouses.isActive, true))
-    }
-    return query.orderBy(asc(warehouses.name))
+    const base = db.select().from(warehouses).orderBy(asc(warehouses.name))
+    return includeInactive ? base : base.where(eq(warehouses.isActive, true))
   }
 
   async createWarehouse(input: { name: string; city: string; country?: string }) {

@@ -118,6 +118,7 @@ const warehouseVerifyBodySchema = z.object({
     .datetime()
     .optional()
     .describe('Scheduled departure date (ISO 8601) — used to compute customer ETA'),
+  warehouseId: z.string().uuid().optional().describe('UUID of the warehouse where verification is taking place'),
 })
 
 const paginatedOrdersSchema = z.object({
@@ -326,6 +327,7 @@ For **D2D**, the destination defaults to the Lagos office address, but users can
             })
             .optional()
             .describe('Optional supplier who will ship goods to the GEX Korea warehouse on behalf of the customer'),
+          warehouseId: z.string().uuid().optional().describe('UUID of the warehouse to associate with this order'),
         })
         .superRefine((value, ctx) => {
           if (value.shipmentPayer === ShipmentPayer.SUPPLIER && !value.billingSupplierId) {
