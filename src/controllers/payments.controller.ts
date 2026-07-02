@@ -62,6 +62,9 @@ export const paymentsController = {
         r2Key: string
         referenceCode?: string
         note?: string
+        remitterName?: string
+        paymentDate?: string
+        transactionRef?: string
       }
     }>,
     reply: FastifyReply,
@@ -75,6 +78,9 @@ export const paymentsController = {
       r2Key: request.body.r2Key,
       referenceCode: request.body.referenceCode,
       note: request.body.note,
+      remitterName: request.body.remitterName,
+      paymentDate: request.body.paymentDate,
+      transactionRef: request.body.transactionRef,
     })
 
     return reply.code(201).send(successResponse(payment))
@@ -224,6 +230,17 @@ export const paymentsController = {
     const result = await paymentsService.sendPaymentRequest({
       orderId: request.params.orderId,
       sentBy: request.user.id,
+    })
+    return reply.send(successResponse(result))
+  },
+
+  async pingPaymentSupervisor(
+    request: FastifyRequest<{ Params: { orderId: string } }>,
+    reply: FastifyReply,
+  ) {
+    const result = await paymentsService.pingPaymentSupervisor({
+      orderId: request.params.orderId,
+      pingedBy: request.user.id,
     })
     return reply.send(successResponse(result))
   },

@@ -134,6 +134,9 @@ After the customer pays and returns to your \`callbackUrl\`, call \`POST /api/v1
         r2Key: z.string().min(1).describe('R2 object key returned from /payments/receipts/presign'),
         referenceCode: z.string().optional().describe('Optional bank transfer/reference code'),
         note: z.string().optional().describe('Optional note from customer'),
+        remitterName: z.string().optional().describe('Full name on the bank account that made the transfer'),
+        paymentDate: z.string().optional().describe('Date the transfer was made (ISO date string)'),
+        transactionRef: z.string().optional().describe('Bank transaction reference number from the transfer receipt'),
       }),
       response: {
         201: z.object({ success: z.literal(true), data: paymentResponseSchema }),
@@ -336,6 +339,30 @@ Signature is verified via the \`x-paystack-signature\` header (HMAC-SHA512).
       },
     },
     handler: paymentsController.sendPaymentRequest,
+  })
+
+  app.post('/:orderId/ping-supervisor', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Payments — Admin'],
+      summary: 'Ping superadmin to review a pending receipt (staff+)',
+      description: `Sends an immediate in-app notification and email to all superadmins alerting them that a customer receipt for this order is pending their review. Returns the primary superadmin's display name and phone number so staff can follow up with a direct call.`,
+      security: [{ bearerAuth: [] }],
+      params: z.object({ orderId: z.string().uuid() }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            name: z.string().describe('Primary superadmin display name'),
+            phone: z.string().nullable().describe('Primary superadmin phone number for direct call'),
+          }),
+        }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: paymentsController.pingPaymentSupervisor,
   })
 
   app.post('/:orderId/record-offline', {

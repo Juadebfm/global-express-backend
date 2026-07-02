@@ -79,6 +79,9 @@ export interface SubmitPaymentReceiptInput {
   r2Key: string
   referenceCode?: string
   note?: string
+  remitterName?: string
+  paymentDate?: string
+  transactionRef?: string
 }
 
 interface ResolvedPaymentTarget {
@@ -249,6 +252,9 @@ export class PaymentsService {
           referenceCode: input.referenceCode ?? null,
           submittedByRole: input.requesterRole,
           submittedAt: new Date().toISOString(),
+          remitterName: input.remitterName ?? null,
+          paymentDate: input.paymentDate ?? null,
+          transactionRef: input.transactionRef ?? null,
         },
       })
       .returning()
@@ -1060,6 +1066,53 @@ export class PaymentsService {
         const phone = decrypt(rawPhone)
         await sendPaymentConfirmationWhatsApp({ phone, ...notifParams }).catch(() => null)
       }
+    }
+  }
+
+  async pingPaymentSupervisor(input: { orderId: string; pingedBy: string }): Promise<{
+    name: string
+    phone: string | null
+  }> {
+    const [order] = await db
+      .select({ trackingNumber: orders.trackingNumber })
+      .from(orders)
+      .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order) throw new Error('Order not found')
+
+    const superadmins = await db
+      .select({
+        firstName: users.firstName,
+        lastName: users.lastName,
+        phone: users.phone,
+      })
+      .from(users)
+      .where(
+        and(
+          eq(users.role, UserRole.SUPER_ADMIN),
+          eq(users.isActive, true),
+          isNull(users.deletedAt),
+        ),
+      )
+      .limit(5)
+
+    void notificationsService.notifyRole({
+      targetRole: UserRole.SUPER_ADMIN,
+      type: 'payment_event',
+      title: 'Payment receipt pending review',
+      subtitle: order.trackingNumber,
+      body: `A customer has submitted a payment receipt for order ${order.trackingNumber} and is awaiting your confirmation.`,
+      createdBy: input.pingedBy,
+    })
+
+    const primary = superadmins[0]
+    const rawPhone = primary?.phone ?? null
+    const phone = rawPhone ? decrypt(rawPhone) : null
+
+    return {
+      name: [primary?.firstName, primary?.lastName].filter(Boolean).join(' ') || 'Supervisor',
+      phone,
     }
   }
 
