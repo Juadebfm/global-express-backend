@@ -381,7 +381,7 @@ export class OrdersService {
 
     if (!updated) return null
 
-    if (input.statusV2 === ShipmentStatusV2.READY_FOR_PICKUP) {
+    if (input.statusV2 === ShipmentStatusV2.READY_FOR_PICKUP && !existing.pickupPinSentAt) {
       void this.generateAndSendPickupPin(id)
     }
 
@@ -1649,7 +1649,7 @@ export class OrdersService {
       .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
       .limit(1)
 
-    if (!order) return
+    if (!order) throw new Error('Order not found')
 
     const recipientPhone = decrypt(order.recipientPhone)
     const recipientEmail = order.recipientEmail ? decrypt(order.recipientEmail) : null
@@ -1661,7 +1661,7 @@ export class OrdersService {
 
     await db
       .update(orders)
-      .set({ pickupPinHash: hash, pickupPinSentAt: new Date(), updatedAt: new Date() })
+      .set({ pickupPinHash: hash, pickupPinSentAt: new Date(), pickupPinFailureCount: 0, updatedAt: new Date() })
       .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
 
     void sendPickupReadyWithPinWhatsApp({ phone: recipientPhone, recipientName, trackingNumber, pin })
@@ -1681,6 +1681,8 @@ export class OrdersService {
     const [order] = await db
       .select({
         pickupPinHash: orders.pickupPinHash,
+        pickupPinSentAt: orders.pickupPinSentAt,
+        pickupPinFailureCount: orders.pickupPinFailureCount,
         statusV2: orders.statusV2,
         trackingNumber: orders.trackingNumber,
       })
@@ -1698,8 +1700,24 @@ export class OrdersService {
       throw new Error('No pickup PIN has been set for this order')
     }
 
+    const PIN_TTL_MS = 7 * 24 * 60 * 60 * 1000
+    if (order.pickupPinSentAt) {
+      const age = Date.now() - new Date(order.pickupPinSentAt).getTime()
+      if (age > PIN_TTL_MS) {
+        throw new Error('Pickup PIN has expired. Ask staff to resend it.')
+      }
+    }
+
+    if ((order.pickupPinFailureCount ?? 0) >= 5) {
+      throw new Error('Too many failed PIN attempts. Ask staff to resend the PIN.')
+    }
+
     const valid = await bcrypt.compare(input.pin, order.pickupPinHash)
     if (!valid) {
+      await db
+        .update(orders)
+        .set({ pickupPinFailureCount: (order.pickupPinFailureCount ?? 0) + 1 })
+        .where(eq(orders.id, input.orderId))
       throw new Error('Invalid pickup PIN')
     }
 
@@ -1711,6 +1729,7 @@ export class OrdersService {
         pickedUpAt: new Date(),
         pickupCollectorName: input.collectorName ?? null,
         pickupCollectorRelationship: input.collectorRelationship ?? null,
+        pickupPinFailureCount: 0,
         updatedAt: new Date(),
       })
       .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))

@@ -112,6 +112,7 @@ export const orders = pgTable(
     pickupCollectorName: text('pickup_collector_name'),
     pickupCollectorRelationship: text('pickup_collector_relationship'),
     pickedUpAt: timestamp('picked_up_at', { withTimezone: true }),
+    pickupPinFailureCount: integer('pickup_pin_failure_count').notNull().default(0),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),
