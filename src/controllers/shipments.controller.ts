@@ -338,6 +338,9 @@ export const shipmentsController = {
           oceanTrackingNumber: payload.oceanTrackingNumber,
           d2dTrackingNumber: payload.d2dTrackingNumber,
           voyageOrFlightNumber: payload.voyageOrFlightNumber,
+          ...(hasActualDepartureAt ? { actualDepartureAt: payload.actualDepartureAt } : {}),
+          ...(hasActualArrivalAt ? { actualArrivalAt: payload.actualArrivalAt } : {}),
+          ...(hasActualGrossWeightKg ? { actualGrossWeightKg: payload.actualGrossWeightKg } : {}),
         },
       })
 
