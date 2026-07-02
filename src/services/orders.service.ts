@@ -1208,6 +1208,7 @@ export class OrdersService {
     params: PaginationParams & {
       statusV2?: ShipmentStatusV2
       senderId?: string
+      warehouseId?: string
     },
   ) {
     const offset = getPaginationOffset(params.page, params.limit)
@@ -1216,6 +1217,7 @@ export class OrdersService {
       isNull(orders.deletedAt),
       params.statusV2 ? eq(orders.statusV2, params.statusV2) : undefined,
       params.senderId ? eq(orders.senderId, params.senderId) : undefined,
+      params.warehouseId ? eq(orders.warehouseId, params.warehouseId) : undefined,
     ].filter(Boolean)
 
     const baseWhere = and(...(conditions as NonNullable<(typeof conditions)[0]>[]))

@@ -307,7 +307,7 @@ export const ordersController = {
 
   async listOrders(
     request: FastifyRequest<{
-      Querystring: { page?: string; limit?: string; statusV2?: string; senderId?: string }
+      Querystring: { page?: string; limit?: string; statusV2?: string; senderId?: string; warehouseId?: string }
     }>,
     reply: FastifyReply,
   ) {
@@ -323,6 +323,7 @@ export const ordersController = {
       limit: Number(request.query.limit) || 20,
       statusV2: request.query.statusV2 as ShipmentStatusV2 | undefined,
       senderId,
+      warehouseId: request.query.warehouseId,
     })
 
     if (isCustomerRole(userRole)) {
