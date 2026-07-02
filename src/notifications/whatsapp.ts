@@ -120,6 +120,18 @@ export async function sendSupplierBookingRequestWhatsApp(params: {
   )
 }
 
+export async function sendPickupReadyWithPinWhatsApp(params: {
+  phone: string
+  recipientName: string
+  trackingNumber: string
+  pin: string
+}): Promise<void> {
+  await sendPhoneNotification(
+    params.phone,
+    `Hi ${params.recipientName}, your shipment ${params.trackingNumber} is ready for pickup at our office. Your collection PIN is: *${params.pin}*. Please share this with anyone collecting on your behalf.`,
+  )
+}
+
 export async function sendSupplierInvoiceWhatsApp(params: {
   phone: string
   recipientName: string

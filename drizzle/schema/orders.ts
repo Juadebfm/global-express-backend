@@ -107,6 +107,11 @@ export const orders = pgTable(
     flaggedForAdminReview: boolean('flagged_for_admin_review').notNull().default(false),
     escalatedAt: timestamp('escalated_at'),
     escalationNote: text('escalation_note'),
+    pickupPinHash: text('pickup_pin_hash'),
+    pickupPinSentAt: timestamp('pickup_pin_sent_at', { withTimezone: true }),
+    pickupCollectorName: text('pickup_collector_name'),
+    pickupCollectorRelationship: text('pickup_collector_relationship'),
+    pickedUpAt: timestamp('picked_up_at', { withTimezone: true }),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),

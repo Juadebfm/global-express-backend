@@ -383,6 +383,28 @@ export async function sendClientLoginLinkEmail(params: {
   })
 }
 
+export async function sendPickupReadyWithPinEmail(params: {
+  to: string
+  recipientName: string
+  trackingNumber: string
+  pin: string
+}): Promise<void> {
+  const content = [
+    heading('Your shipment is ready for pickup'),
+    para(`Hi ${escapeHtml(params.recipientName)},`),
+    para(`Your shipment <strong>#${escapeHtml(params.trackingNumber)}</strong> is ready for pickup at our office. Your collection PIN is:`),
+    codeBlock(params.pin),
+    para('Please share this PIN with anyone collecting on your behalf.'),
+  ].join('')
+
+  await sendEmail({
+    to: params.to,
+    subject: `Your shipment ${params.trackingNumber} is ready for pickup — PIN: ${params.pin}`,
+    html: renderEmailBase(`Your shipment #${params.trackingNumber} is ready for pickup.`, content),
+    text: `Hi ${params.recipientName}, your shipment ${params.trackingNumber} is ready for pickup at our office. Your collection PIN is: ${params.pin}. Please share this with anyone collecting on your behalf.`,
+  })
+}
+
 export async function sendPasswordResetOtpEmail(params: {
   to: string
   otp: string
