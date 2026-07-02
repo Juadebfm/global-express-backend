@@ -258,6 +258,9 @@ export const shipmentsController = {
         vesselName?: string | null
         estimatedDepartureAt?: string | null
         estimatedArrivalAt?: string | null
+        actualDepartureAt?: string | null
+        actualArrivalAt?: string | null
+        actualGrossWeightKg?: number | null
         notes?: string | null
       }
     }>,
@@ -274,6 +277,18 @@ export const shipmentsController = {
     const hasEstimatedArrivalAt = Object.prototype.hasOwnProperty.call(
       request.body,
       'estimatedArrivalAt',
+    )
+    const hasActualDepartureAt = Object.prototype.hasOwnProperty.call(
+      request.body,
+      'actualDepartureAt',
+    )
+    const hasActualArrivalAt = Object.prototype.hasOwnProperty.call(
+      request.body,
+      'actualArrivalAt',
+    )
+    const hasActualGrossWeightKg = Object.prototype.hasOwnProperty.call(
+      request.body,
+      'actualGrossWeightKg',
     )
 
     try {
@@ -301,6 +316,9 @@ export const shipmentsController = {
                 : null,
             }
           : {}),
+        ...(hasActualDepartureAt ? { actualDepartureAt: request.body.actualDepartureAt } : {}),
+        ...(hasActualArrivalAt ? { actualArrivalAt: request.body.actualArrivalAt } : {}),
+        ...(hasActualGrossWeightKg ? { actualGrossWeightKg: request.body.actualGrossWeightKg } : {}),
         notes: request.body.notes,
       })
 

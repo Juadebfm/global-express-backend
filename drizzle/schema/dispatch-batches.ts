@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, integer, index, pgEnum } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, timestamp, numeric, integer, index, pgEnum } from 'drizzle-orm/pg-core'
 import { users } from './users'
 
 export const dispatchBatchStatusEnum = pgEnum('dispatch_batch_status', [
@@ -28,6 +28,9 @@ export const dispatchBatches = pgTable(
     vesselName: text('vessel_name'),
     estimatedDepartureAt: timestamp('estimated_departure_at'),
     estimatedArrivalAt: timestamp('estimated_arrival_at'),
+    actualDepartureAt: timestamp('actual_departure_at', { withTimezone: true }),
+    actualArrivalAt: timestamp('actual_arrival_at', { withTimezone: true }),
+    actualGrossWeightKg: numeric('actual_gross_weight_kg', { precision: 10, scale: 2 }),
     notes: text('notes'),
     slotCounter: integer('slot_counter').notNull().default(0),
     createdBy: uuid('created_by').notNull().references(() => users.id),
