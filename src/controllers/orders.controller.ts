@@ -663,6 +663,39 @@ export const ordersController = {
     return reply.send(successResponse(result.images))
   },
 
+  async completePickup(
+    request: FastifyRequest<{
+      Params: { id: string }
+      Body: { pin: string; collectorName?: string; collectorRelationship?: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    try {
+      await ordersService.verifyAndCompletePickup({
+        orderId: request.params.id,
+        pin: request.body.pin,
+        collectorName: request.body.collectorName,
+        collectorRelationship: request.body.collectorRelationship,
+        completedBy: request.user.id,
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Pickup completion failed'
+      if (message === 'Order not found') {
+        return reply.code(404).send({ success: false, message })
+      }
+      return reply.code(400).send({ success: false, message })
+    }
+    return reply.send(successResponse({ message: 'Pickup completed successfully' }))
+  },
+
+  async resendPickupPin(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) {
+    await ordersService.generateAndSendPickupPin(request.params.id)
+    return reply.send(successResponse({ message: 'PIN resent to customer' }))
+  },
+
   async estimateShippingCost(
     request: FastifyRequest<{
       Body: {

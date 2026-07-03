@@ -655,6 +655,48 @@ This endpoint stores:
     handler: ordersController.clearEscalation,
   })
 
+  app.post('/:id/complete-pickup', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Orders — Pickup'],
+      summary: 'Complete pickup by verifying customer PIN (staff+)',
+      description: 'Staff enters the 6-digit PIN the customer received to confirm and complete the pickup. Transitions the order to PICKED_UP_COMPLETED.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Order UUID') }),
+      body: z.object({
+        pin: z.string().length(6).regex(/^\d{6}$/, 'PIN must be 6 digits'),
+        collectorName: z.string().optional().describe('Name of the person who physically collected the package'),
+        collectorRelationship: z.string().optional().describe('Relationship of the collector to the recipient'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
+        400: errorResponseSchema,
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: ordersController.completePickup,
+  })
+
+  app.post('/:id/resend-pickup-pin', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Orders — Pickup'],
+      summary: 'Resend pickup PIN to customer (staff+)',
+      description: 'Regenerates a new 6-digit PIN and sends it to the customer via WhatsApp and email. Invalidates the previous PIN.',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ id: z.string().uuid().describe('Order UUID') }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ message: z.string() }) }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: ordersController.resendPickupPin,
+  })
+
   app.delete('/:id', {
     preHandler: [authenticate, requireAdminOrAbove],
     schema: {

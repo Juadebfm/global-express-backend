@@ -1,4 +1,6 @@
-﻿import { eq, and, isNull, inArray, or, sql, desc } from 'drizzle-orm'
+﻿import crypto from 'node:crypto'
+import bcrypt from 'bcryptjs'
+import { eq, and, isNull, inArray, or, sql, desc } from 'drizzle-orm'
 import { db } from '../config/db'
 import {
   orders,
@@ -15,8 +17,8 @@ import { encrypt, decrypt } from '../utils/encryption'
 import { getPaginationOffset, buildPaginatedResult } from '../utils/pagination'
 import { generateTrackingNumber } from '../utils/tracking'
 import { broadcastToUser } from '../websocket/handlers'
-import { sendOrderStatusUpdateEmail, sendSupplierBookingRequestEmail } from '../notifications/email'
-import { sendOrderStatusWhatsApp, sendSupplierBookingRequestWhatsApp } from '../notifications/whatsapp'
+import { sendOrderStatusUpdateEmail, sendSupplierBookingRequestEmail, sendPickupReadyWithPinEmail } from '../notifications/email'
+import { sendOrderStatusWhatsApp, sendSupplierBookingRequestWhatsApp, sendPickupReadyWithPinWhatsApp } from '../notifications/whatsapp'
 import { usersService } from './users.service'
 import { notifyUser } from './notifications.service'
 import { orderStatusEventsService } from './order-status-events.service'
@@ -378,6 +380,10 @@ export class OrdersService {
       .returning()
 
     if (!updated) return null
+
+    if (input.statusV2 === ShipmentStatusV2.READY_FOR_PICKUP && !existing.pickupPinSentAt) {
+      void this.generateAndSendPickupPin(id)
+    }
 
     // Auto-assign to the open batch when an order reaches WAREHOUSE_VERIFIED_PRICED
     // (covers the manual status-update path; warehouse verification handles its own hook separately)
@@ -1629,6 +1635,114 @@ export class OrdersService {
       eta: order.eta?.toISOString() ?? null,
       escalatedAt: order.escalatedAt?.toISOString() ?? null,
     }
+  }
+
+  async generateAndSendPickupPin(orderId: string): Promise<void> {
+    const [order] = await db
+      .select({
+        recipientPhone: orders.recipientPhone,
+        recipientEmail: orders.recipientEmail,
+        recipientName: orders.recipientName,
+        trackingNumber: orders.trackingNumber,
+      })
+      .from(orders)
+      .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order) throw new Error('Order not found')
+
+    const recipientPhone = decrypt(order.recipientPhone)
+    const recipientEmail = order.recipientEmail ? decrypt(order.recipientEmail) : null
+    const recipientName = decrypt(order.recipientName)
+    const { trackingNumber } = order
+
+    const pin = crypto.randomInt(100000, 1000000).toString()
+    const hash = await bcrypt.hash(pin, 10)
+
+    await db
+      .update(orders)
+      .set({ pickupPinHash: hash, pickupPinSentAt: new Date(), pickupPinFailureCount: 0, updatedAt: new Date() })
+      .where(and(eq(orders.id, orderId), isNull(orders.deletedAt)))
+
+    void sendPickupReadyWithPinWhatsApp({ phone: recipientPhone, recipientName, trackingNumber, pin })
+
+    if (recipientEmail) {
+      void sendPickupReadyWithPinEmail({ to: recipientEmail, recipientName, trackingNumber, pin })
+    }
+  }
+
+  async verifyAndCompletePickup(input: {
+    orderId: string
+    pin: string
+    collectorName?: string
+    collectorRelationship?: string
+    completedBy: string
+  }): Promise<void> {
+    const [order] = await db
+      .select({
+        pickupPinHash: orders.pickupPinHash,
+        pickupPinSentAt: orders.pickupPinSentAt,
+        pickupPinFailureCount: orders.pickupPinFailureCount,
+        statusV2: orders.statusV2,
+        trackingNumber: orders.trackingNumber,
+      })
+      .from(orders)
+      .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))
+      .limit(1)
+
+    if (!order) throw new Error('Order not found')
+
+    if (order.statusV2 !== ShipmentStatusV2.READY_FOR_PICKUP) {
+      throw new Error('Order is not ready for pickup')
+    }
+
+    if (!order.pickupPinHash) {
+      throw new Error('No pickup PIN has been set for this order')
+    }
+
+    const PIN_TTL_MS = 7 * 24 * 60 * 60 * 1000
+    if (order.pickupPinSentAt) {
+      const age = Date.now() - new Date(order.pickupPinSentAt).getTime()
+      if (age > PIN_TTL_MS) {
+        throw new Error('Pickup PIN has expired. Ask staff to resend it.')
+      }
+    }
+
+    if ((order.pickupPinFailureCount ?? 0) >= 5) {
+      throw new Error('Too many failed PIN attempts. Ask staff to resend the PIN.')
+    }
+
+    const valid = await bcrypt.compare(input.pin, order.pickupPinHash)
+    if (!valid) {
+      await db
+        .update(orders)
+        .set({ pickupPinFailureCount: (order.pickupPinFailureCount ?? 0) + 1 })
+        .where(eq(orders.id, input.orderId))
+      throw new Error('Invalid pickup PIN')
+    }
+
+    await db
+      .update(orders)
+      .set({
+        statusV2: ShipmentStatusV2.PICKED_UP_COMPLETED,
+        customerStatusV2: ShipmentStatusV2.PICKED_UP_COMPLETED,
+        pickedUpAt: new Date(),
+        pickupCollectorName: input.collectorName ?? null,
+        pickupCollectorRelationship: input.collectorRelationship ?? null,
+        pickupPinFailureCount: 0,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(orders.id, input.orderId), isNull(orders.deletedAt)))
+
+    orderStatusEventsService
+      .record({
+        orderId: input.orderId,
+        status: ShipmentStatusV2.PICKED_UP_COMPLETED,
+        actorId: input.completedBy,
+      })
+      .catch((err) => {
+        console.error('Failed to write PICKED_UP_COMPLETED status event', err)
+      })
   }
 
   async escalateOrder(id: string, note: string) {
