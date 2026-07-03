@@ -47,6 +47,7 @@ const claimSchema = z.object({
   claimantFullName: z.string().nullable(),
   claimantEmail: z.string().nullable(),
   claimantPhone: z.string().nullable(),
+  shippingMark: z.string().nullable(),
   message: z.string().nullable(),
   uploadToken: z.string().nullable(),
   proofUrls: z.array(z.string()),
@@ -173,13 +174,19 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
     schema: {
       tags: ['Gallery'],
       summary: 'Submit ownership claim for anonymous goods (authenticated)',
+      description:
+        'Authenticated users can claim a parcel by providing its tracking number and their shipping mark. ' +
+        'Photo proof is optional — staff will review all claims regardless.',
       security: [{ bearerAuth: [] }],
       params: z.object({ trackingNumber: z.string().min(1) }),
       body: z.object({
         itemId: z.string().uuid(),
-        message: z.string().optional(),
-        uploadToken: z.string().min(1),
-        proofR2Keys: z.array(z.string().min(1)).min(1).max(5),
+        shippingMark: z.string().min(1).optional().describe(
+          'The label/mark on the parcel that identifies it as yours (e.g. your name, phone, or custom mark)',
+        ),
+        message: z.string().optional().describe('Any additional context for the claim'),
+        uploadToken: z.string().min(1).optional().describe('Upload token from /gallery/claims/presign — required only when providing proof files'),
+        proofR2Keys: z.array(z.string().min(1)).max(5).optional().describe('R2 keys of uploaded proof images (max 5)'),
       }),
       response: {
         201: z.object({ success: z.literal(true), data: claimActionResponseSchema }),

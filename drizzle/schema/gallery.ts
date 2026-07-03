@@ -86,6 +86,7 @@ export const galleryClaims = pgTable(
     claimantFullName: text('claimant_full_name').notNull(),
     claimantEmail: text('claimant_email').notNull(),
     claimantPhone: text('claimant_phone').notNull(),
+    shippingMark: text('shipping_mark'),
     message: text('message'),
     uploadToken: text('upload_token'),
     proofUrls: jsonb('proof_urls').$type<string[]>().notNull().default([]),

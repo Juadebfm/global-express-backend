@@ -335,36 +335,25 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     handler: galleryController.generateClaimPresign,
   })
 
-  // POST /gallery/anonymous/:trackingNumber/claim — public claim with proof
+  // POST /gallery/anonymous/:trackingNumber/claim — retired; claims now require auth
   server.post('/gallery/anonymous/:trackingNumber/claim', {
     preHandler: [],
     schema: {
       tags: ['Public'],
-      summary: 'Submit ownership claim for anonymous goods (public)',
+      summary: '[RETIRED] Anonymous goods claim — sign in and use /api/v1/gallery/anonymous/:trackingNumber/claim',
       params: z.object({ trackingNumber: z.string().min(1) }),
-      body: z.object({
-        itemId: z.string().uuid(),
-        fullName: z.string().min(2),
-        email: z.string().email(),
-        phone: z.string().min(5),
-        city: z.string().optional(),
-        country: z.string().optional(),
-        message: z.string().optional(),
-        uploadToken: z.string().min(1),
-        proofR2Keys: z.array(z.string().min(1)).min(1).max(5),
-      }),
+      body: z.object({}).passthrough(),
       response: {
-        201: z.object({
-          success: z.literal(true),
-          data: z.object({
-            item: publicGalleryItemSchema,
-            claim: claimSchema,
-            ticket: supportTicketSchema,
-          }),
-        }),
+        410: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
-    handler: galleryController.submitPublicAnonymousClaim,
+    handler: async (_request, reply) => {
+      return reply.code(410).send({
+        success: false,
+        message:
+          'Unauthenticated claims are no longer accepted. Please sign in and submit your claim at POST /api/v1/gallery/anonymous/:trackingNumber/claim.',
+      })
+    },
   })
 
   // POST /gallery/cars/:trackingNumber/purchase-attempt — public first-come purchase attempt
