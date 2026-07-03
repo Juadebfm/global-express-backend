@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { errorResponseSchema } from '../utils/problem-details'
 import { ordersController } from '../controllers/orders.controller'
+import { surchargesController } from '../controllers/surcharges.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireAdminOrAbove, requireStaffOrAbove, requireSuperAdmin } from '../middleware/requireRole'
 import { checkIdempotencyKey } from '../middleware/idempotency'
@@ -700,5 +701,87 @@ This endpoint stores:
       },
     },
     handler: ordersController.getOrderImages,
+  })
+
+  app.get('/:orderId/surcharges', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Orders — Surcharges'],
+      summary: 'List surcharges for an order (staff+)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ orderId: z.string().uuid().describe('Order UUID') }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.array(z.object({
+            id: z.string().uuid(),
+            orderId: z.string().uuid(),
+            type: z.enum(['BAF', 'CAF', 'PSS', 'FSC', 'OTHER']),
+            label: z.string(),
+            amountUsd: z.string(),
+            notes: z.string().nullable(),
+            addedBy: z.string().uuid(),
+            createdAt: z.string(),
+          })),
+        }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: surchargesController.listSurcharges,
+  })
+
+  app.post('/:orderId/surcharges', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Orders — Surcharges'],
+      summary: 'Add a surcharge to an order (staff+)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ orderId: z.string().uuid().describe('Order UUID') }),
+      body: z.object({
+        type: z.enum(['BAF', 'CAF', 'PSS', 'FSC', 'OTHER']),
+        label: z.string().min(1),
+        amountUsd: z.number().positive(),
+        notes: z.string().optional(),
+      }),
+      response: {
+        201: z.object({
+          success: z.literal(true),
+          data: z.object({
+            id: z.string().uuid(),
+            orderId: z.string().uuid(),
+            type: z.enum(['BAF', 'CAF', 'PSS', 'FSC', 'OTHER']),
+            label: z.string(),
+            amountUsd: z.string(),
+            notes: z.string().nullable(),
+            addedBy: z.string().uuid(),
+            createdAt: z.string(),
+          }),
+        }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+      },
+    },
+    handler: surchargesController.addSurcharge,
+  })
+
+  app.delete('/:orderId/surcharges/:surchargeId', {
+    preHandler: [authenticate, requireStaffOrAbove],
+    schema: {
+      tags: ['Orders — Surcharges'],
+      summary: 'Remove a surcharge from an order (staff+)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({
+        orderId: z.string().uuid().describe('Order UUID'),
+        surchargeId: z.string().uuid().describe('Surcharge UUID'),
+      }),
+      response: {
+        200: z.object({ success: z.literal(true), data: z.object({ deleted: z.literal(true) }) }),
+        401: errorResponseSchema,
+        403: errorResponseSchema,
+        404: errorResponseSchema,
+      },
+    },
+    handler: surchargesController.removeSurcharge,
   })
 }

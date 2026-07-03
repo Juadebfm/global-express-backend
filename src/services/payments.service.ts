@@ -17,6 +17,7 @@ import { decrypt } from '../utils/encryption'
 import { sendPaymentConfirmationEmail, sendPaymentRequestEmail } from '../notifications/email'
 import { sendPaymentConfirmationWhatsApp, sendPaymentRequestWhatsApp } from '../notifications/whatsapp'
 import { settingsBankAccountsService } from './settings-bank-accounts.service'
+import { surchargesService } from './surcharges.service'
 
 const ALLOWED_RECEIPT_CONTENT_TYPES = new Set([
   'application/pdf',
@@ -666,7 +667,8 @@ export class PaymentsService {
     }
 
     // Sanity check: catch obvious typos (e.g. extra zeros)
-    const orderCharge = parseFloat(order.finalChargeUsd ?? order.calculatedChargeUsd ?? '0')
+    const surchargesSum = await surchargesService.getSurchargesSumForOrder(resolvedOrderId)
+    const orderCharge = parseFloat(order.finalChargeUsd ?? order.calculatedChargeUsd ?? '0') + surchargesSum
     if (orderCharge > 0) {
       const limit = currency === 'USD' ? orderCharge * 3 : orderCharge * 3000
       if (input.amount > limit) {
@@ -691,7 +693,7 @@ export class PaymentsService {
       })
       .returning()
 
-    const finalCharge = order.finalChargeUsd ? parseFloat(order.finalChargeUsd) : null
+    const finalCharge = order.finalChargeUsd ? parseFloat(order.finalChargeUsd) + surchargesSum : null
     const totalPaidUsd = await this.getTotalPaidUsdForOrder(resolvedOrderId)
 
     let newStatus: PaymentCollectionStatus
