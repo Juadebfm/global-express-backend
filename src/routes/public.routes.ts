@@ -267,6 +267,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
             sales: z.array(publicGalleryItemSchema),
             // Backward-compat alias for existing clients.
             cars: z.array(publicGalleryItemSchema),
+            forSale: z.array(publicGalleryItemSchema),
             adverts: z.array(publicGalleryItemSchema),
           }),
         }),

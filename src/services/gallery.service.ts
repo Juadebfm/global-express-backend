@@ -559,7 +559,6 @@ export class GalleryService {
         userId: input.userId,
         message: input.message?.trim() || null,
         metadata: {
-          leadType: 'shop_inquiry',
           itemTitle: item.title,
           itemTrackingNumber: item.trackingNumber,
           priceUsd: item.priceUsd,

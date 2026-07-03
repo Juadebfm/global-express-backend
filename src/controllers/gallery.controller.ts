@@ -424,6 +424,13 @@ export const galleryController = {
     }>,
     reply: FastifyReply,
   ) {
+    if ([UserRole.STAFF, UserRole.SUPER_ADMIN].includes(request.user.role as UserRole)) {
+      return reply.code(403).send({
+        success: false,
+        message: 'Internal roles cannot submit shop inquiries.',
+      })
+    }
+
     const payload = await galleryService.submitShopInquiry({
       itemId: request.params.itemId,
       userId: request.user.id,
