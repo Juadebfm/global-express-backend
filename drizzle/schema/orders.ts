@@ -10,6 +10,7 @@ import {
   boolean,
 } from 'drizzle-orm/pg-core'
 import { users } from './users'
+import { warehouses } from './warehouses'
 
 export const shipmentStatusV2Enum = pgEnum('shipment_status_v2', [
   'PREORDER_SUBMITTED',
@@ -121,6 +122,7 @@ export const orders = pgTable(
     sourcingSupplierName: text('sourcing_supplier_name'),
     sourcingSupplierPhone: text('sourcing_supplier_phone'),
     sourcingSupplierEmail: text('sourcing_supplier_email'),
+    warehouseId: uuid('warehouse_id').references(() => warehouses.id),
     // Soft delete — no cascading hard deletes on orders
     deletedAt: timestamp('deleted_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),

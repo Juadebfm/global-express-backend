@@ -11,6 +11,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { orders } from './orders'
 import { users } from './users'
+import { warehouses } from './warehouses'
 
 export const measurementCheckpointEnum = pgEnum('measurement_checkpoint', [
   'SK_WAREHOUSE',
@@ -30,6 +31,7 @@ export const shipmentMeasurements = pgTable(
     deltaFromSkCbm: numeric('delta_from_sk_cbm', { precision: 12, scale: 6 }),
     measuredAt: timestamp('measured_at').notNull().defaultNow(),
     measuredBy: uuid('measured_by').references(() => users.id),
+    warehouseId: uuid('warehouse_id').references(() => warehouses.id),
     notes: text('notes'),
     attachmentsCount: integer('attachments_count').notNull().default(0),
     createdAt: timestamp('created_at').notNull().defaultNow(),

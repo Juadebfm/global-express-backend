@@ -68,6 +68,7 @@ const orderResponseSchema = z.object({
   shippingMark: z.string().nullable().optional().describe('Decrypted sender shipping mark — populated on list endpoints for staff+'),
   escalatedAt: z.string().nullable().optional().describe('ISO timestamp when a staff member escalated this hold to the superadmin — null when not escalated'),
   escalationNote: z.string().nullable().optional().describe('Required note written by the staff member explaining why the hold was escalated'),
+  warehouseId: z.string().uuid().nullable().describe('UUID of the warehouse associated with this order'),
 })
 
 const warehouseVerifyPackageSchema = z
@@ -117,6 +118,7 @@ const warehouseVerifyBodySchema = z.object({
     .datetime()
     .optional()
     .describe('Scheduled departure date (ISO 8601) — used to compute customer ETA'),
+  warehouseId: z.string().uuid().optional().describe('UUID of the warehouse where verification is taking place'),
 })
 
 const paginatedOrdersSchema = z.object({
@@ -325,6 +327,7 @@ For **D2D**, the destination defaults to the Lagos office address, but users can
             })
             .optional()
             .describe('Optional supplier who will ship goods to the GEX Korea warehouse on behalf of the customer'),
+          warehouseId: z.string().uuid().optional().describe('UUID of the warehouse to associate with this order'),
         })
         .superRefine((value, ctx) => {
           if (value.shipmentPayer === ShipmentPayer.SUPPLIER && !value.billingSupplierId) {
@@ -411,6 +414,7 @@ The estimate uses the same pricing engine as warehouse verification, including a
         limit: z.coerce.number().int().min(1).max(100).optional().default(20).describe('Results per page (max 100)'),
         statusV2: z.nativeEnum(ShipmentStatusV2).optional().describe('Filter by V2 status (e.g. FLIGHT_DEPARTED, READY_FOR_PICKUP)'),
         senderId: z.string().uuid().optional().describe('Filter by customer UUID (staff+ only)'),
+        warehouseId: z.string().uuid().optional().describe('Filter by warehouse UUID (staff+ only)'),
       }),
       response: {
         200: z.object({ success: z.literal(true), data: paginatedOrdersSchema }),
