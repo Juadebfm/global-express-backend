@@ -444,6 +444,9 @@ export class DispatchBatchesService {
     vesselName?: string | null
     estimatedDepartureAt?: Date | null
     estimatedArrivalAt?: Date | null
+    actualDepartureAt?: string | null
+    actualArrivalAt?: string | null
+    actualGrossWeightKg?: number | null
     notes?: string | null
   }) {
     const patch: Record<string, unknown> = {
@@ -476,6 +479,15 @@ export class DispatchBatchesService {
     }
     if (params.estimatedArrivalAt !== undefined) {
       patch.estimatedArrivalAt = params.estimatedArrivalAt
+    }
+    if (params.actualDepartureAt !== undefined) {
+      patch.actualDepartureAt = params.actualDepartureAt ? new Date(params.actualDepartureAt) : null
+    }
+    if (params.actualArrivalAt !== undefined) {
+      patch.actualArrivalAt = params.actualArrivalAt ? new Date(params.actualArrivalAt) : null
+    }
+    if (params.actualGrossWeightKg !== undefined) {
+      patch.actualGrossWeightKg = params.actualGrossWeightKg !== null ? String(params.actualGrossWeightKg) : null
     }
 
     const notes = normalizeOptionalText(params.notes)
@@ -1307,6 +1319,9 @@ export class DispatchBatchesService {
       vesselName: batch.vesselName,
       estimatedDepartureAt: batch.estimatedDepartureAt?.toISOString() ?? null,
       estimatedArrivalAt: batch.estimatedArrivalAt?.toISOString() ?? null,
+      actualDepartureAt: batch.actualDepartureAt?.toISOString() ?? null,
+      actualArrivalAt: batch.actualArrivalAt?.toISOString() ?? null,
+      actualGrossWeightKg: batch.actualGrossWeightKg ?? null,
       notes: batch.notes,
       cutoffRequestedAt: batch.cutoffRequestedAt?.toISOString() ?? null,
       cutoffApprovedAt: batch.cutoffApprovedAt?.toISOString() ?? null,

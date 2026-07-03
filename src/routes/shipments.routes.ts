@@ -443,6 +443,9 @@ export async function shipmentsRoutes(fastify: FastifyInstance): Promise<void> {
           vesselName: z.string().min(1).nullable().optional(),
           estimatedDepartureAt: z.string().datetime().nullable().optional(),
           estimatedArrivalAt: z.string().datetime().nullable().optional(),
+          actualDepartureAt: z.string().datetime({ offset: true }).optional().nullable(),
+          actualArrivalAt: z.string().datetime({ offset: true }).optional().nullable(),
+          actualGrossWeightKg: z.number().positive().optional().nullable(),
           notes: z.string().min(1).nullable().optional(),
         })
         .refine((value) => Object.keys(value).length > 0, {
