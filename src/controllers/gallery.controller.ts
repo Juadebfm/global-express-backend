@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { successResponse } from '../utils/response'
 import { galleryService } from '../services/gallery.service'
+import { parsePaginationQuery } from '../utils/pagination'
 import { GalleryClaimStatus, GalleryClaimType, GalleryItemStatus, GalleryItemType, UserRole } from '../types/enums'
 
 export const galleryController = {
@@ -208,6 +209,7 @@ export const galleryController = {
         isPublished?: boolean
         status?: GalleryItemStatus
         carPriceNgn?: string
+        priceUsd?: string
         metadata?: Record<string, unknown>
       }
     }>,
@@ -227,6 +229,7 @@ export const galleryController = {
       isPublished: request.body.isPublished,
       status: request.body.status,
       carPriceNgn: request.body.carPriceNgn,
+      priceUsd: request.body.priceUsd,
       metadata: request.body.metadata,
     })
 
@@ -283,6 +286,7 @@ export const galleryController = {
         isPublished?: boolean
         status?: GalleryItemStatus
         carPriceNgn?: string | null
+        priceUsd?: string | null
         metadata?: Record<string, unknown>
       }
     }>,
@@ -302,6 +306,7 @@ export const galleryController = {
       isPublished: request.body.isPublished,
       status: request.body.status,
       carPriceNgn: request.body.carPriceNgn,
+      priceUsd: request.body.priceUsd,
       metadata: request.body.metadata,
     })
 
@@ -401,5 +406,29 @@ export const galleryController = {
     })
 
     return reply.send(successResponse(payload))
+  },
+
+  async listPublicShop(
+    request: FastifyRequest<{ Querystring: { page?: string; limit?: string } }>,
+    reply: FastifyReply,
+  ) {
+    const params = parsePaginationQuery(request.query)
+    const payload = await galleryService.listPublicShop(params)
+    return reply.send(successResponse(payload))
+  },
+
+  async submitShopInquiry(
+    request: FastifyRequest<{
+      Params: { itemId: string }
+      Body: { message?: string }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const payload = await galleryService.submitShopInquiry({
+      itemId: request.params.itemId,
+      userId: request.user.id,
+      message: request.body.message,
+    })
+    return reply.code(201).send(successResponse(payload))
   },
 }

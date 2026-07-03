@@ -1,7 +1,9 @@
 import { randomUUID } from 'crypto'
-import { and, desc, eq, gte, isNull, lte, or } from 'drizzle-orm'
+import { and, count, desc, eq, gte, isNull, lte, or } from 'drizzle-orm'
 import { db } from '../config/db'
-import { galleryClaims, galleryItems, users } from '../../drizzle/schema'
+import { galleryClaims, galleryItems, inboundLeads, users } from '../../drizzle/schema'
+import { buildPaginatedResult, getPaginationOffset } from '../utils/pagination'
+import type { PaginationParams } from '../types'
 import { encrypt, decrypt, hashEmail } from '../utils/encryption'
 import {
   GalleryClaimStatus,
@@ -83,6 +85,7 @@ export interface GalleryPublicListResult {
   sales: Array<ReturnType<GalleryService['formatPublicItem']>>
   // Backward-compat alias for existing clients.
   cars: Array<ReturnType<GalleryService['formatPublicItem']>>
+  forSale: Array<ReturnType<GalleryService['formatPublicItem']>>
   adverts: Array<ReturnType<GalleryService['formatPublicItem']>>
 }
 
@@ -100,6 +103,7 @@ export interface GalleryCreateItemInput {
   isPublished?: boolean
   status?: GalleryItemStatus
   carPriceNgn?: string
+  priceUsd?: string
   metadata?: Record<string, unknown>
 }
 
@@ -118,6 +122,7 @@ export interface GalleryUpdateItemInput {
   isPublished?: boolean
   status?: GalleryItemStatus
   carPriceNgn?: string | null
+  priceUsd?: string | null
   metadata?: Record<string, unknown>
 }
 
@@ -228,6 +233,7 @@ export class GalleryService {
       status: item.status,
       isPublished: item.isPublished,
       carPriceNgn: item.carPriceNgn,
+      priceUsd: item.priceUsd,
       priceCurrency: item.priceCurrency,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
@@ -466,9 +472,10 @@ export class GalleryService {
   async listPublicGallery(limitPerSection = 20): Promise<GalleryPublicListResult> {
     const safeLimit = Math.min(Math.max(limitPerSection, 1), 100)
 
-    const [anonymousGoods, sales, adverts] = await Promise.all([
+    const [anonymousGoods, sales, forSaleItems, adverts] = await Promise.all([
       this.getVisibleItemsByType(GalleryItemType.ANONYMOUS_GOODS, safeLimit),
       this.getVisibleItemsByType(GalleryItemType.CAR, safeLimit),
+      this.getVisibleItemsByType(GalleryItemType.FOR_SALE, safeLimit),
       this.getVisibleItemsByType(GalleryItemType.ADVERT, safeLimit),
     ])
 
@@ -478,7 +485,103 @@ export class GalleryService {
       anonymousGoods: anonymousGoods.map((item) => this.formatPublicItem(item)),
       sales: formattedSales,
       cars: formattedSales,
+      forSale: forSaleItems.map((item) => this.formatPublicItem(item)),
       adverts: adverts.map((item) => this.formatPublicItem(item)),
+    }
+  }
+
+  async listPublicShop(params: PaginationParams) {
+    const now = new Date()
+    const offset = getPaginationOffset(params.page, params.limit)
+
+    const whereClause = and(
+      eq(galleryItems.itemType, GalleryItemType.FOR_SALE),
+      eq(galleryItems.isPublished, true),
+      eq(galleryItems.status, GalleryItemStatus.PUBLISHED),
+      or(isNull(galleryItems.startsAt), lte(galleryItems.startsAt, now)),
+      or(isNull(galleryItems.endsAt), gte(galleryItems.endsAt, now)),
+    )
+
+    const [rows, [{ total }]] = await Promise.all([
+      db.select().from(galleryItems).where(whereClause).orderBy(desc(galleryItems.createdAt)).limit(params.limit).offset(offset),
+      db.select({ total: count() }).from(galleryItems).where(whereClause),
+    ])
+
+    return buildPaginatedResult(rows.map((item) => this.formatPublicItem(item)), Number(total), params)
+  }
+
+  async submitShopInquiry(input: {
+    itemId: string
+    userId: string
+    message?: string
+  }) {
+    const [item] = await db
+      .select()
+      .from(galleryItems)
+      .where(eq(galleryItems.id, input.itemId))
+      .limit(1)
+
+    if (!item) {
+      throw httpError('Shop listing not found', 404)
+    }
+
+    if (item.itemType !== GalleryItemType.FOR_SALE) {
+      throw httpError('This item is not a shop listing', 422)
+    }
+
+    if (!item.isPublished || item.status !== GalleryItemStatus.PUBLISHED) {
+      throw httpError('This listing is not currently available', 422)
+    }
+
+    const [userRow] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, input.userId))
+      .limit(1)
+
+    if (!userRow) {
+      throw httpError('User not found', 404)
+    }
+
+    const fullName = parseDisplayName(userRow) ?? 'Unknown'
+    const email = safeDecrypt(userRow.email)
+    const phone = safeDecrypt(userRow.phone)
+
+    const [lead] = await db
+      .insert(inboundLeads)
+      .values({
+        leadType: 'shop_inquiry' as const,
+        status: 'new' as const,
+        fullName,
+        email,
+        phone,
+        itemId: item.id,
+        userId: input.userId,
+        message: input.message?.trim() || null,
+        metadata: {
+          leadType: 'shop_inquiry',
+          itemTitle: item.title,
+          itemTrackingNumber: item.trackingNumber,
+          priceUsd: item.priceUsd,
+        },
+      })
+      .returning()
+
+    await notificationsService.notifyRole({
+      targetRole: UserRole.STAFF,
+      type: 'admin_alert',
+      title: 'New shop inquiry',
+      body: `${fullName} is interested in "${item.title}"`,
+      metadata: { leadId: lead.id, itemId: item.id },
+    })
+
+    return {
+      id: lead.id,
+      itemId: lead.itemId,
+      status: lead.status,
+      message: lead.message,
+      createdAt: lead.createdAt.toISOString(),
+      item: this.formatPublicItem(item),
     }
   }
 
@@ -566,8 +669,15 @@ export class GalleryService {
       throw httpError('carPriceNgn is only allowed for car items', 400)
     }
 
-    if (input.carPriceNgn !== undefined && input.actorRole !== UserRole.SUPER_ADMIN) {
-      throw httpError('Only superadmin can set car pricing', 403)
+    if (input.itemType !== GalleryItemType.FOR_SALE && input.priceUsd !== undefined) {
+      throw httpError('priceUsd is only allowed for for_sale items', 400)
+    }
+
+    if (
+      (input.carPriceNgn !== undefined || input.priceUsd !== undefined) &&
+      input.actorRole !== UserRole.SUPER_ADMIN
+    ) {
+      throw httpError('Only superadmin can set item pricing', 403)
     }
 
     if (
@@ -596,6 +706,14 @@ export class GalleryService {
       throw httpError('Published car listings require a valid carPriceNgn', 422)
     }
 
+    if (
+      input.itemType === GalleryItemType.FOR_SALE &&
+      requestedStatus === GalleryItemStatus.PUBLISHED &&
+      (!input.priceUsd || Number(input.priceUsd) <= 0)
+    ) {
+      throw httpError('Published for_sale listings require a valid priceUsd', 422)
+    }
+
     let created: typeof galleryItems.$inferSelect | null = null
 
     for (let i = 0; i < 5; i += 1) {
@@ -616,6 +734,7 @@ export class GalleryService {
             endsAt: input.endsAt ?? null,
             isPublished: requestedStatus === GalleryItemStatus.PUBLISHED,
             carPriceNgn: input.carPriceNgn ?? null,
+            priceUsd: input.priceUsd ?? null,
             metadata: input.metadata ?? null,
             createdBy: input.actorId,
             updatedBy: input.actorId,
@@ -663,8 +782,15 @@ export class GalleryService {
       throw httpError('carPriceNgn is only allowed for car items', 400)
     }
 
-    if (input.carPriceNgn !== undefined && input.actorRole !== UserRole.SUPER_ADMIN) {
-      throw httpError('Only superadmin can set car pricing', 403)
+    if (input.priceUsd !== undefined && existing.itemType !== GalleryItemType.FOR_SALE) {
+      throw httpError('priceUsd is only allowed for for_sale items', 400)
+    }
+
+    if (
+      (input.carPriceNgn !== undefined || input.priceUsd !== undefined) &&
+      input.actorRole !== UserRole.SUPER_ADMIN
+    ) {
+      throw httpError('Only superadmin can set item pricing', 403)
     }
 
     const nextStatus =
@@ -697,6 +823,14 @@ export class GalleryService {
     }
 
     if (
+      existing.itemType === GalleryItemType.FOR_SALE &&
+      nextStatus === GalleryItemStatus.PUBLISHED &&
+      Number(input.priceUsd ?? existing.priceUsd ?? 0) <= 0
+    ) {
+      throw httpError('Published for_sale listings require a valid priceUsd', 422)
+    }
+
+    if (
       existing.itemType === GalleryItemType.ADVERT &&
       nextStatus === GalleryItemStatus.PUBLISHED &&
       !nextPreviewImageUrl?.trim() &&
@@ -726,6 +860,10 @@ export class GalleryService {
           input.carPriceNgn === undefined
             ? existing.carPriceNgn
             : input.carPriceNgn,
+        priceUsd:
+          input.priceUsd === undefined
+            ? existing.priceUsd
+            : input.priceUsd,
         metadata: input.metadata ?? existing.metadata,
         updatedBy: input.actorId,
         archivedAt:
