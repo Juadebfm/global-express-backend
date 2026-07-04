@@ -8,7 +8,7 @@ import { galleryController } from '../controllers/gallery.controller'
 export async function publicRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
 
-  const galleryItemTypeSchema = z.enum(['anonymous_goods', 'car', 'advert'])
+  const galleryItemTypeSchema = z.enum(['anonymous_goods', 'car', 'advert', 'for_sale'])
   const galleryItemStatusSchema = z.enum([
     'draft',
     'published',
@@ -16,6 +16,8 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     'claimed',
     'car_reserved',
     'car_sold',
+    'reserved',
+    'sold',
     'archived',
   ])
 
@@ -33,6 +35,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     status: galleryItemStatusSchema,
     isPublished: z.boolean(),
     carPriceNgn: z.string().nullable(),
+    priceUsd: z.string().nullable(),
     priceCurrency: z.string(),
     createdAt: z.string(),
     updatedAt: z.string(),
@@ -264,6 +267,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
             sales: z.array(publicGalleryItemSchema),
             // Backward-compat alias for existing clients.
             cars: z.array(publicGalleryItemSchema),
+            forSale: z.array(publicGalleryItemSchema),
             adverts: z.array(publicGalleryItemSchema),
           }),
         }),
@@ -383,6 +387,33 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
       },
     },
     handler: galleryController.submitPublicCarPurchaseAttempt,
+  })
+
+  // GET /shop — paginated public for_sale listings
+  server.get('/shop', {
+    schema: {
+      tags: ['Public'],
+      summary: 'Paginated shop listings (for_sale items, no auth required)',
+      querystring: z.object({
+        page: z.coerce.number().int().min(1).optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(publicGalleryItemSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+      },
+    },
+    handler: galleryController.listPublicShop,
   })
 
   // POST /d2d/intake — public unauthenticated D2D intake
