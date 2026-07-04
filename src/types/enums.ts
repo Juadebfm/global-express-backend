@@ -127,6 +127,7 @@ export enum GalleryItemType {
   ANONYMOUS_GOODS = 'anonymous_goods',
   CAR = 'car',
   ADVERT = 'advert',
+  FOR_SALE = 'for_sale',
 }
 
 export enum GalleryItemStatus {
@@ -136,6 +137,8 @@ export enum GalleryItemStatus {
   CLAIMED = 'claimed',
   CAR_RESERVED = 'car_reserved',
   CAR_SOLD = 'car_sold',
+  RESERVED = 'reserved',
+  SOLD = 'sold',
   ARCHIVED = 'archived',
 }
 

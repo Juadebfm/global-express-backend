@@ -5,7 +5,7 @@ import { galleryController } from '../controllers/gallery.controller'
 import { authenticate } from '../middleware/authenticate'
 import { requireStaffOrAbove } from '../middleware/requireRole'
 
-const galleryItemTypeSchema = z.enum(['anonymous_goods', 'car', 'advert'])
+const galleryItemTypeSchema = z.enum(['anonymous_goods', 'car', 'advert', 'for_sale'])
 const galleryItemStatusSchema = z.enum([
   'draft',
   'published',
@@ -13,6 +13,8 @@ const galleryItemStatusSchema = z.enum([
   'claimed',
   'car_reserved',
   'car_sold',
+  'reserved',
+  'sold',
   'archived',
 ])
 
@@ -30,6 +32,7 @@ const publicGalleryItemSchema = z.object({
   status: galleryItemStatusSchema,
   isPublished: z.boolean(),
   carPriceNgn: z.string().nullable(),
+  priceUsd: z.string().nullable(),
   priceCurrency: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -106,6 +109,7 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
             sales: z.array(publicGalleryItemSchema),
             // Backward-compat alias for existing clients.
             cars: z.array(publicGalleryItemSchema),
+            forSale: z.array(publicGalleryItemSchema),
             adverts: z.array(publicGalleryItemSchema),
             myClaims: z.array(claimSchema),
           }),
@@ -230,6 +234,7 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
         isPublished: z.boolean().optional(),
         status: z.enum(['draft', 'published', 'archived']).optional(),
         carPriceNgn: z.string().optional(),
+        priceUsd: z.string().optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
       }),
       response: {
@@ -282,6 +287,7 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
         isPublished: z.boolean().optional(),
         status: z.enum(['draft', 'published', 'archived']).optional(),
         carPriceNgn: z.string().nullable().optional(),
+        priceUsd: z.string().nullable().optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
       }),
       response: {
@@ -385,5 +391,32 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     handler: galleryController.reviewClaim,
+  })
+
+  app.post('/shop/:itemId/inquire', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Gallery — Shop'],
+      summary: 'Submit buyer inquiry for a for_sale listing (authenticated)',
+      security: [{ bearerAuth: [] }],
+      params: z.object({ itemId: z.string().uuid() }),
+      body: z.object({
+        message: z.string().max(2000).optional(),
+      }),
+      response: {
+        201: z.object({
+          success: z.literal(true),
+          data: z.object({
+            id: z.string().uuid(),
+            itemId: z.string().uuid(),
+            status: z.string(),
+            message: z.string().nullable(),
+            createdAt: z.string(),
+            item: publicGalleryItemSchema,
+          }),
+        }),
+      },
+    },
+    handler: galleryController.submitShopInquiry,
   })
 }
