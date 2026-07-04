@@ -743,9 +743,10 @@ export class GalleryService {
   async submitAnonymousGoodsClaim(input: {
     trackingNumber: string
     expectedItemId?: string
+    shippingMark?: string
     message?: string
-    uploadToken: string
-    proofR2Keys: string[]
+    uploadToken?: string
+    proofR2Keys?: string[]
     authClaimant?: AuthClaimantInput
     publicContact?: PublicClaimContactInput
     fallbackEmail?: string
@@ -756,10 +757,13 @@ export class GalleryService {
       fallbackEmail: input.fallbackEmail,
     })
 
-    const proofUrls = this.validateUploadTokenAndProofs({
-      uploadToken: input.uploadToken,
-      proofR2Keys: input.proofR2Keys,
-    })
+    const proofUrls =
+      input.uploadToken && input.proofR2Keys?.length
+        ? this.validateUploadTokenAndProofs({
+            uploadToken: input.uploadToken,
+            proofR2Keys: input.proofR2Keys,
+          })
+        : []
 
     const normalizedTrackingNumber = input.trackingNumber.trim().toUpperCase()
 
@@ -814,15 +818,16 @@ export class GalleryService {
           claimantFullName: encrypt(claimant.fullName),
           claimantEmail: encrypt(claimant.email),
           claimantPhone: encrypt(claimant.phone),
+          shippingMark: input.shippingMark?.trim() || null,
           message: input.message?.trim() || null,
-          uploadToken: input.uploadToken,
+          uploadToken: input.uploadToken ?? null,
           proofUrls,
         })
         .returning()
 
       // Fire-and-forget AV scan of every uploaded proof file (V12.4.1).
       // Staff "review claim" UI must check scan status before opening proofs.
-      for (const r2Key of input.proofR2Keys) {
+      for (const r2Key of (input.proofR2Keys ?? [])) {
         void avScanService.scheduleScan({
           r2Key,
           scope: 'gallery/claim-proof',
