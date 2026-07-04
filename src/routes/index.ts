@@ -24,6 +24,7 @@ import { batchesRoutes } from './batches.routes'
 import { supplierRoutes } from './supplier.routes'
 import { warehousesRoutes } from './warehouses.routes'
 import { newsletterRoutes } from './newsletter.routes'
+import { leadsRoutes } from './leads.routes'
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
@@ -110,4 +111,5 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(supplierRoutes, { prefix: '/api/v1/supplier' })
   await app.register(warehousesRoutes, { prefix: '/api/v1/warehouses' })
   await app.register(newsletterRoutes, { prefix: '/api/v1/newsletter' })
+  await app.register(leadsRoutes, { prefix: '/api/v1/leads' })
 }
