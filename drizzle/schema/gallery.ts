@@ -17,6 +17,7 @@ export const galleryItemTypeEnum = pgEnum('gallery_item_type', [
   'anonymous_goods',
   'car',
   'advert',
+  'for_sale',
 ])
 
 export const galleryItemStatusEnum = pgEnum('gallery_item_status', [
@@ -26,6 +27,8 @@ export const galleryItemStatusEnum = pgEnum('gallery_item_status', [
   'claimed',
   'car_reserved',
   'car_sold',
+  'reserved',
+  'sold',
   'archived',
 ])
 
@@ -56,6 +59,7 @@ export const galleryItems = pgTable(
     endsAt: timestamp('ends_at', { withTimezone: true }),
     isPublished: boolean('is_published').notNull().default(false),
     carPriceNgn: numeric('car_price_ngn', { precision: 14, scale: 2 }),
+    priceUsd: numeric('price_usd', { precision: 14, scale: 2 }),
     priceCurrency: text('price_currency').notNull().default('NGN'),
     assignedUserId: uuid('assigned_user_id').references(() => users.id),
     assignedSupplierId: uuid('assigned_supplier_id').references(() => users.id),
