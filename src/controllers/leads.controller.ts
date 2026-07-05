@@ -106,4 +106,20 @@ export const leadsController = {
     const leads = await leadsService.getMyD2dLeads(request.user.id)
     return reply.send(successResponse(leads))
   },
+
+  async submitShopInquiry(
+    request: FastifyRequest<{
+      Body: {
+        fullName: string
+        phone?: string
+        email?: string
+        message: string
+        itemId?: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    const lead = await leadsService.submitShopInquiry(request.body, request.user.id)
+    return reply.code(201).send(successResponse(lead))
+  },
 }
