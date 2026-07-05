@@ -107,5 +107,6 @@ export const galleryClaims = pgTable(
     index('gallery_claims_item_id_idx').on(table.itemId),
     index('gallery_claims_status_idx').on(table.status),
     index('gallery_claims_created_at_idx').on(table.createdAt),
+    index('gallery_claims_claimant_user_id_idx').on(table.claimantUserId),
   ],
 )

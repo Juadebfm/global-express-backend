@@ -32,3 +32,6 @@ coverage/
 *.tmp
 *.temp
 .env.docker
+
+# Claude Code worktrees
+.claude/worktrees/

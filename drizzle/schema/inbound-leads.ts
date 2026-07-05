@@ -2,7 +2,7 @@ import { pgEnum, pgTable, uuid, text, timestamp, jsonb, index } from 'drizzle-or
 import { users } from './users'
 import { galleryItems } from './gallery'
 
-export const inboundLeadTypeEnum = pgEnum('inbound_lead_type', ['d2d_intake', 'shop_inquiry'])
+export const inboundLeadTypeEnum = pgEnum('inbound_lead_type', ['d2d_intake', 'shop_inquiry', 'general_inquiry'])
 
 export const inboundLeadStatusEnum = pgEnum('inbound_lead_status', [
   'new',

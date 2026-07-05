@@ -176,6 +176,72 @@ class LeadsService {
       )
       .orderBy(desc(inboundLeads.createdAt))
   }
+
+  async submitShopInquiry(
+    input: {
+      fullName: string
+      phone?: string
+      email?: string
+      message: string
+      itemId?: string
+    },
+    submittedByUserId: string,
+  ) {
+    const [lead] = await db
+      .insert(inboundLeads)
+      .values({
+        leadType: 'shop_inquiry',
+        status: 'new',
+        fullName: input.fullName.trim(),
+        email: input.email?.trim().toLowerCase() ?? null,
+        phone: input.phone?.trim() ?? null,
+        message: input.message.trim(),
+        itemId: input.itemId ?? null,
+        userId: submittedByUserId,
+        metadata: null,
+      })
+      .returning()
+
+    void notificationsService.notifyRole({
+      targetRole: UserRole.STAFF,
+      type: 'admin_alert',
+      title: 'New shop inquiry',
+      body: `${input.fullName.trim()} sent a shop inquiry`,
+      createdBy: submittedByUserId,
+      metadata: { leadId: lead.id },
+    })
+
+    return lead
+  }
+
+  async submitGeneralInquiry(input: {
+    fullName: string
+    email?: string
+    phone?: string
+    message: string
+  }) {
+    const [lead] = await db
+      .insert(inboundLeads)
+      .values({
+        leadType: 'general_inquiry',
+        status: 'new',
+        fullName: input.fullName.trim(),
+        email: input.email?.trim().toLowerCase() ?? null,
+        phone: input.phone?.trim() ?? null,
+        message: input.message.trim(),
+      })
+      .returning()
+
+    void notificationsService.notifyRole({
+      targetRole: UserRole.STAFF,
+      type: 'admin_alert',
+      title: 'New contact inquiry',
+      body: `${input.fullName.trim()} submitted a contact inquiry`,
+      metadata: { leadId: lead.id },
+    })
+
+    return lead
+  }
 }
 
 export const leadsService = new LeadsService()

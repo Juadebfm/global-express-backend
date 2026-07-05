@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { db } from '../config/db'
 import { users } from '../../drizzle/schema'
 import { encrypt, hashEmail } from '../utils/encryption'
@@ -251,6 +251,20 @@ export class BulkImportService {
 
     const seenEmails = new Set<string>()
 
+    const allEmailHashes = rows
+      .filter((r) => r.email)
+      .map((r) => hashEmail(r.email!.toLowerCase()))
+    const existingByHash = new Map<string, typeof users.$inferSelect>()
+    if (allEmailHashes.length > 0) {
+      const existingUsers = await db
+        .select()
+        .from(users)
+        .where(inArray(users.emailHash, allEmailHashes))
+      for (const u of existingUsers) {
+        if (u.emailHash) existingByHash.set(u.emailHash, u)
+      }
+    }
+
     for (const row of rows) {
       const role = row.role
       const email = row.email?.toLowerCase()
@@ -293,12 +307,7 @@ export class BulkImportService {
       seenEmails.add(email)
 
       const emailHash = hashEmail(email)
-
-      const [existing] = await db
-        .select()
-        .from(users)
-        .where(eq(users.emailHash, emailHash))
-        .limit(1)
+      const existing = existingByHash.get(emailHash)
 
       if (existing && [UserRole.STAFF, UserRole.SUPER_ADMIN].includes(existing.role as UserRole)) {
         results.push({

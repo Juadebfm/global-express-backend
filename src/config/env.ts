@@ -91,6 +91,11 @@ const envSchema = z.object({
   // production, the staff UI MUST gate file access on status='clean'.
   VIRUSTOTAL_API_KEY: z.string().optional(),
 
+  // ─── Prometheus metrics (optional) ───────────────────────────────────────
+  // When set, GET /metrics requires the header `x-metrics-token: <value>`.
+  // Leave unset in development for open access. Always set in production.
+  METRICS_TOKEN: z.string().optional(),
+
   // ─── Cloudflare Turnstile CAPTCHA (optional) ─────────────────────────────
   // Setting TURNSTILE_SECRET_KEY enables CAPTCHA on public mutation endpoints
   // (newsletter, D2D intake, gallery claims). The FE sends the token in the

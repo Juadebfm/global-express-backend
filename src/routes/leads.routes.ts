@@ -150,6 +150,29 @@ export async function leadsRoutes(fastify: FastifyInstance): Promise<void> {
     handler: leadsController.updateLead,
   })
 
+  // ── Customer: submit shop inquiry from gallery ────────────────────────────
+
+  app.post('/shop-inquiry', {
+    preHandler: [authenticate],
+    schema: {
+      tags: ['Leads'],
+      summary: 'Submit a shop inquiry for a gallery item (any authenticated user)',
+      security: [{ bearerAuth: [] }],
+      body: z.object({
+        fullName: z.string().min(1),
+        phone: z.string().optional(),
+        email: z.string().email().optional(),
+        message: z.string().min(5),
+        itemId: z.string().uuid().optional(),
+      }),
+      response: {
+        201: z.object({ success: z.literal(true), data: leadSchema }),
+        401: errorResponseSchema,
+      },
+    },
+    handler: leadsController.submitShopInquiry,
+  })
+
   app.delete('/:id', {
     preHandler: [authenticate, requireSuperAdmin],
     schema: {

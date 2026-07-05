@@ -1,6 +1,6 @@
 ﻿import crypto from 'node:crypto'
 import bcrypt from 'bcryptjs'
-import { eq, and, isNull, inArray, or, sql, desc } from 'drizzle-orm'
+import { eq, and, isNull, inArray, or, sql, desc, count } from 'drizzle-orm'
 import { db } from '../config/db'
 import {
   orders,
@@ -621,24 +621,28 @@ export class OrdersService {
 
     const updatedOrders: Array<{ id: string; trackingNumber: string }> = []
 
-    for (const row of rows) {
-      const senderEmail = row.senderEmail ? decrypt(row.senderEmail) : undefined
-      const senderPhone = row.senderPhone ? decrypt(row.senderPhone) : undefined
+    const results = await Promise.allSettled(
+      rows.map((row) => {
+        const senderEmail = row.senderEmail ? decrypt(row.senderEmail) : undefined
+        const senderPhone = row.senderPhone ? decrypt(row.senderPhone) : undefined
+        return this.updateOrderStatus(row.orderId, {
+          statusV2: input.statusV2,
+          updatedBy: input.updatedBy,
+          actorRole: input.actorRole,
+          senderEmail,
+          senderPhone,
+          notifyEmailAlerts: row.notifyEmailAlerts,
+          notifySmsAlerts: row.notifySmsAlerts,
+          notifyInAppAlerts: row.notifyInAppAlerts,
+          preferredLanguage: row.preferredLanguage,
+        })
+      }),
+    )
 
-      const updated = await this.updateOrderStatus(row.orderId, {
-        statusV2: input.statusV2,
-        updatedBy: input.updatedBy,
-        actorRole: input.actorRole,
-        senderEmail,
-        senderPhone,
-        notifyEmailAlerts: row.notifyEmailAlerts,
-        notifySmsAlerts: row.notifySmsAlerts,
-        notifyInAppAlerts: row.notifyInAppAlerts,
-        preferredLanguage: row.preferredLanguage,
-      })
-
-      if (!updated) continue
-      updatedOrders.push({ id: updated.id, trackingNumber: updated.trackingNumber })
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) {
+        updatedOrders.push({ id: result.value.id, trackingNumber: result.value.trackingNumber })
+      }
     }
 
     return {
@@ -1271,6 +1275,10 @@ export class OrdersService {
    * Bulk-item flow has been retired in favor of aggregated customer shipments.
    */
   async getMyShipments(userId: string, params: PaginationParams) {
+    const where = and(eq(orders.senderId, userId), isNull(orders.deletedAt))
+
+    const [{ total }] = await db.select({ total: count() }).from(orders).where(where)
+
     const rows = await db
       .select({
         id: orders.id,
@@ -1299,8 +1307,10 @@ export class OrdersService {
       })
       .from(orders)
       .leftJoin(invoices, eq(invoices.orderId, orders.id))
-      .where(and(eq(orders.senderId, userId), isNull(orders.deletedAt)))
+      .where(where)
       .orderBy(desc(orders.createdAt))
+      .limit(params.limit)
+      .offset(getPaginationOffset(params.page, params.limit))
 
     const normalized = rows.map((o) => {
       const eta = computeEta(o.departureDate, o.shipmentType, o.transportMode)
@@ -1331,11 +1341,7 @@ export class OrdersService {
       }
     })
 
-    const total = normalized.length
-    const offset = getPaginationOffset(params.page, params.limit)
-    const data = normalized.slice(offset, offset + params.limit)
-
-    return buildPaginatedResult(data, total, params)
+    return buildPaginatedResult(normalized, total, params)
   }
 
   async softDeleteOrder(id: string) {

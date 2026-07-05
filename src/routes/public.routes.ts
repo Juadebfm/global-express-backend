@@ -4,6 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { errorResponseSchema } from '../utils/problem-details'
 import { publicController } from '../controllers/public.controller'
 import { galleryController } from '../controllers/gallery.controller'
+import { requireCaptcha } from '../middleware/captcha'
 
 export async function publicRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
@@ -232,7 +233,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
 
   // POST /newsletter/subscribe — public newsletter signup
   server.post('/newsletter/subscribe', {
-    preHandler: [],
+    preHandler: [requireCaptcha],
     schema: {
       tags: ['Public'],
       summary: 'Subscribe to newsletter (no auth required)',
@@ -314,7 +315,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
 
   // POST /gallery/claims/presign — public proof upload URL
   server.post('/gallery/claims/presign', {
-    preHandler: [],
+    preHandler: [requireCaptcha],
     schema: {
       tags: ['Public'],
       summary: 'Generate presigned URL for gallery claim proof upload',
@@ -362,7 +363,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
 
   // POST /gallery/cars/:trackingNumber/purchase-attempt — public first-come purchase attempt
   server.post('/gallery/cars/:trackingNumber/purchase-attempt', {
-    preHandler: [],
+    preHandler: [requireCaptcha],
     schema: {
       tags: ['Public'],
       summary: 'Submit first-come purchase attempt for a car listing (public)',
@@ -418,7 +419,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
 
   // POST /d2d/intake — public unauthenticated D2D intake
   server.post('/d2d/intake', {
-    preHandler: [],
+    preHandler: [requireCaptcha],
     schema: {
       tags: ['Public'],
       summary: 'Submit public D2D intake request (support ticket only)',
@@ -506,5 +507,24 @@ The requester can indicate whether they want to register on the platform or rema
       },
     },
     handler: publicController.submitD2dIntake,
+  })
+
+  // POST /contact — general contact / B2B enquiry form
+  server.route({
+    method: 'POST',
+    url: '/contact',
+    config: {
+      rateLimit: { max: 5, timeWindow: '1 minute' },
+    },
+    preHandler: requireCaptcha,
+    schema: {
+      body: z.object({
+        fullName: z.string().min(2).max(100),
+        email: z.string().email().optional(),
+        phone: z.string().min(5).max(30).optional(),
+        message: z.string().min(10).max(2000),
+      }),
+    },
+    handler: publicController.submitContactInquiry,
   })
 }

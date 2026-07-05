@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, pgEnum, boolean, integer, jsonb } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, timestamp, pgEnum, boolean, integer, jsonb, index } from 'drizzle-orm/pg-core'
 
 export const userRoleEnum = pgEnum('user_role', ['superadmin', 'staff', 'user', 'supplier'])
 export const preferredLanguageEnum = pgEnum('preferred_language', ['en', 'ko'])
@@ -95,4 +95,7 @@ export const users = pgTable('users', {
   deletedAt: timestamp('deleted_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-})
+},
+(table) => [
+  index('users_role_idx').on(table.role),
+])
