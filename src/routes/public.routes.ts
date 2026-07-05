@@ -4,11 +4,12 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { errorResponseSchema } from '../utils/problem-details'
 import { publicController } from '../controllers/public.controller'
 import { galleryController } from '../controllers/gallery.controller'
+import { requireCaptcha } from '../middleware/captcha'
 
 export async function publicRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
 
-  const galleryItemTypeSchema = z.enum(['anonymous_goods', 'car', 'advert'])
+  const galleryItemTypeSchema = z.enum(['anonymous_goods', 'car', 'advert', 'for_sale'])
   const galleryItemStatusSchema = z.enum([
     'draft',
     'published',
@@ -16,6 +17,8 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     'claimed',
     'car_reserved',
     'car_sold',
+    'reserved',
+    'sold',
     'archived',
   ])
 
@@ -33,6 +36,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     status: galleryItemStatusSchema,
     isPublished: z.boolean(),
     carPriceNgn: z.string().nullable(),
+    priceUsd: z.string().nullable(),
     priceCurrency: z.string(),
     createdAt: z.string(),
     updatedAt: z.string(),
@@ -229,7 +233,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
 
   // POST /newsletter/subscribe — public newsletter signup
   server.post('/newsletter/subscribe', {
-    preHandler: [],
+    preHandler: [requireCaptcha],
     schema: {
       tags: ['Public'],
       summary: 'Subscribe to newsletter (no auth required)',
@@ -264,6 +268,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
             sales: z.array(publicGalleryItemSchema),
             // Backward-compat alias for existing clients.
             cars: z.array(publicGalleryItemSchema),
+            forSale: z.array(publicGalleryItemSchema),
             adverts: z.array(publicGalleryItemSchema),
           }),
         }),
@@ -310,7 +315,7 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
 
   // POST /gallery/claims/presign — public proof upload URL
   server.post('/gallery/claims/presign', {
-    preHandler: [],
+    preHandler: [requireCaptcha],
     schema: {
       tags: ['Public'],
       summary: 'Generate presigned URL for gallery claim proof upload',
@@ -335,41 +340,30 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     handler: galleryController.generateClaimPresign,
   })
 
-  // POST /gallery/anonymous/:trackingNumber/claim — public claim with proof
+  // POST /gallery/anonymous/:trackingNumber/claim — retired; claims now require auth
   server.post('/gallery/anonymous/:trackingNumber/claim', {
     preHandler: [],
     schema: {
       tags: ['Public'],
-      summary: 'Submit ownership claim for anonymous goods (public)',
+      summary: '[RETIRED] Anonymous goods claim — sign in and use /api/v1/gallery/anonymous/:trackingNumber/claim',
       params: z.object({ trackingNumber: z.string().min(1) }),
-      body: z.object({
-        itemId: z.string().uuid(),
-        fullName: z.string().min(2),
-        email: z.string().email(),
-        phone: z.string().min(5),
-        city: z.string().optional(),
-        country: z.string().optional(),
-        message: z.string().optional(),
-        uploadToken: z.string().min(1),
-        proofR2Keys: z.array(z.string().min(1)).min(1).max(5),
-      }),
+      body: z.object({}).passthrough(),
       response: {
-        201: z.object({
-          success: z.literal(true),
-          data: z.object({
-            item: publicGalleryItemSchema,
-            claim: claimSchema,
-            ticket: supportTicketSchema,
-          }),
-        }),
+        410: z.object({ success: z.literal(false), message: z.string() }),
       },
     },
-    handler: galleryController.submitPublicAnonymousClaim,
+    handler: async (_request, reply) => {
+      return reply.code(410).send({
+        success: false,
+        message:
+          'Unauthenticated claims are no longer accepted. Please sign in and submit your claim at POST /api/v1/gallery/anonymous/:trackingNumber/claim.',
+      })
+    },
   })
 
   // POST /gallery/cars/:trackingNumber/purchase-attempt — public first-come purchase attempt
   server.post('/gallery/cars/:trackingNumber/purchase-attempt', {
-    preHandler: [],
+    preHandler: [requireCaptcha],
     schema: {
       tags: ['Public'],
       summary: 'Submit first-come purchase attempt for a car listing (public)',
@@ -396,9 +390,36 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     handler: galleryController.submitPublicCarPurchaseAttempt,
   })
 
+  // GET /shop — paginated public for_sale listings
+  server.get('/shop', {
+    schema: {
+      tags: ['Public'],
+      summary: 'Paginated shop listings (for_sale items, no auth required)',
+      querystring: z.object({
+        page: z.coerce.number().int().min(1).optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(publicGalleryItemSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+      },
+    },
+    handler: galleryController.listPublicShop,
+  })
+
   // POST /d2d/intake — public unauthenticated D2D intake
   server.post('/d2d/intake', {
-    preHandler: [],
+    preHandler: [requireCaptcha],
     schema: {
       tags: ['Public'],
       summary: 'Submit public D2D intake request (support ticket only)',
@@ -486,5 +507,24 @@ The requester can indicate whether they want to register on the platform or rema
       },
     },
     handler: publicController.submitD2dIntake,
+  })
+
+  // POST /contact — general contact / B2B enquiry form
+  server.route({
+    method: 'POST',
+    url: '/contact',
+    config: {
+      rateLimit: { max: 5, timeWindow: '1 minute' },
+    },
+    preHandler: requireCaptcha,
+    schema: {
+      body: z.object({
+        fullName: z.string().min(2).max(100),
+        email: z.string().email().optional(),
+        phone: z.string().min(5).max(30).optional(),
+        message: z.string().min(10).max(2000),
+      }),
+    },
+    handler: publicController.submitContactInquiry,
   })
 }

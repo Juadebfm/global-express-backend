@@ -113,8 +113,7 @@ export async function buildApp() {
 
   // ─── Prometheus metrics at /metrics ───────────────────────────────────────
   // Per-route histogram of request duration + counters by status code.
-  // The exposed endpoint is unauthenticated (standard practice) — protect it
-  // at the LB/firewall layer in prod if needed.
+  // Protected by x-metrics-token header when METRICS_TOKEN env var is set.
   await app.register(fastifyMetrics, {
     endpoint: '/metrics',
     defaultMetrics: { enabled: true },
@@ -123,6 +122,16 @@ export async function buildApp() {
       registeredRoutesOnly: false,
     },
   })
+
+  if (env.METRICS_TOKEN) {
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.url !== '/metrics') return
+      const provided = request.headers['x-metrics-token']
+      if (provided !== env.METRICS_TOKEN) {
+        reply.code(401).send({ error: 'Unauthorized' })
+      }
+    })
+  }
 
   // ─── Security headers ────────────────────────────────────────────────────
   await app.register(helmet, {

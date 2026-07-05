@@ -563,7 +563,13 @@ export const ordersController = {
     request: FastifyRequest<{ Params: { id: string }; Body: { note: string } }>,
     reply: FastifyReply,
   ) {
-    const updated = await ordersService.escalateOrder(request.params.id, request.body.note)
+    let updated
+    try {
+      updated = await ordersService.escalateOrder(request.params.id, request.body.note)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Escalation failed'
+      return reply.code(400).send({ success: false, message })
+    }
     if (!updated) return reply.code(404).send({ success: false, message: 'Order not found' })
 
     await createAuditLog({
@@ -697,7 +703,15 @@ export const ordersController = {
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ) {
-    await ordersService.generateAndSendPickupPin(request.params.id)
+    try {
+      await ordersService.generateAndSendPickupPin(request.params.id)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to resend PIN'
+      if (message === 'Order not found') {
+        return reply.code(404).send({ success: false, message })
+      }
+      return reply.code(400).send({ success: false, message })
+    }
     return reply.send(successResponse({ message: 'PIN resent to customer' }))
   },
 

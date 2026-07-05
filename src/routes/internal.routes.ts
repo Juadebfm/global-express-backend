@@ -52,6 +52,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Returns a signed JWT valid for JWT_EXPIRES_IN (default 8h).
    */
   app.post('/auth/login', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
     preHandler: [enforceAdminIpAllowlist],
     schema: {
       tags: ['Internal — Auth'],
