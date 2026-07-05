@@ -477,4 +477,23 @@ The requester can indicate whether they want to register on the platform or rema
     },
     handler: publicController.submitD2dIntake,
   })
+
+  // POST /contact — general contact / B2B enquiry form
+  server.route({
+    method: 'POST',
+    url: '/contact',
+    config: {
+      rateLimit: { max: 5, timeWindow: '1 minute' },
+    },
+    preHandler: requireCaptcha,
+    schema: {
+      body: z.object({
+        fullName: z.string().min(2).max(100),
+        email: z.string().email().optional(),
+        phone: z.string().min(5).max(30).optional(),
+        message: z.string().min(10).max(2000),
+      }),
+    },
+    handler: publicController.submitContactInquiry,
+  })
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { and, desc, eq, gte, isNull, lte, or } from 'drizzle-orm'
+import { and, count, desc, eq, gte, isNull, lte, or } from 'drizzle-orm'
 import { db } from '../config/db'
 import { galleryClaims, galleryItems, users } from '../../drizzle/schema'
 import { encrypt, decrypt, hashEmail } from '../utils/encryption'
@@ -1033,6 +1033,7 @@ export class GalleryService {
     claimType?: GalleryClaimType
     itemTrackingNumber?: string
     limit?: number
+    page?: number
   }) {
     const conditions = []
 
@@ -1043,7 +1044,15 @@ export class GalleryService {
     }
 
     const where = conditions.length > 0 ? and(...conditions) : undefined
-    const limit = Math.min(Math.max(input.limit ?? 50, 1), 200)
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 100)
+    const page = Math.max(input.page ?? 1, 1)
+    const offset = (page - 1) * limit
+
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(galleryClaims)
+      .innerJoin(galleryItems, eq(galleryItems.id, galleryClaims.itemId))
+      .where(where)
 
     const rows = await db
       .select({
@@ -1059,8 +1068,14 @@ export class GalleryService {
       .where(where)
       .orderBy(desc(galleryClaims.createdAt))
       .limit(limit)
+      .offset(offset)
 
-    return rows.map((row) => this.formatClaim({ claim: row.claim, item: row.item }))
+    return {
+      data: rows.map((row) => this.formatClaim({ claim: row.claim, item: row.item })),
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    }
   }
 
   async reviewClaim(input: {

@@ -370,6 +370,7 @@ export const galleryController = {
         claimType?: GalleryClaimType
         itemTrackingNumber?: string
         limit?: string
+        page?: string
       }
     }>,
     reply: FastifyReply,
@@ -379,6 +380,7 @@ export const galleryController = {
       claimType: request.query.claimType,
       itemTrackingNumber: request.query.itemTrackingNumber,
       limit: request.query.limit ? Number(request.query.limit) : undefined,
+      page: request.query.page ? Number(request.query.page) : undefined,
     })
 
     return reply.send(successResponse(payload))

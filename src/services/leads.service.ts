@@ -213,6 +213,35 @@ class LeadsService {
 
     return lead
   }
+
+  async submitGeneralInquiry(input: {
+    fullName: string
+    email?: string
+    phone?: string
+    message: string
+  }) {
+    const [lead] = await db
+      .insert(inboundLeads)
+      .values({
+        leadType: 'general_inquiry',
+        status: 'new',
+        fullName: input.fullName.trim(),
+        email: input.email?.trim().toLowerCase() ?? null,
+        phone: input.phone?.trim() ?? null,
+        message: input.message.trim(),
+      })
+      .returning()
+
+    void notificationsService.notifyRole({
+      targetRole: UserRole.STAFF,
+      type: 'admin_alert',
+      title: 'New contact inquiry',
+      body: `${input.fullName.trim()} submitted a contact inquiry`,
+      metadata: { leadId: lead.id },
+    })
+
+    return lead
+  }
 }
 
 export const leadsService = new LeadsService()

@@ -11,6 +11,7 @@ import { db } from '../config/db'
 import { newsletterSubscribers } from '../../drizzle/schema'
 import { publicD2dIntakeService } from '../services/public-d2d-intake.service'
 import { settingsShipmentTypesService } from '../services/settings-shipment-types.service'
+import { leadsService } from '../services/leads.service'
 
 const AIR_VOLUMETRIC_DIVISOR = 6000
 
@@ -347,5 +348,25 @@ export const publicController = {
     })
 
     return reply.code(201).send(successResponse(result))
+  },
+
+  async submitContactInquiry(
+    request: FastifyRequest<{
+      Body: {
+        fullName: string
+        email?: string
+        phone?: string
+        message: string
+      }
+    }>,
+    reply: FastifyReply,
+  ) {
+    await leadsService.submitGeneralInquiry({
+      fullName: request.body.fullName,
+      email: request.body.email,
+      phone: request.body.phone,
+      message: request.body.message,
+    })
+    return reply.code(201).send(successResponse({ message: 'Thank you. We will be in touch shortly.' }))
   },
 }
