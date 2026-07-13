@@ -1,82 +1,65 @@
-# Memory — Tracking Overhaul + Flow 1 + FE UX Overhaul
+# Memory — ShipmentCalculator Estimator Result Card
 
-Last updated: 2026-06-24
+Last updated: 2026-07-06
 
 ## What was built
 
-### Backend (complete — already committed and pushed)
+### Backend — `/public/calculator/estimate` endpoint
 
-- `drizzle/migrations/2026-06-24_tracking_overhaul_and_flow1.sql` — added `bill_of_lading_number`, `vessel_name` to `dispatch_batches`; created `batch_documents` table and enum; added `sourcing_supplier_*` columns to `orders`
-- `drizzle/migrations/2026-06-24_review_fixes.sql` — atomic `slot_counter` column on `dispatch_batches`; unique constraint on `batch_customer_slots(batch_id, primary_tracking_number)`
-- `drizzle/schema/batch-documents.ts` — new schema file
-- `src/utils/tracking.ts` — rewritten: `generateTrackingNumber()` → `TEMP-{16hex}`, `generateSlotTrackingNumber()` → `YYYYMMDD-NNNN`, `generateMasterTrackingNumber()` → `AIR/SEA-YYYYMMDD-NNNN`
-- `src/services/batches.service.ts` — atomic slot counter, imports `nextMasterSequence` from dispatch-batches.service (no duplicate)
-- `src/services/dispatch-batches.service.ts` — `nextMasterSequence` exported, `updateBatchCarrierInfo` accepts `billOfLadingNumber` + `vesselName`
-- `src/services/uploads.service.ts` — `generateBatchDocumentPresignedUrl`, `confirmBatchDocumentUpload`, `listBatchDocuments`
-- `src/services/orders.service.ts` — `createOrder()` writes `sourcingSupplier*` fields, fires `notifySupplierOfBookingRequest`; `getCustomerRequestsForSupplier()` returns safe projection
-- `src/controllers/batches.controller.ts` — `presignBatchDocument`, `confirmBatchDocument`, `listBatchDocuments` with audit log
-- `src/routes/batches.routes.ts` — three document endpoints delegating to controller; `billOfLadingNumber` + `vesselName` in batch schema
-- `src/routes/orders.routes.ts` — `sourcingSupplier` object with `superRefine` validation
-- `src/routes/supplier.routes.ts` — `GET /supplier/orders/requests` endpoint
-- `src/notifications/email.ts` — `sendSupplierBookingRequestEmail`
-- `src/notifications/whatsapp.ts` — `sendSupplierBookingRequestWhatsApp`
-- `context/progress-tracker.md` — updated with all 5 phases complete
+- `src/controllers/public.controller.ts` — wired `settingsFxRateService.getEffectiveRate()` into `calculateEstimate`; added `estimatedCostNgn` and `fxRateUsdNgn` to the success response. FX lookup is wrapped in try/catch — if unavailable, both fields are `null` (graceful degradation).
+- `src/routes/public.routes.ts` — Zod response schema extended with `estimatedCostNgn: z.number().nullable()` and `fxRateUsdNgn: z.number().nullable()`.
 
-Last BE commit: `80d5362` — `fix(review): address all post-review issues from tracking+flow1 feature`
-All BE work pushed to `origin/main`.
+### Landing page — ShipmentCalculator
 
-### Frontend (documents written — no code built yet)
-
-- `/Users/macbookpro/Documents/GitHub/global-express-dashboard/docs/FE_SYNC_AND_UX.md` — initial sync notes (superseded by FE_REBUILD_SPEC.md)
-- `/Users/macbookpro/Documents/GitHub/global-express-dashboard/docs/FE_REBUILD_SPEC.md` — full 4-layer rebuild specification (the primary FE document)
-- `/Users/macbookpro/Documents/GitHub/global-express-dashboard/ui-registry.md` — UI consistency baseline established via `/imprint audit`
+- `src/pages/ShipmentCalculator/index.jsx` — removed the Air/Sea rate preview cards block (was showing flat-rate cards that cluttered the page before the user even submitted).
+- `src/pages/ShipmentCalculator/EstimateResult.jsx` — full rewrite to industry-standard result card. Structure:
+  - **Header:** mode icon (orange plane for air, blue ship for sea) + shipment label + "LCL" badge for sea + "Based on X kg / X CBM" subtitle; transit pill (orange border, clock icon) on the right
+  - **Price block:** "ESTIMATED COST" label, large `≈ $X` integer price, NGN equivalent `≈ ₦X` below
+  - **Line item breakdown:** 3 rows derived from total — Air: base air freight (85%) + fuel & handling (12%) + customs (remainder); Sea: ocean freight LCL (79%) + port & documentation (17%) + customs (remainder). Always sums to total exactly.
+  - **Total row:** divider + "Estimated total" / `$X`
+  - **Tags:** static per mode — Air & Sea both: "Customs included · Live tracking · Insured"
+  - **Disclaimer:** info icon + mode-specific text (air: "confirmed at pickup"; sea: "confirmed at port intake")
+  - **CTAs:** full-width orange "Request a Shipment" → `/get-a-quote`; "Start a new estimate" text link below
 
 ## Decisions made
 
-- **Pre-launch = clean slate.** No live users, no backwards-compatibility constraints. Build it right.
-- **4-layer rebuild order:** Foundation (types/routes/services) → Customer experience → Staff pipeline → Supplier portal
-- **Customer nav collapses to 3 items:** My Shipments, Payments, Notifications. Removes: Orders, Delivery Schedule.
-- **Staff nav collapses: "Operations" replaces Shipments + Batches** as primary staff view. Admin dashboard removed pre-launch.
-- **Tracking display rule:** `TEMP-*` and `GEX-*` are internal — render as "Awaiting assignment." Customer-facing is `YYYYMMDD-NNNN` (slot) or `AIR/SEA-YYYYMMDD-NNNN` (batch master).
-- **Input radius stays `rounded-lg`** — intentionally softer than card's `rounded-xl`. Documented in ui-registry, not a bug.
-- **Language:** "pre-order" / "preorder" → "booking" (before warehouse) or "shipment" (after intake) everywhere in UI.
-- **No Co-Authored-By trailer** in any commit in this repo.
-- **Carrier info form is mode-aware:** Air → MAWB + flight. Sea → ocean tracking + voyage + BL number + vessel name. Shared → carrier name + ETD/ETA + notes.
+- **Line items derived on frontend** — backend returns a single total; breakdown is approximated proportionally. No insurance line item (removed at user request).
+- **D2D stays as INTAKE** — the D2D estimator mode shows the intake form, not a calculated card. The card design only applies to AIR and SEA calculated modes.
+- **Integers only for prices** — `Math.round()` used for both USD and NGN display. No decimal places — signals "estimate" clearly.
+- **₦ symbol hardcoded** — `Intl.NumberFormat` with `currency: "NGN"` outputs "NGN" text (not the symbol) on most systems. Fixed by prepending `₦` manually.
+- **Card border uses opacity** — `rgba(35,35,35,0.15)` instead of the `--border` variable (`#232323`) for the card border. Full `--border` is too heavy for a card.
+- **"Request a Shipment" CTA** links to `/get-a-quote` (existing route on the landing page).
 
 ## Problems solved
 
-- **Slot counter race condition** — fixed with atomic `UPDATE … SET slot_counter = slot_counter + 1 RETURNING` instead of SELECT COUNT.
-- **`nextMasterSequence` duplicated** — removed from `batches.service.ts`, now imported from `dispatch-batches.service.ts`.
-- **Supplier PII leak** — `getCustomerRequestsForSupplier` returns a projection only (no customer name, address, financials).
-- **R2 key binding** — confirm endpoint validates `r2Key.startsWith('batches/{batchId}/')` before insert.
-- **Architecture violation** — batch document endpoints moved from inline route handlers to `batchesController` with audit log.
-- **ActiveDeliveries.tsx hardcoded hex** — flagged in ui-registry as "fix immediately": `bg-[#0000FF]`, `bg-[#FF0000]`, `bg-[#008000]`, `bg-[#F4EBFF]` → replace with Tailwind semantic classes.
+- **`chargeBasis` case mismatch** — backend sends lowercase (`"volumetric_weight"`, `"actual_weight"`, `"cbm_converted_to_kg"`); the old frontend checked uppercase (`"VOLUMETRIC_WEIGHT"` etc.). Justification line never rendered. Fixed by switching to lowercase in all comparisons.
+- **NGN symbol** — `Intl.NumberFormat` with `currency: "NGN"` shows "NGN" text on most locales instead of ₦. Fixed by manual formatting.
+- **CORS during local dev** — landing page `.env.local` (gitignored) sets `VITE_API_BASE_URL=http://localhost:3000/api/v1` to override production backend URL.
 
 ## Current state
 
-- Backend: 100% complete, committed, pushed, ready for testing.
-- FE specification: Written in full. No FE code has been built yet.
-- UI registry: Baseline established. No components imprinted post-build yet.
-- `ui-registry.md` established but will need updating as new components are built (run `/imprint [filepath]` after each new component).
+- **Backend:** Changes in working tree, not yet committed. `settingsFxRateService` already existed (live USD→NGN from open.er-api.com, 5-min cache, manual rate fallback from DB) — only wiring into the estimate endpoint was new.
+- **Landing page:** `EstimateResult.jsx` rewritten, `index.jsx` rate cards removed. Changes not yet committed.
+- **Vercel deployment:** Failing because `VITE_DASHBOARD_URL` is not set. User needs to add `VITE_DASHBOARD_URL=https://app.globalexpress.kr` in Vercel project settings for the landing page (NOT the dashboard project).
 
 ## Next session starts with
 
-Open `docs/FE_REBUILD_SPEC.md` in the FE repo. Start Layer 1:
-1. Replace `src/types/order.types.ts` with the full updated types from the spec
-2. Add `BatchDocument`, `BatchDocumentType`, updated `Batch` interface to `src/types/shipmentOps.types.ts`
-3. Add `SupplierOrderRequest` to `src/types/supplierPortal.types.ts`
-4. Create `src/lib/trackingUtils.ts`
-5. Add `BOOKINGS_NEW` and `SUPPLIER_REQUESTS` to `src/constants/routes.ts`
-6. Update services: `ordersService`, `batchesService`, `supplierPortalService`
-7. Create hooks: `useBatchDocuments.ts`, `useUploadBatchDocument` (in same file), `useSupplierOrderRequests.ts`
-
-Run `/remember restore` at the start of the next session, then open the spec doc.
+1. Check git status across both repos (`global-express-backend` and `global-express-landing-page`).
+2. Commit backend changes (`src/controllers/public.controller.ts` + `src/routes/public.routes.ts`).
+3. Commit landing page changes (`EstimateResult.jsx` + `index.jsx`).
+4. Push both.
+5. Remind user to set `VITE_DASHBOARD_URL=https://app.globalexpress.kr` in Vercel → landing page project settings → Environment Variables.
 
 ## Open questions
 
-None — all resolved.
+- **Vercel env var** — `VITE_DASHBOARD_URL=https://app.globalexpress.kr` must be set manually in the Vercel dashboard by the user before the landing page production build will succeed.
+- **FX rate in production** — `settingsFxRateService` falls back to a manual rate stored in the DB if the external API is unavailable. Ensure the DB has a rate seeded or the external API key is set, otherwise `estimatedCostNgn` will be `null` in production.
 
-Previously open, now closed:
-- CAPTCHA on booking form: **No.** `POST /orders` uses `[authenticate, checkIdempotencyKey]` — no `requireCaptcha`. Customer must be logged in to book.
-- Operations nav icon: **`'layers'` (Layers from lucide-react).** Not yet in Sidebar iconMap — spec updated with exact import and iconMap entry to add.
-- Today's Arrivals filter: **Calendar day (UTC).** `createdAt >= today 00:00:00 UTC`. Pass as `?createdAfter=YYYY-MM-DD` or filter client-side if the endpoint doesn't support it yet.
+## Carry-over context (previous session — not worked on this session)
+
+The FE dashboard rebuild spec exists at:
+`/Users/macbookpro/Documents/GitHub/global-express-dashboard/docs/FE_REBUILD_SPEC.md`
+
+Backend tracking overhaul is 100% complete and pushed to main (commit `80d5362`).
+FE rebuild Layer 1 (types → services → hooks) has not been started.
+When returning to that work, run `/remember restore` and open the spec doc.

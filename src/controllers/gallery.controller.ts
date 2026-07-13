@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { successResponse } from '../utils/response'
 import { galleryService } from '../services/gallery.service'
-import { parsePaginationQuery } from '../utils/pagination'
+import { shopService } from '../services/shop.service'
 import { GalleryClaimStatus, GalleryClaimType, GalleryItemStatus, GalleryItemType, UserRole } from '../types/enums'
 
 export const galleryController = {
@@ -21,15 +21,6 @@ export const galleryController = {
     const limit = Number(request.query.limit) || 20
     const payload = await galleryService.listPublicGallery(limit)
     return reply.send(successResponse(payload.adverts))
-  },
-
-  async getPublicSales(
-    request: FastifyRequest<{ Querystring: { limit?: string } }>,
-    reply: FastifyReply,
-  ) {
-    const limit = Number(request.query.limit) || 20
-    const payload = await galleryService.listPublicGallery(limit)
-    return reply.send(successResponse(payload.sales))
   },
 
   async getAuthenticatedGallery(
@@ -146,62 +137,6 @@ export const galleryController = {
     return reply.code(201).send(successResponse(payload))
   },
 
-  async submitPublicCarPurchaseAttempt(
-    request: FastifyRequest<{
-      Params: { trackingNumber: string }
-      Body: {
-        fullName: string
-        email: string
-        phone: string
-        city?: string
-        country?: string
-        message?: string
-      }
-    }>,
-    reply: FastifyReply,
-  ) {
-    const payload = await galleryService.submitCarPurchaseAttempt({
-      trackingNumber: request.params.trackingNumber,
-      publicContact: {
-        fullName: request.body.fullName,
-        email: request.body.email,
-        phone: request.body.phone,
-        city: request.body.city,
-        country: request.body.country,
-      },
-      message: request.body.message,
-    })
-
-    return reply.code(201).send(successResponse(payload))
-  },
-
-  async submitAuthenticatedCarPurchaseAttempt(
-    request: FastifyRequest<{
-      Params: { trackingNumber: string }
-      Body: { message?: string }
-    }>,
-    reply: FastifyReply,
-  ) {
-    if ([UserRole.STAFF, UserRole.SUPER_ADMIN].includes(request.user.role as UserRole)) {
-      return reply.code(403).send({
-        success: false,
-        message: 'Internal roles cannot submit external car purchase attempts.',
-      })
-    }
-
-    const payload = await galleryService.submitCarPurchaseAttempt({
-      trackingNumber: request.params.trackingNumber,
-      authClaimant: {
-        id: request.user.id,
-        role: request.user.role as UserRole,
-      },
-      fallbackEmail: request.user.email,
-      message: request.body.message,
-    })
-
-    return reply.code(201).send(successResponse(payload))
-  },
-
   async createItem(
     request: FastifyRequest<{
       Body: {
@@ -222,10 +157,9 @@ export const galleryController = {
     }>,
     reply: FastifyReply,
   ) {
-    const payload = await galleryService.createItem({
+    const baseInput = {
       actorId: request.user.id,
       actorRole: request.user.role as UserRole,
-      itemType: request.body.itemType,
       title: request.body.title,
       description: request.body.description,
       previewImageUrl: request.body.previewImageUrl,
@@ -238,7 +172,19 @@ export const galleryController = {
       carPriceNgn: request.body.carPriceNgn,
       priceUsd: request.body.priceUsd,
       metadata: request.body.metadata,
-    })
+    }
+
+    const payload =
+      request.body.itemType === GalleryItemType.CAR ||
+      request.body.itemType === GalleryItemType.FOR_SALE
+        ? await shopService.createAdminListing({
+            ...baseInput,
+            itemType: request.body.itemType,
+          })
+        : await galleryService.createItem({
+            ...baseInput,
+            itemType: request.body.itemType,
+          })
 
     return reply.code(201).send(successResponse(payload))
   },
@@ -299,7 +245,7 @@ export const galleryController = {
     }>,
     reply: FastifyReply,
   ) {
-    const payload = await galleryService.updateItem({
+    const patchInput = {
       itemId: request.params.id,
       actorId: request.user.id,
       actorRole: request.user.role as UserRole,
@@ -307,15 +253,43 @@ export const galleryController = {
       description: request.body.description,
       previewImageUrl: request.body.previewImageUrl,
       mediaUrls: request.body.mediaUrls,
-      ctaUrl: request.body.ctaUrl,
-      startsAt: request.body.startsAt === undefined ? undefined : request.body.startsAt ? new Date(request.body.startsAt) : null,
-      endsAt: request.body.endsAt === undefined ? undefined : request.body.endsAt ? new Date(request.body.endsAt) : null,
+      startsAt:
+        request.body.startsAt === undefined
+          ? undefined
+          : request.body.startsAt
+            ? new Date(request.body.startsAt)
+            : null,
+      endsAt:
+        request.body.endsAt === undefined
+          ? undefined
+          : request.body.endsAt
+            ? new Date(request.body.endsAt)
+            : null,
       isPublished: request.body.isPublished,
       status: request.body.status,
       carPriceNgn: request.body.carPriceNgn,
       priceUsd: request.body.priceUsd,
       metadata: request.body.metadata,
-    })
+    }
+
+    let payload
+    try {
+      payload = await shopService.updateAdminListing(patchInput)
+    } catch (error) {
+      const statusCode =
+        typeof error === 'object' && error && 'statusCode' in error
+          ? (error as { statusCode?: number }).statusCode
+          : undefined
+
+      if (statusCode !== 404) {
+        throw error
+      }
+
+      payload = await galleryService.updateItem({
+        ...patchInput,
+        ctaUrl: request.body.ctaUrl,
+      })
+    }
 
     return reply.send(successResponse(payload))
   },
@@ -417,34 +391,4 @@ export const galleryController = {
     return reply.send(successResponse(payload))
   },
 
-  async listPublicShop(
-    request: FastifyRequest<{ Querystring: { page?: string; limit?: string } }>,
-    reply: FastifyReply,
-  ) {
-    const params = parsePaginationQuery(request.query)
-    const payload = await galleryService.listPublicShop(params)
-    return reply.send(successResponse(payload))
-  },
-
-  async submitShopInquiry(
-    request: FastifyRequest<{
-      Params: { itemId: string }
-      Body: { message?: string }
-    }>,
-    reply: FastifyReply,
-  ) {
-    if ([UserRole.STAFF, UserRole.SUPER_ADMIN].includes(request.user.role as UserRole)) {
-      return reply.code(403).send({
-        success: false,
-        message: 'Internal roles cannot submit shop inquiries.',
-      })
-    }
-
-    const payload = await galleryService.submitShopInquiry({
-      itemId: request.params.itemId,
-      userId: request.user.id,
-      message: request.body.message,
-    })
-    return reply.code(201).send(successResponse(payload))
-  },
 }

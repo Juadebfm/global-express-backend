@@ -1,9 +1,7 @@
 import { randomUUID } from 'crypto'
 import { and, count, desc, eq, gte, isNull, lte, or } from 'drizzle-orm'
 import { db } from '../config/db'
-import { galleryClaims, galleryItems, inboundLeads, users } from '../../drizzle/schema'
-import { buildPaginatedResult, getPaginationOffset } from '../utils/pagination'
-import type { PaginationParams } from '../types'
+import { galleryClaims, galleryItems, users } from '../../drizzle/schema'
 import { encrypt, decrypt, hashEmail } from '../utils/encryption'
 import {
   GalleryClaimStatus,
@@ -21,7 +19,13 @@ import { notificationsService, notifyUser } from './notifications.service'
 import { avScanService } from './av-scan.service'
 import { env } from '../config/env'
 import { dispatchBatchesService } from './dispatch-batches.service'
+import { shopService } from './shop.service'
 import { maskTrackingNumber } from '../utils/tracking'
+import {
+  getDefaultPublicShopAssetKey,
+  getPublicShopAssetUrl,
+  isUncontrolledPublicImageUrl,
+} from '../utils/public-shop-assets'
 
 const ALLOWED_PROOF_CONTENT_TYPES = new Set([
   'application/pdf',
@@ -218,6 +222,23 @@ export class GalleryService {
   }
 
   private formatPublicItem(item: typeof galleryItems.$inferSelect) {
+    const fallbackAssetKey = getDefaultPublicShopAssetKey({
+      itemType: item.itemType,
+      title: item.title,
+      description: item.description,
+    })
+    const fallbackAssetUrl = fallbackAssetKey ? getPublicShopAssetUrl(fallbackAssetKey) : null
+    const previewImageUrl =
+      fallbackAssetUrl && isUncontrolledPublicImageUrl(item.previewImageUrl)
+        ? fallbackAssetUrl
+        : item.previewImageUrl
+    const mediaUrls =
+      fallbackAssetUrl &&
+      (item.mediaUrls.length === 0 ||
+        item.mediaUrls.some((url) => isUncontrolledPublicImageUrl(url)))
+        ? [fallbackAssetUrl]
+        : item.mediaUrls
+
     return {
       id: item.id,
       trackingNumber: item.trackingNumber,
@@ -225,8 +246,8 @@ export class GalleryService {
       itemType: item.itemType,
       title: item.title,
       description: item.description,
-      previewImageUrl: item.previewImageUrl,
-      mediaUrls: item.mediaUrls,
+      previewImageUrl,
+      mediaUrls,
       ctaUrl: item.ctaUrl,
       startsAt: item.startsAt?.toISOString() ?? null,
       endsAt: item.endsAt?.toISOString() ?? null,
@@ -472,115 +493,21 @@ export class GalleryService {
   async listPublicGallery(limitPerSection = 20): Promise<GalleryPublicListResult> {
     const safeLimit = Math.min(Math.max(limitPerSection, 1), 100)
 
-    const [anonymousGoods, sales, forSaleItems, adverts] = await Promise.all([
+    const [anonymousGoods, shopSales, adverts] = await Promise.all([
       this.getVisibleItemsByType(GalleryItemType.ANONYMOUS_GOODS, safeLimit),
-      this.getVisibleItemsByType(GalleryItemType.CAR, safeLimit),
-      this.getVisibleItemsByType(GalleryItemType.FOR_SALE, safeLimit),
+      shopService.listPublicSales(safeLimit),
       this.getVisibleItemsByType(GalleryItemType.ADVERT, safeLimit),
     ])
 
-    const formattedSales = sales.map((item) => this.formatPublicItem(item))
+    const cars = shopSales.filter((item) => item.itemType === GalleryItemType.CAR)
+    const forSale = shopSales.filter((item) => item.itemType === GalleryItemType.FOR_SALE)
 
     return {
       anonymousGoods: anonymousGoods.map((item) => this.formatPublicItem(item)),
-      sales: formattedSales,
-      cars: formattedSales,
-      forSale: forSaleItems.map((item) => this.formatPublicItem(item)),
+      sales: shopSales,
+      cars,
+      forSale,
       adverts: adverts.map((item) => this.formatPublicItem(item)),
-    }
-  }
-
-  async listPublicShop(params: PaginationParams) {
-    const now = new Date()
-    const offset = getPaginationOffset(params.page, params.limit)
-
-    const whereClause = and(
-      eq(galleryItems.itemType, GalleryItemType.FOR_SALE),
-      eq(galleryItems.isPublished, true),
-      eq(galleryItems.status, GalleryItemStatus.PUBLISHED),
-      or(isNull(galleryItems.startsAt), lte(galleryItems.startsAt, now)),
-      or(isNull(galleryItems.endsAt), gte(galleryItems.endsAt, now)),
-    )
-
-    const [rows, [{ total }]] = await Promise.all([
-      db.select().from(galleryItems).where(whereClause).orderBy(desc(galleryItems.createdAt)).limit(params.limit).offset(offset),
-      db.select({ total: count() }).from(galleryItems).where(whereClause),
-    ])
-
-    return buildPaginatedResult(rows.map((item) => this.formatPublicItem(item)), Number(total), params)
-  }
-
-  async submitShopInquiry(input: {
-    itemId: string
-    userId: string
-    message?: string
-  }) {
-    const [item] = await db
-      .select()
-      .from(galleryItems)
-      .where(eq(galleryItems.id, input.itemId))
-      .limit(1)
-
-    if (!item) {
-      throw httpError('Shop listing not found', 404)
-    }
-
-    if (item.itemType !== GalleryItemType.FOR_SALE) {
-      throw httpError('This item is not a shop listing', 422)
-    }
-
-    if (!item.isPublished || item.status !== GalleryItemStatus.PUBLISHED) {
-      throw httpError('This listing is not currently available', 422)
-    }
-
-    const [userRow] = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, input.userId))
-      .limit(1)
-
-    if (!userRow) {
-      throw httpError('User not found', 404)
-    }
-
-    const fullName = parseDisplayName(userRow) ?? 'Unknown'
-    const email = safeDecrypt(userRow.email)
-    const phone = safeDecrypt(userRow.phone)
-
-    const [lead] = await db
-      .insert(inboundLeads)
-      .values({
-        leadType: 'shop_inquiry' as const,
-        status: 'new' as const,
-        fullName,
-        email,
-        phone,
-        itemId: item.id,
-        userId: input.userId,
-        message: input.message?.trim() || null,
-        metadata: {
-          itemTitle: item.title,
-          itemTrackingNumber: item.trackingNumber,
-          priceUsd: item.priceUsd,
-        },
-      })
-      .returning()
-
-    await notificationsService.notifyRole({
-      targetRole: UserRole.STAFF,
-      type: 'admin_alert',
-      title: 'New shop inquiry',
-      body: `${fullName} is interested in "${item.title}"`,
-      metadata: { leadId: lead.id, itemId: item.id },
-    })
-
-    return {
-      id: lead.id,
-      itemId: lead.itemId,
-      status: lead.status,
-      message: lead.message,
-      createdAt: lead.createdAt.toISOString(),
-      item: this.formatPublicItem(item),
     }
   }
 
@@ -713,43 +640,29 @@ export class GalleryService {
       throw httpError('Published for_sale listings require a valid priceUsd', 422)
     }
 
-    let created: typeof galleryItems.$inferSelect | null = null
-
-    for (let i = 0; i < 5; i += 1) {
-      const trackingNumber = generateTrackingNumber()
-      try {
-        const [row] = await db
-          .insert(galleryItems)
-          .values({
-            trackingNumber,
-            itemType: input.itemType,
-            status: requestedStatus,
-            title: input.title.trim(),
-            description: input.description?.trim() || null,
-            previewImageUrl: input.previewImageUrl?.trim() || null,
-            mediaUrls: input.mediaUrls ?? [],
-            ctaUrl: input.ctaUrl?.trim() || null,
-            startsAt: input.startsAt ?? null,
-            endsAt: input.endsAt ?? null,
-            isPublished: requestedStatus === GalleryItemStatus.PUBLISHED,
-            carPriceNgn: input.carPriceNgn ?? null,
-            priceUsd: input.priceUsd ?? null,
-            metadata: input.metadata ?? null,
-            createdBy: input.actorId,
-            updatedBy: input.actorId,
-            archivedAt: requestedStatus === GalleryItemStatus.ARCHIVED ? new Date() : null,
-          })
-          .returning()
-
-        created = row
-        break
-      } catch (err: any) {
-        if (err?.code === '23505') {
-          continue
-        }
-        throw err
-      }
-    }
+    const trackingNumber = await generateTrackingNumber()
+    const [created] = await db
+      .insert(galleryItems)
+      .values({
+        trackingNumber,
+        itemType: input.itemType,
+        status: requestedStatus,
+        title: input.title.trim(),
+        description: input.description?.trim() || null,
+        previewImageUrl: input.previewImageUrl?.trim() || null,
+        mediaUrls: input.mediaUrls ?? [],
+        ctaUrl: input.ctaUrl?.trim() || null,
+        startsAt: input.startsAt ?? null,
+        endsAt: input.endsAt ?? null,
+        isPublished: requestedStatus === GalleryItemStatus.PUBLISHED,
+        carPriceNgn: input.carPriceNgn ?? null,
+        priceUsd: input.priceUsd ?? null,
+        metadata: input.metadata ?? null,
+        createdBy: input.actorId,
+        updatedBy: input.actorId,
+        archivedAt: requestedStatus === GalleryItemStatus.ARCHIVED ? new Date() : null,
+      })
+      .returning()
 
     if (!created) {
       throw httpError('Unable to create gallery item. Please retry.', 500)

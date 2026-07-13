@@ -445,9 +445,9 @@ Response (`201`) shape:
 }
 ```
 
-### 2.9 `POST /api/v1/public/gallery/cars/:trackingNumber/purchase-attempt`
+### 2.9 `POST /api/v1/public/shop/vehicles/:listingId/inquiries`
 
-- [ ] Submit car attempt without proof upload flow.
+- [ ] Submit vehicle inquiry without proof upload flow.
 
 Request body:
 
@@ -458,7 +458,7 @@ Request body:
   "phone": "+2348098765432",
   "city": "Abuja",
   "country": "Nigeria",
-  "message": "I want to reserve this car."
+  "message": "Please share more details about this vehicle."
 }
 ```
 

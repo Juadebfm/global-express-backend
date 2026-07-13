@@ -1668,9 +1668,15 @@ File: [src/routes/public.routes.ts](src/routes/public.routes.ts) — All endpoin
 **Query:** `limit (1-100, default 20)`.
 **Success 200:** `{ "success": true, "data": [<GalleryItem>] }`.
 
-### `GET /api/v1/public/gallery/sales`
-**Query:** `limit (1-100, default 20)`.
-**Success 200:** `{ "success": true, "data": [<GalleryItem>] }`.
+### `GET /api/v1/public/shop/vehicles`
+**Use:** public vehicle inventory for the marketing-site shop.
+**Query:** `page (default 1)`, `limit (1-100, default 20)`.
+**Success 200:** `{ "success": true, "data": { "data": [<PublicShopListing>], "pagination": { "page", "limit", "total", "totalPages" } } }`.
+
+### `GET /api/v1/public/shop/items`
+**Use:** public general-item inventory for the marketing-site shop.
+**Query:** `page (default 1)`, `limit (1-100, default 20)`.
+**Success 200:** `{ "success": true, "data": { "data": [<PublicShopListing>], "pagination": { "page", "limit", "total", "totalPages" } } }`.
 
 ### `POST /api/v1/public/gallery/claims/presign`
 **Use:** anonymous claimant uploads proof — step 1.
@@ -1688,11 +1694,11 @@ File: [src/routes/public.routes.ts](src/routes/public.routes.ts) — All endpoin
 **Success 201:** `{ "success": true, "data": { "item": <GalleryItem>, "claim": <Claim>, "ticket": <Ticket> } }`.
 **Errors:** 400, 404, 409 (item already claimed), 422 (CAPTCHA).
 
-### `POST /api/v1/public/gallery/cars/:trackingNumber/purchase-attempt`
-**Use:** anonymous prospect expresses interest in a car listing (first-come-first-served).
+### `POST /api/v1/public/shop/vehicles/:listingId/inquiries`
+**Use:** anonymous prospect submits a vehicle inquiry without creating an account first.
 **CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header.
 **Payload:** `{ "fullName", "email", "phone", "city?", "country?", "message?" }`.
-**Success 201:** `{ "success": true, "data": { "item", "claim", "ticket" } }`.
+**Success 201:** `{ "success": true, "data": { "id", "listingId", "status", "message", "createdAt", "item": <PublicShopListing> } }`.
 **Errors:** 422 (CAPTCHA).
 
 ### `POST /api/v1/public/d2d/intake`
@@ -1748,11 +1754,11 @@ Claim fields: `id, itemId, itemTrackingNumber, itemType, itemTitle, claimType('o
 **Success 201:** `{ "success": true, "data": { "item", "claim", "ticket" } }`.
 **Errors:** 401, 400, 404, 409.
 
-### `POST /api/v1/gallery/cars/:trackingNumber/purchase-attempt`
-**Use:** authenticated car purchase attempt.
+### `POST /api/v1/shop/items/:listingId/inquiries`
+**Use:** authenticated customer inquiry for a general shop item.
 **Auth:** Bearer.
 **Payload:** `{ "message?": "string" }`.
-**Success 201:** `{ "success": true, "data": { "item", "claim", "ticket" } }`.
+**Success 201:** `{ "success": true, "data": { "id", "listingId", "status", "message", "createdAt", "item": <PublicShopListing> } }`.
 
 ### `POST /api/v1/gallery/items`
 **Use:** staff creates a new gallery item (anonymous goods / car / advert).

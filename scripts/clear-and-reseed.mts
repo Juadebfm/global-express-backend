@@ -63,8 +63,16 @@ async function findUserByEmail(emailToFind: string): Promise<string | null> {
   return null
 }
 
-function tempTrk(): string {
-  return `TEMP-${randomBytes(8).toString('hex').toUpperCase()}`
+const trackingCounters = new Map<string, number>()
+
+function tempTrk(date: Date = new Date()): string {
+  const y = date.getUTCFullYear()
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(date.getUTCDate()).padStart(2, '0')
+  const key = `${y}${m}${d}`
+  const next = (trackingCounters.get(key) ?? 0) + 1
+  trackingCounters.set(key, next)
+  return `${key}-${String(next).padStart(4, '0')}`
 }
 
 function slotTrk(batchDate: Date, position: number): string {

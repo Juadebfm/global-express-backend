@@ -4,7 +4,13 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { errorResponseSchema } from '../utils/problem-details'
 import { publicController } from '../controllers/public.controller'
 import { galleryController } from '../controllers/gallery.controller'
+import { shopController } from '../controllers/shop.controller'
 import { requireCaptcha } from '../middleware/captcha'
+import { getPublicShopAssetSvg, isPublicShopAssetKey } from '../utils/public-shop-assets'
+import {
+  publicShopInterestResponseSchema,
+  publicShopListingSchema,
+} from './shop.routes'
 
 export async function publicRoutes(app: FastifyInstance): Promise<void> {
   const server = app.withTypeProvider<ZodTypeProvider>()
@@ -21,9 +27,11 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     'sold',
     'archived',
   ])
+  const publicShopAssetSchema = z.enum(['shop-car-sedan', 'shop-car-suv', 'shop-sale-item'])
 
   const publicGalleryItemSchema = z.object({
     id: z.string().uuid(),
+    trackingNumber: z.string(),
     trackingNumberMasked: z.string(),
     itemType: galleryItemTypeSchema,
     title: z.string(),
@@ -38,43 +46,6 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     carPriceNgn: z.string().nullable(),
     priceUsd: z.string().nullable(),
     priceCurrency: z.string(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })
-
-  const claimSchema = z.object({
-    id: z.string().uuid(),
-    itemId: z.string().uuid(),
-    itemTrackingNumber: z.string(),
-    itemType: galleryItemTypeSchema,
-    itemTitle: z.string(),
-    claimType: z.enum(['ownership', 'car_purchase']),
-    status: z.enum(['pending', 'approved', 'rejected']),
-    claimantUserId: z.string().uuid().nullable(),
-    claimantFullName: z.string().nullable(),
-    claimantEmail: z.string().nullable(),
-    claimantPhone: z.string().nullable(),
-    message: z.string().nullable(),
-    uploadToken: z.string().nullable(),
-    proofUrls: z.array(z.string()),
-    supportTicketId: z.string().uuid().nullable(),
-    reviewNote: z.string().nullable(),
-    reviewedBy: z.string().uuid().nullable(),
-    reviewedAt: z.string().nullable(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })
-
-  const supportTicketSchema = z.object({
-    id: z.string().uuid(),
-    ticketNumber: z.string(),
-    userId: z.string().uuid(),
-    orderId: z.string().uuid().nullable(),
-    category: z.string(),
-    status: z.string(),
-    subject: z.string(),
-    assignedTo: z.string().uuid().nullable(),
-    closedAt: z.string().nullable(),
     createdAt: z.string(),
     updatedAt: z.string(),
   })
@@ -116,6 +87,8 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
             weightKg: z.number().nullable(),
             cbm: z.number().nullable(),
             estimatedCostUsd: z.number().nullable(),
+            estimatedCostNgn: z.number().nullable(),
+            fxRateUsdNgn: z.number().nullable(),
             departureFrequency: z.string().nullable(),
             estimatedTransitDays: z.number().nullable(),
             disclaimer: z.string(),
@@ -277,6 +250,82 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     handler: galleryController.getPublicGallery,
   })
 
+  server.get('/shop/vehicles', {
+    schema: {
+      tags: ['Public Shop'],
+      summary: 'List publicly available vehicle listings',
+      querystring: z.object({
+        page: z.coerce.number().int().min(1).optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(publicShopListingSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+      },
+    },
+    handler: shopController.listPublicVehicles,
+  })
+
+  server.get('/shop/items', {
+    schema: {
+      tags: ['Public Shop'],
+      summary: 'List publicly available general shop items',
+      querystring: z.object({
+        page: z.coerce.number().int().min(1).optional().default(1),
+        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+      }),
+      response: {
+        200: z.object({
+          success: z.literal(true),
+          data: z.object({
+            data: z.array(publicShopListingSchema),
+            pagination: z.object({
+              page: z.number(),
+              limit: z.number(),
+              total: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
+        }),
+      },
+    },
+    handler: shopController.listPublicItems,
+  })
+
+  server.post('/shop/vehicles/:listingId/inquiries', {
+    preHandler: [requireCaptcha],
+    schema: {
+      tags: ['Public Shop'],
+      summary: 'Submit a public inquiry for a vehicle listing',
+      params: z.object({ listingId: z.string().uuid() }),
+      body: z.object({
+        fullName: z.string().min(2),
+        email: z.string().email(),
+        phone: z.string().min(5),
+        city: z.string().optional(),
+        country: z.string().optional(),
+        message: z.string().max(2000).optional(),
+      }),
+      response: {
+        201: z.object({
+          success: z.literal(true),
+          data: publicShopInterestResponseSchema,
+        }),
+      },
+    },
+    handler: shopController.submitPublicVehicleInquiry,
+  })
+
   // GET /gallery/adverts — public adverts only
   server.get('/gallery/adverts', {
     schema: {
@@ -295,22 +344,29 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     handler: galleryController.getPublicAdverts,
   })
 
-  // GET /gallery/sales — public sales only
-  server.get('/gallery/sales', {
+  // GET /gallery/assets/:assetName.svg — stable backend-served shop card assets
+  server.get('/gallery/assets/:assetName.svg', {
     schema: {
-      tags: ['Public'],
-      summary: 'Get public sales listings (cars and other sale items)',
-      querystring: z.object({
-        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+      hide: true,
+      params: z.object({
+        assetName: publicShopAssetSchema,
       }),
-      response: {
-        200: z.object({
-          success: z.literal(true),
-          data: z.array(publicGalleryItemSchema),
-        }),
-      },
     },
-    handler: galleryController.getPublicSales,
+    handler: async (request, reply) => {
+      const assetName = request.params.assetName
+
+      if (!isPublicShopAssetKey(assetName)) {
+        return reply.code(404).send({
+          success: false,
+          message: 'Asset not found',
+        })
+      }
+
+      reply.header('Cache-Control', 'public, max-age=86400, immutable')
+      reply.header('Cross-Origin-Resource-Policy', 'cross-origin')
+      reply.type('image/svg+xml; charset=utf-8')
+      return reply.send(getPublicShopAssetSvg(assetName))
+    },
   })
 
   // POST /gallery/claims/presign — public proof upload URL
@@ -359,62 +415,6 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
           'Unauthenticated claims are no longer accepted. Please sign in and submit your claim at POST /api/v1/gallery/anonymous/:trackingNumber/claim.',
       })
     },
-  })
-
-  // POST /gallery/cars/:trackingNumber/purchase-attempt — public first-come purchase attempt
-  server.post('/gallery/cars/:trackingNumber/purchase-attempt', {
-    preHandler: [requireCaptcha],
-    schema: {
-      tags: ['Public'],
-      summary: 'Submit first-come purchase attempt for a car listing (public)',
-      params: z.object({ trackingNumber: z.string().min(1) }),
-      body: z.object({
-        fullName: z.string().min(2),
-        email: z.string().email(),
-        phone: z.string().min(5),
-        city: z.string().optional(),
-        country: z.string().optional(),
-        message: z.string().optional(),
-      }),
-      response: {
-        201: z.object({
-          success: z.literal(true),
-          data: z.object({
-            item: publicGalleryItemSchema,
-            claim: claimSchema,
-            ticket: supportTicketSchema,
-          }),
-        }),
-      },
-    },
-    handler: galleryController.submitPublicCarPurchaseAttempt,
-  })
-
-  // GET /shop — paginated public for_sale listings
-  server.get('/shop', {
-    schema: {
-      tags: ['Public'],
-      summary: 'Paginated shop listings (for_sale items, no auth required)',
-      querystring: z.object({
-        page: z.coerce.number().int().min(1).optional().default(1),
-        limit: z.coerce.number().int().min(1).max(100).optional().default(20),
-      }),
-      response: {
-        200: z.object({
-          success: z.literal(true),
-          data: z.object({
-            data: z.array(publicGalleryItemSchema),
-            pagination: z.object({
-              page: z.number(),
-              limit: z.number(),
-              total: z.number(),
-              totalPages: z.number(),
-            }),
-          }),
-        }),
-      },
-    },
-    handler: galleryController.listPublicShop,
   })
 
   // POST /d2d/intake — public unauthenticated D2D intake

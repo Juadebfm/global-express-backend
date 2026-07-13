@@ -1,12 +1,53 @@
-import { randomBytes } from 'crypto'
+import { sql } from 'drizzle-orm'
+import { trackingNumberCounters } from '../../drizzle/schema'
+
+type TrackingNumberExecutor = {
+  insert: (...args: any[]) => any
+}
+
+function formatDateKey(date: Date): string {
+  return `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, '0')}${String(date.getUTCDate()).padStart(2, '0')}`
+}
+
+function formatCustomerTrackingNumber(dateKey: string, sequence: number): string {
+  return `${dateKey}-${String(sequence).padStart(4, '0')}`
+}
 
 /**
- * Generates an internal-only reference at order creation time.
- * Never shown to customers — they use their slot tracking number (YYYYMMDD-NNNN)
- * which is assigned when their order is placed into a dispatch batch.
+ * Generates the standard customer-facing tracking number used across
+ * orders, gallery items, and other public-facing shipment references.
+ * Format: YYYYMMDD-NNNN
  */
-export function generateTrackingNumber(): string {
-  return `TEMP-${randomBytes(8).toString('hex').toUpperCase()}`
+export async function generateTrackingNumber(
+  executor?: TrackingNumberExecutor,
+  createdAt: Date = new Date(),
+): Promise<string> {
+  const dateKey = formatDateKey(createdAt)
+  const dbExecutor = executor ?? (await import('../config/db')).db
+  const [counter] = await dbExecutor
+    .insert(trackingNumberCounters)
+    .values({
+      trackingDateKey: dateKey,
+      lastValue: 1,
+    })
+    .onConflictDoUpdate({
+      target: trackingNumberCounters.trackingDateKey,
+      set: {
+        lastValue: sql`${trackingNumberCounters.lastValue} + 1`,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ lastValue: trackingNumberCounters.lastValue })
+
+  if (!counter) {
+    throw new Error('Failed to reserve tracking number.')
+  }
+
+  if (counter.lastValue > 9999) {
+    throw new Error(`Daily tracking sequence exhausted for ${dateKey}.`)
+  }
+
+  return formatCustomerTrackingNumber(dateKey, counter.lastValue)
 }
 
 /**
@@ -15,10 +56,7 @@ export function generateTrackingNumber(): string {
  * Date is the batch creation date; position is the customer's sequential slot number in this batch.
  */
 export function generateSlotTrackingNumber(batchCreatedAt: Date, position: number): string {
-  const d = batchCreatedAt
-  const date = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`
-  const pos = String(position).padStart(4, '0')
-  return `${date}-${pos}`
+  return formatCustomerTrackingNumber(formatDateKey(batchCreatedAt), position)
 }
 
 /**
@@ -28,10 +66,17 @@ export function generateSlotTrackingNumber(batchCreatedAt: Date, position: numbe
  */
 export function generateMasterTrackingNumber(mode: 'air' | 'sea', batchCreatedAt: Date, yearSequence: number): string {
   const prefix = mode.toUpperCase()
-  const d = batchCreatedAt
-  const date = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`
+  const date = formatDateKey(batchCreatedAt)
   const seq = String(yearSequence).padStart(4, '0')
   return `${prefix}-${date}-${seq}`
+}
+
+export function isCustomerTrackingNumber(trackingNumber: string): boolean {
+  return /^\d{8}-\d{4}$/.test(trackingNumber.trim())
+}
+
+export function isMasterTrackingNumber(trackingNumber: string): boolean {
+  return /^(AIR|SEA)-\d{8}-\d{4}$/.test(trackingNumber.trim().toUpperCase())
 }
 
 /**
@@ -41,7 +86,7 @@ export function generateMasterTrackingNumber(mode: 'air' | 'sea', batchCreatedAt
  */
 export function maskTrackingNumber(trackingNumber: string): string {
   // New customer-facing format: YYYYMMDD-NNNN
-  const newFormat = /^(\d{8}-)(\d{4})$/.exec(trackingNumber)
+  const newFormat = /^(\d{8}-)(\d{4})$/.exec(trackingNumber.trim())
   if (newFormat) {
     return `${newFormat[1]}****`
   }

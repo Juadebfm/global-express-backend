@@ -4,8 +4,8 @@ config({ path: '.env' })
 import postgres from 'postgres'
 
 const TRACKING_NUMBERS = [
-  'GEX-20260422-1E05BF68',
-  'GEX-20260308-B6F21DEB',
+  '20260422-0001',
+  '20260308-0002',
 ]
 
 async function main() {

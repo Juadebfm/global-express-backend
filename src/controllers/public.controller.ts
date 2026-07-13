@@ -12,6 +12,7 @@ import { newsletterSubscribers } from '../../drizzle/schema'
 import { publicD2dIntakeService } from '../services/public-d2d-intake.service'
 import { settingsShipmentTypesService } from '../services/settings-shipment-types.service'
 import { leadsService } from '../services/leads.service'
+import { settingsFxRateService } from '../services/settings-fx-rate.service'
 
 const AIR_VOLUMETRIC_DIVISOR = 6000
 
@@ -191,6 +192,15 @@ export const publicController = {
       const departureFrequency = 'Event-driven (based on warehouse movement)'
       const estimatedTransitDays = mode === TransportMode.AIR ? 7 : 90
 
+      let fxRateUsdNgn: number | null = null
+      let estimatedCostNgn: number | null = null
+      try {
+        fxRateUsdNgn = await settingsFxRateService.getEffectiveRate()
+        estimatedCostNgn = round(pricing.amountUsd * fxRateUsdNgn, 2)
+      } catch {
+        // FX rate unavailable — NGN value omitted from response
+      }
+
       return reply.send(
         successResponse({
           shipmentType: configuredType.key,
@@ -198,6 +208,8 @@ export const publicController = {
           weightKg: weightKg ?? null,
           cbm: cbm ? round(cbm, 6) : null,
           estimatedCostUsd: pricing.amountUsd,
+          estimatedCostNgn,
+          fxRateUsdNgn,
           departureFrequency,
           estimatedTransitDays,
           disclaimer:

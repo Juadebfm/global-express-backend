@@ -212,7 +212,7 @@ export class OrdersService {
       }
     }
 
-    const trackingNumber = generateTrackingNumber()
+    const trackingNumber = await generateTrackingNumber()
     const inferredTransportMode = resolveTransportModeFromShipmentType(input.shipmentType)
     const shouldAttachToBatch = Boolean(inferredTransportMode) && !(input.isPreorder ?? false)
     const dispatchBatchId = shouldAttachToBatch

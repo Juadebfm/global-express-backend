@@ -5,7 +5,7 @@ import { randomInt } from 'crypto'
  * boxes so the Korean consolidation warehouse and the Lagos receiving office
  * can match the freight to the right person without scanning a barcode.
  *
- * This is NOT a tracking number — we already have tracking numbers (GEX-…).
+ * This is NOT a tracking number — we already have tracking numbers (`YYYYMMDD-NNNN`).
  * Real marks from the operations ledger look like: "Ossyjenny", "BeautyByDaz",
  * "Classy ChiDivine", "RW-JEMMY", "The Bolden Co.", "LADIES CITY COSMETICS".
  * They can have spaces, mixed case, hyphens, dots — no format restriction.

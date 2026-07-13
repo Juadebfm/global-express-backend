@@ -4,7 +4,7 @@
 
 ## 🟢 Current Sprint — Tracking Overhaul + Flow 1
 
-> **Goal:** Ship sequential tracking numbers, sea carrier document support, and customer-initiated bookings with supplier notification.
+> **Goal:** Ship unified customer-facing tracking numbers, sea carrier document support, and customer-initiated bookings with supplier notification.
 
 ```
 Phase 1 — Schema migration          ████████████████████ 100%  ✅ done
@@ -21,7 +21,7 @@ Phase 5 — Code review fixes         ██████████████
 - [x] Migration file: `2026-06-24_tracking_overhaul_and_flow1.sql`
 
 ### Phase 2 — Tracking Number Logic ✅
-- [x] `generateTrackingNumber()` → `TEMP-{8hex}` (internal only, never customer-facing)
+- [x] `generateTrackingNumber()` → `YYYYMMDD-NNNN` (customer-facing and used on legitimate orders at creation)
 - [x] `generateSlotTrackingNumber(batchCreatedAt, position)` → `YYYYMMDD-NNNN`
 - [x] `generateMasterTrackingNumber(mode, batchCreatedAt, yearSeq)` → `AIR/SEA-YYYYMMDD-NNNN`
 - [x] `nextMasterSequence(mode)` → count batches by mode + year for NNNN sequence
@@ -64,12 +64,12 @@ Phase 5 — Code review fixes         ██████████████
 
 | # | Decision | Outcome |
 |---|---|---|
-| 1 | Individual tracking format | `YYYYMMDD-NNNN` — positional per batch slot |
-| 2 | When tracking is assigned | At slot creation (not order creation). Shows "pending assignment" before. |
+| 1 | Individual tracking format | `YYYYMMDD-NNNN` — customer-facing across orders and public gallery items |
+| 2 | When tracking is assigned | At record creation for legitimate orders; slot tracking also stays `YYYYMMDD-NNNN` |
 | 3 | Master batch tracking | `AIR-YYYYMMDD-NNNN` / `SEA-YYYYMMDD-NNNN` — sequential per mode per calendar year |
 | 4 | Batch date in tracking | Batch creation date |
 | 5 | Year counter reset | Resets every January 1st |
-| 6 | Existing tracking numbers | Untouched — old format stays on all existing orders |
+| 6 | Existing tracking numbers | Backfilled via migration into `YYYYMMDD-NNNN` where needed |
 | 7 | Carrier info visibility | Internal only — customers never see MAWB, container number, flight, vessel |
 | 8 | Supplier on booking | Known (GEX account) → FK; New → inline name/phone/email |
 | 9 | Supplier notification | Notification only, no confirmation/accept required |

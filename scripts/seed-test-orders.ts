@@ -12,11 +12,12 @@ import { createCipheriv, createHmac, randomBytes as rb } from 'crypto'
 const DATABASE_URL = process.env.DATABASE_URL!
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY!
 const sql = postgres(DATABASE_URL, { ssl: 'require', max: 1 })
+let localTrackingSequence = 0
 
 function generateTrackingNumber(): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const rand = randomBytes(4).toString('hex').toUpperCase()
-  return `GEX-${date}-${rand}`
+  localTrackingSequence += 1
+  return `${date}-${String(localTrackingSequence).padStart(4, '0')}`
 }
 
 function encrypt(text: string): string {

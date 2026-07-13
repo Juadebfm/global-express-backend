@@ -7,6 +7,7 @@ import { notificationsService } from '../services/notifications.service'
 import { pricingV2Service } from '../services/pricing-v2.service'
 import { createAuditLog } from '../utils/audit'
 import { successResponse } from '../utils/response'
+import { isMasterTrackingNumber } from '../utils/tracking'
 import { ShipmentPayer, ShipmentStatusV2, TransportMode, UserRole } from '../types/enums'
 import { STATUS_LABELS } from '../domain/shipment-v2/status-labels'
 import {
@@ -377,7 +378,7 @@ export const ordersController = {
     reply: FastifyReply,
   ) {
     const { trackingNumber } = request.params
-    if (trackingNumber.trim().toUpperCase().startsWith('GEX-MASTER-')) {
+    if (isMasterTrackingNumber(trackingNumber)) {
       return reply.code(404).send({ success: false, message: 'Shipment not found' })
     }
 
