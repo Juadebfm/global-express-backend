@@ -1,4 +1,6 @@
-# Anonymous Claim Approval -> Shipping Implementation Checklist
+# Anonymous Claim Approval -> Shipping Implementation Checklist (Archived)
+
+> Historical completion record. It is retained for implementation history and is not an active work queue.
 
 ## 1) Claim Review API Extension
 - [x] Extend `PATCH /api/v1/gallery/claims/:id/review` request body:

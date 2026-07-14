@@ -1,4 +1,6 @@
-# GEX System Fix Tracker
+# GEX System Fix Tracker (Archived)
+
+> Historical completion record. It is not an active work queue; use the current API, route schemas, and cross-repository reference for present work.
 
 **42 / 42 resolved** — run `/review` once all boxes are checked.
 

@@ -728,7 +728,8 @@ The list endpoint must also filter out broadcasts where the current user has `is
 **Checklist:**
 
 - [x] Add `isDeleted boolean default false` to `notificationReads` in `drizzle/schema/notifications.ts`
-- [x] Run `npx drizzle-kit push --force` to apply schema
+- [x] Applied the schema using Drizzle push at the time (historical); current
+      schema changes use `npm run db:migrate`.
 - [x] Add `deleteNotification(userId, notificationId)` method to `notifications.service.ts`
 - [x] Add `bulkDeleteNotifications(userId, ids[])` method to `notifications.service.ts`
 - [x] Update `list()` query to exclude `isDeleted=true` broadcasts for the current user

@@ -86,6 +86,6 @@ Currently:
 ## Related
 
 - [SECURITY.md](../SECURITY.md) — vulnerability reporting
-- [SECURITY_CHECKLIST.md](../SECURITY_CHECKLIST.md) — ASVS L2 status
+- [Archived ASVS L2 self-assessment](archive/SECURITY_CHECKLIST.md) — historical assessment status
 - [key-rotation-runbook.md](key-rotation-runbook.md)
 - [threat-model.md](threat-model.md)

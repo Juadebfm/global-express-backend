@@ -1,10 +1,10 @@
 /**
- * Run every migration in drizzle/migrations/ in filename order.
- * Safe to re-run: each statement is executed with IF EXISTS / IF NOT EXISTS
- * guards where possible, and any "already exists" errors are silently skipped.
+ * Recovery-only replay tool. It runs every migration in filename order and may
+ * skip selected structural errors. Normal development and deployment must use
+ * `npm run db:migrate` instead, which records each migration in a ledger.
  *
  * Usage (against a specific database):
- *   DATABASE_URL=<render-db-url> npx tsx scripts/run-all-migrations.ts
+ *   DATABASE_URL=<render-db-url> npx tsx scripts/run-all-migrations.ts --confirm-replay
  *
  * The DATABASE_URL from .env is used by default.
  */
@@ -14,6 +14,11 @@ import postgres from 'postgres'
 import { config } from 'dotenv'
 
 config({ path: '.env' })
+
+if (!process.argv.includes('--confirm-replay')) {
+  console.error('Recovery replay requires --confirm-replay. Use npm run db:migrate for normal migrations.')
+  process.exit(1)
+}
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {

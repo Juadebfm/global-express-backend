@@ -5,8 +5,10 @@
  *   npm run seed:data
  *
  * Prerequisites:
- *   - Run "npm run seed:superadmin" first (seed orders use the superadmin as createdBy)
- *   - Run "npm run db:push" to ensure all tables exist
+ *   - Confirm the schema is current with "npm run db:migrate:status", then run
+ *     "npm run db:migrate". Existing databases without a migration ledger must
+ *     be explicitly baselined first; see the root README.
+ *   - Run "npm run seed:superadmin" (seed orders use the superadmin as createdBy)
  *
  * Safe to inspect: checks for existing seed data and aborts if already seeded.
  * To re-seed, delete rows with clerk_id LIKE 'seed_data_v1_%' from the users table.

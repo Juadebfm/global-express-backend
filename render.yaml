@@ -7,8 +7,8 @@ services:
     buildCommand: npm ci && npm run build
     # Gate every deploy on the secret hygiene audit (placeholder values,
     # test-key prefixes in prod, sample-env collisions). Database migrations
-    # are applied manually via `scripts/run-migration.ts` because the Drizzle
-    # journal is empty — `drizzle-kit migrate` would be a no-op here.
+    # use the project-owned ledger via `npm run db:migrate`; baseline existing
+    # environments manually before enabling automatic migration deployment.
     preDeployCommand: npm run audit:secrets:prod
     startCommand: npm start
     healthCheckPath: /health

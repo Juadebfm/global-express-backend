@@ -115,7 +115,7 @@ See:
 
 - `docs/data-classification.md`
 - `docs/threat-model.md`
-- `SECURITY_CHECKLIST.md`
+- `docs/archive/SECURITY_CHECKLIST.md` (historical assessment)
 
 ---
 

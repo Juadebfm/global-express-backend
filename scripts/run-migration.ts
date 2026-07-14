@@ -1,6 +1,8 @@
 /**
- * Run a custom SQL migration file against the database.
- * Usage: npx tsx scripts/run-migration.ts drizzle/migrations/2026-03-08_unify_notifications.sql
+ * Recovery-only runner for a single SQL migration file.
+ * Normal development and deployment must use `npm run db:migrate`, which
+ * records each applied migration in the project-owned ledger.
+ * Usage: npx tsx scripts/run-migration.ts drizzle/migrations/<migration>.sql --confirm-recovery
  */
 import { readFileSync } from 'fs'
 import postgres from 'postgres'
@@ -17,7 +19,12 @@ if (!DATABASE_URL) {
 
 const file = process.argv[2]
 if (!file) {
-  console.error('Usage: npx tsx scripts/run-migration.ts <path-to-sql-file>')
+  console.error('Usage: npx tsx scripts/run-migration.ts <path-to-sql-file> --confirm-recovery')
+  process.exit(1)
+}
+
+if (!process.argv.includes('--confirm-recovery')) {
+  console.error('Single-file recovery requires --confirm-recovery. Use npm run db:migrate for normal migrations.')
   process.exit(1)
 }
 

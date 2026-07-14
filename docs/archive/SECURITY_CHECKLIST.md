@@ -1,4 +1,6 @@
-# Security Checklist — Global Express Backend
+# Security Checklist — Global Express Backend (Archived)
+
+> Historical ASVS L2 assessment recorded in June 2026. It is not a substitute for a fresh security review before release.
 
 > Mapped to a subset of **OWASP ASVS v4.0.3 Level 2** (realistic target for B2B SaaS).
 > Generated from a code audit on 2026-05-16 against [src/](src/).

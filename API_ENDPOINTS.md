@@ -1679,20 +1679,17 @@ File: [src/routes/public.routes.ts](src/routes/public.routes.ts) — All endpoin
 **Success 200:** `{ "success": true, "data": { "data": [<PublicShopListing>], "pagination": { "page", "limit", "total", "totalPages" } } }`.
 
 ### `POST /api/v1/public/gallery/claims/presign`
-**Use:** anonymous claimant uploads proof — step 1.
-**CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header. Verify once at the start of the claim flow; the same token is **not** reused across the multi-step upload (tokens are single-use).
+**Use:** legacy public proof-upload helper. New claim journeys should redirect the visitor to the dashboard and use the authenticated endpoint below instead.
+**CAPTCHA:** ✅ required — pass a fresh token in `cf-turnstile-response` for each request.
 **Payload:** `{ "uploadToken?": "string", "contentType": "application/pdf|image/...", "originalFileName?": "string" }`.
 **Success 200:** `{ "success": true, "data": { "uploadUrl", "r2Key", "publicUrl", "expiresInSeconds", "uploadToken" } }`.
 **Errors:** 422 (CAPTCHA).
 
-**FE Notes:** pass the returned `uploadToken` to subsequent presign + claim submission calls so the server can group multiple uploads into one claim. Re-issue a fresh Turnstile token before each presign call.
+**FE Notes:** do not start new public claim flows with this endpoint. The public claim submission route is retired.
 
 ### `POST /api/v1/public/gallery/anonymous/:trackingNumber/claim`
-**Use:** anonymous claimant submits an ownership claim for a gallery item.
-**CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header.
-**Payload:** `{ "itemId": "uuid", "fullName": "≥ 2 chars", "email": "...", "phone": "≥ 5 chars", "city?", "country?", "message?", "uploadToken": "string", "proofR2Keys": ["string", ... (1-5)] }`.
-**Success 201:** `{ "success": true, "data": { "item": <GalleryItem>, "claim": <Claim>, "ticket": <Ticket> } }`.
-**Errors:** 400, 404, 409 (item already claimed), 422 (CAPTCHA).
+**Status:** retired. It returns `410 Gone` and instructs the caller to sign in.
+**Replacement:** `POST /api/v1/gallery/anonymous/:trackingNumber/claim` with customer authentication.
 
 ### `POST /api/v1/public/shop/vehicles/:listingId/inquiries`
 **Use:** anonymous prospect submits a vehicle inquiry without creating an account first.
@@ -1750,9 +1747,9 @@ Claim fields: `id, itemId, itemTrackingNumber, itemType, itemTitle, claimType('o
 ### `POST /api/v1/gallery/anonymous/:trackingNumber/claim`
 **Use:** authenticated claimant submits ownership claim. Picks up the user's contact details from their account.
 **Auth:** Bearer.
-**Payload:** `{ "itemId": "uuid", "message?": "string", "uploadToken": "string", "proofR2Keys": ["string", ... (1-5)] }`.
+**Payload:** `{ "itemId": "uuid", "shippingMark?": "string", "message?": "string", "uploadToken?": "string", "proofR2Keys?": ["string", ... (1-5)] }`.
 **Success 201:** `{ "success": true, "data": { "item", "claim", "ticket" } }`.
-**Errors:** 401, 400, 404, 409.
+**Errors:** 401, 403, 400, 404, 409, 422.
 
 ### `POST /api/v1/shop/items/:listingId/inquiries`
 **Use:** authenticated customer inquiry for a general shop item.

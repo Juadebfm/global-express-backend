@@ -1,4 +1,6 @@
-# Frontend Public Endpoints Consumption Checklist
+# Frontend Public Endpoints Consumption Checklist (Archived)
+
+> Historical migration checklist. The current public-site contract is documented in `API_ENDPOINTS.md` and `docs/CROSS_REPO_REFERENCE.md`.
 
 Date: 2026-04-25
 

@@ -1,4 +1,6 @@
-# Public Website API Endpoint Changes
+# Public Website API Endpoint Changes (Archived)
+
+> Historical migration notes. The current public-site contract is documented in `API_ENDPOINTS.md` and `docs/CROSS_REPO_REFERENCE.md`.
 
 Date: 2026-04-22
 

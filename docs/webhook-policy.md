@@ -101,6 +101,6 @@ The functional guarantees the spec defines (signature, timestamp, replay protect
 ## Related
 
 - [SECURITY.md](../SECURITY.md) — vulnerability reporting
-- [REST_API_AUDIT.md](../REST_API_AUDIT.md) — REST standards self-assessment
+- [Archived REST standards self-assessment](archive/REST_API_AUDIT.md) — historical assessment status
 - [docs/threat-model.md](threat-model.md) — webhook attack scenarios
 - Inbound webhook handlers: [src/routes/webhooks.routes.ts](../src/routes/webhooks.routes.ts), [src/services/payments.service.ts](../src/services/payments.service.ts) (`handleWebhookEvent`)
