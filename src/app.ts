@@ -154,9 +154,34 @@ export async function buildApp() {
   })
 
   // ─── CORS ─────────────────────────────────────────────────────────────────
-  const allowedOrigins = env.CORS_ORIGINS.split(',').map((o) => o.trim())
+  const configuredOrigins = env.CORS_ORIGINS.split(',')
+    .map((o) => o.trim())
+    .filter(Boolean)
+
+  const isLocalDevOrigin = (origin: string): boolean => {
+    if (env.NODE_ENV === 'production') return false
+
+    try {
+      const parsed = new URL(origin)
+      return (
+        ['localhost', '127.0.0.1', '0.0.0.0'].includes(parsed.hostname)
+        && ['http:', 'https:'].includes(parsed.protocol)
+      )
+    } catch {
+      return false
+    }
+  }
+
+  const allowedOrigins = new Set(configuredOrigins)
   await app.register(cors, {
-    origin: allowedOrigins,
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.has(origin) || isLocalDevOrigin(origin)) {
+        cb(null, true)
+        return
+      }
+
+      cb(new Error(`Origin ${origin} is not allowed by CORS`), false)
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',

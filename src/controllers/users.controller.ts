@@ -306,10 +306,17 @@ export const usersController = {
     reply: FastifyReply,
   ) {
     if (request.user.role !== UserRole.SUPPLIER) {
-      return reply.code(403).send({
-        success: false,
-        message: 'Only suppliers can view incoming supplier validation requests.',
-      })
+      const page = Number(request.query.page) || 1
+      const limit = Number(request.query.limit) || 20
+      return reply.send(successResponse({
+        data: [],
+        pagination: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+        },
+      }))
     }
 
     const result = await usersService.listIncomingSupplierUpdateRequests(request.user.id, {
