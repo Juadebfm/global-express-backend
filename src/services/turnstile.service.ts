@@ -2,6 +2,17 @@ import axios from 'axios'
 import axiosRetry from 'axios-retry'
 import { env } from '../config/env'
 
+const TURNSTILE_DEV_TOKEN = 'dev-bypass-token'
+const TURNSTILE_TEST_SECRET_KEY = '1x0000000000000000000000000000000AA'
+
+function isLocalBypassAllowed(): boolean {
+  return (
+    env.NODE_ENV !== 'production' &&
+    !env.TURNSTILE_REQUIRE &&
+    (!env.TURNSTILE_SECRET_KEY || env.TURNSTILE_SECRET_KEY === TURNSTILE_TEST_SECRET_KEY)
+  )
+}
+
 /**
  * Cloudflare Turnstile token verification.
  *
@@ -48,6 +59,10 @@ export const turnstileService = {
    * risk scoring and binds the token to that IP.
    */
   async verify(token: string, remoteIp?: string): Promise<boolean> {
+    if (token === TURNSTILE_DEV_TOKEN && isLocalBypassAllowed()) {
+      return true
+    }
+
     if (!env.TURNSTILE_SECRET_KEY) {
       // No secret configured. If TURNSTILE_REQUIRE is set, reject; otherwise bypass (dev).
       return !env.TURNSTILE_REQUIRE

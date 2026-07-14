@@ -245,7 +245,7 @@ async function main() {
     const [order] = await db
       .insert(orders)
       .values({
-        trackingNumber: generateTrackingNumber(),
+        trackingNumber: await generateTrackingNumber(undefined, new Date()),
         senderId: customerId,
         recipientName: encrypt(recipient.name),
         recipientAddress: encrypt(recipient.address),

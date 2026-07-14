@@ -15,7 +15,7 @@ function toNumber(v: string | null | undefined): number {
 }
 
 async function main() {
-  const TRACKING = 'GEX-CUST-20260611-D7BE5C'
+  const TRACKING = '20260611-0001'
 
   const [order] = await db
     .select()

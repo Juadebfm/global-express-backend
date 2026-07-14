@@ -18,7 +18,7 @@ import {
 
 const orderResponseSchema = z.object({
   id: z.string().uuid().describe('Order UUID'),
-  trackingNumber: z.string().describe('Public tracking number (e.g. GE-2024-XXXX)'),
+  trackingNumber: z.string().describe('Public tracking number (format: YYYYMMDD-NNNN)'),
   senderId: z.string().uuid().nullable().describe('UUID of the customer who owns this order (hidden for external viewers)'),
   recipientName: z.string().describe('Recipient full name'),
   recipientAddress: z.string().describe('Recipient delivery address'),
@@ -167,8 +167,8 @@ export async function ordersRoutes(fastify: FastifyInstance): Promise<void> {
       summary: 'Track a shipment by tracking number (public)',
       description: `Look up the current status of a customer shipment by tracking number. No authentication required.
 
-**Example:** \`GET /api/v1/orders/track/GE-2024-AB12\``,
-      params: z.object({ trackingNumber: z.string().min(1).describe('Tracking number (e.g. GE-2024-AB12)') }),
+**Example:** \`GET /api/v1/orders/track/20260707-0001\``,
+      params: z.object({ trackingNumber: z.string().min(1).describe('Tracking number (e.g. 20260707-0001)') }),
       response: {
         200: z.object({
           success: z.literal(true),

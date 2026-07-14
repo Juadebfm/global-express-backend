@@ -20,6 +20,7 @@ const galleryItemStatusSchema = z.enum([
 
 const publicGalleryItemSchema = z.object({
   id: z.string().uuid(),
+  trackingNumber: z.string(),
   trackingNumberMasked: z.string(),
   itemType: galleryItemTypeSchema,
   title: z.string(),
@@ -199,23 +200,6 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
     handler: galleryController.submitAuthenticatedAnonymousClaim,
   })
 
-  app.post('/cars/:trackingNumber/purchase-attempt', {
-    preHandler: [authenticate],
-    schema: {
-      tags: ['Gallery'],
-      summary: 'Submit first-come purchase attempt for a car listing (authenticated)',
-      security: [{ bearerAuth: [] }],
-      params: z.object({ trackingNumber: z.string().min(1) }),
-      body: z.object({
-        message: z.string().optional(),
-      }),
-      response: {
-        201: z.object({ success: z.literal(true), data: claimActionResponseSchema }),
-      },
-    },
-    handler: galleryController.submitAuthenticatedCarPurchaseAttempt,
-  })
-
   app.post('/items', {
     preHandler: [authenticate, requireStaffOrAbove],
     schema: {
@@ -393,30 +377,4 @@ export async function galleryRoutes(fastify: FastifyInstance): Promise<void> {
     handler: galleryController.reviewClaim,
   })
 
-  app.post('/shop/:itemId/inquire', {
-    preHandler: [authenticate],
-    schema: {
-      tags: ['Gallery — Shop'],
-      summary: 'Submit buyer inquiry for a for_sale listing (authenticated)',
-      security: [{ bearerAuth: [] }],
-      params: z.object({ itemId: z.string().uuid() }),
-      body: z.object({
-        message: z.string().max(2000).optional(),
-      }),
-      response: {
-        201: z.object({
-          success: z.literal(true),
-          data: z.object({
-            id: z.string().uuid(),
-            itemId: z.string().uuid(),
-            status: z.string(),
-            message: z.string().nullable(),
-            createdAt: z.string(),
-            item: publicGalleryItemSchema,
-          }),
-        }),
-      },
-    },
-    handler: galleryController.submitShopInquiry,
-  })
 }

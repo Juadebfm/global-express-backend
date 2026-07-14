@@ -158,3 +158,38 @@ export enum SupplierUpdateRequestStatus {
   ACCEPTED = 'accepted',
   REJECTED = 'rejected',
 }
+
+export enum ShopListingKind {
+  VEHICLE = 'vehicle',
+  GENERAL_ITEM = 'general_item',
+}
+
+export enum ShopListingStatus {
+  DRAFT = 'draft',
+  PUBLISHED = 'published',
+  UNPUBLISHED = 'unpublished',
+  ARCHIVED = 'archived',
+  SOLD = 'sold',
+}
+
+export enum ShopInterestSource {
+  PUBLIC = 'public',
+  AUTHENTICATED = 'authenticated',
+  STAFF = 'staff',
+}
+
+export enum ShopInterestStatus {
+  NEW = 'new',
+  CONTACTED = 'contacted',
+  QUALIFIED = 'qualified',
+  HOLD_OFFERED = 'hold_offered',
+  CONVERTED = 'converted',
+  CLOSED = 'closed',
+}
+
+export enum ShopHoldStatus {
+  ACTIVE = 'active',
+  EXPIRED = 'expired',
+  RELEASED = 'released',
+  CONVERTED = 'converted',
+}

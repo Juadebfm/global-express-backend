@@ -230,7 +230,7 @@ export class DispatchBatchesService {
     const safeRecipientAddress =
       'Address to be confirmed after anonymous goods claim approval'
 
-    const trackingNumber = generateTrackingNumber()
+    const trackingNumber = await generateTrackingNumber(tx)
     const weightText = toNumericString(input.weightKg ?? null, 3)
     const quantity = input.quantity && input.quantity > 0 ? input.quantity : 1
     const packageDescription = input.itemDescription?.trim() || input.itemTitle
@@ -745,7 +745,7 @@ export class DispatchBatchesService {
         await db
           .insert(orders)
           .values({
-            trackingNumber: generateTrackingNumber(),
+            trackingNumber: await generateTrackingNumber(),
             senderId: input.customerId,
             recipientName: encrypt(customerName),
             recipientAddress: encrypt('58B Awoniyi Elemo Street, Ajao Estate, Lagos, Nigeria'),
@@ -1160,7 +1160,7 @@ export class DispatchBatchesService {
       const [createdTarget] = await db
         .insert(orders)
         .values({
-          trackingNumber: generateTrackingNumber(),
+          trackingNumber: await generateTrackingNumber(),
           senderId: sourceOrder.senderId,
           recipientName: sourceOrder.recipientName,
           recipientAddress: sourceOrder.recipientAddress,

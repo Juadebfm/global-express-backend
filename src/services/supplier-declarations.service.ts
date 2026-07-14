@@ -233,7 +233,7 @@ class SupplierDeclarationsService {
     if (!decl) return { ok: false as const, reason: 'Declaration not found.' }
     if (decl.status !== 'pending_review') return { ok: false as const, reason: `Declaration is already ${decl.status}.` }
 
-    const trackingNumber = generateTrackingNumber()
+    const trackingNumber = await generateTrackingNumber()
 
     // Create the preorder — senderId is the supplier until a GE customer is linked
     const [order] = await db

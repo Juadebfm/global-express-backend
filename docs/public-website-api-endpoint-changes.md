@@ -545,13 +545,13 @@ This document includes:
 
 - Success response (`201`): `{ success, data: { item, claim, ticket } }`
 
-### `POST /api/v1/public/gallery/cars/:trackingNumber/purchase-attempt`
+### `POST /api/v1/public/shop/vehicles/:listingId/inquiries`
 
 - Auth: None
 - Params:
 
 ```json
-{ "trackingNumber": "GEX-..." }
+{ "listingId": "uuid" }
 ```
 
 - Body:
@@ -563,11 +563,11 @@ This document includes:
   "phone": "+2348012345678",
   "city": "Lagos",
   "country": "Nigeria",
-  "message": "Interested in purchase"
+  "message": "Requesting more details about this vehicle"
 }
 ```
 
-- Success response (`201`): `{ success, data: { item, claim, ticket } }`
+- Success response (`201`): `{ success, data: { id, listingId, status, message, createdAt, item } }`
 
 ## Auth Flow Update (Customer Side)
 
