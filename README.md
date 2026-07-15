@@ -56,12 +56,20 @@ To validate every committed migration, point `MIGRATION_TEST_DATABASE_URL` at a 
 
 ## Verification
 
+The repository does not require paid GitHub-hosted runners. Run the local CI
+equivalent before pushing changes:
+
 ```bash
-npm run typecheck
-npm test
-npm run lint
-npm run format:check
+npm run ci
 ```
+
+To include the full migration integration test, set
+`MIGRATION_TEST_DATABASE_URL` to a dedicated disposable PostgreSQL database
+before running `npm run ci`. The test refuses a non-empty database and resets
+its schema after completion.
+
+`npm run format:check` is not part of the local CI gate yet because the
+repository still contains pre-existing formatting drift outside this cleanup.
 
 ## Project layout
 
