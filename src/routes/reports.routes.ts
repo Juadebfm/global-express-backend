@@ -51,30 +51,6 @@ export async function reportsRoutes(fastify: FastifyInstance): Promise<void> {
     handler: reportsController.getSummary,
   })
 
-  // ── Orders by status (kept for backward compat) ─────────────────────────
-
-  app.get('/orders/by-status', {
-    preHandler: [authenticate, requireAdminOrAbove],
-    schema: {
-      tags: ['Reports'],
-      summary: 'Order count grouped by status (legacy — use /status-pipeline instead)',
-      security: [{ bearerAuth: [] }],
-      response: {
-        200: z.object({
-          success: z.literal(true),
-          data: z.array(
-            z.object({
-              status: z.string().nullable(),
-              count: z.number(),
-            }),
-          ),
-        }),
-        ...errorSchemas,
-      },
-    },
-    handler: reportsController.getOrdersByStatus,
-  })
-
   // ── 1. Revenue Analytics (enhanced) ─────────────────────────────────────
 
   app.get('/revenue', {

@@ -1675,7 +1675,7 @@ Deletes an image from both R2 and the database.
 
 ## Reports Routes
 
-Financial reports (`/summary`, `/revenue`) are **Superadmin only** and IP-whitelisted — they expose company revenue. The operational report (`/orders/by-status`) is **Admin+** and IP-whitelisted.
+Financial reports (`/summary`, `/revenue`) are **Superadmin only** and IP-whitelisted — they expose company revenue.
 
 ### `GET /api/v1/reports/summary`
 
@@ -1693,27 +1693,6 @@ Returns aggregate summary statistics: total orders, total users, total revenue.
     "totalUsers": 87,
     "totalRevenue": "12450000.00"
   }
-}
-```
-
----
-
-### `GET /api/v1/reports/orders/by-status`
-
-Returns order counts grouped by V2 status.
-
-**Auth:** Admin+ | IP-whitelisted
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "data": [
-    { "statusV2": "FLIGHT_DEPARTED", "count": 14 },
-    { "statusV2": "WAREHOUSE_VERIFIED_PRICED", "count": 8 },
-    { "statusV2": "PICKED_UP_COMPLETED", "count": 210 }
-  ]
 }
 ```
 

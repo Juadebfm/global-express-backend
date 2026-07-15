@@ -64,7 +64,7 @@ The public site is intentionally not a second dashboard. It provides public-safe
 | Vehicle inquiry | `POST /api/v1/public/shop/vehicles/:listingId/inquiries` | Public + Turnstile | Creates an inbound lead and shop-interest record; staff are notified |
 | General-item inquiry | `POST /api/v1/shop/items/:listingId/inquiries` | Customer auth | Creates a shop-interest record; staff are notified |
 | Anonymous goods list | `GET /api/v1/public/gallery` | Public | Includes public-safe anonymous-goods rows for the claim page |
-| Anonymous ownership claim | `POST /api/v1/public/gallery/anonymous/:trackingNumber/claim` | Public + Turnstile | Creates an ownership claim for staff review |
+| Anonymous ownership claim | `POST /api/v1/gallery/anonymous/:trackingNumber/claim` | Customer auth | Creates an ownership claim for staff review |
 
 The public site must use the dedicated `/public/shop/*` endpoints for Shop. Do not reintroduce legacy gallery sales feeds or car-purchase claim endpoints into the new Shop flow.
 
@@ -87,6 +87,7 @@ The public site must use the dedicated `/public/shop/*` endpoints for Shop. Do n
 - Listing cards provide a usable fallback when an image is absent or fails to load.
 - Shop section skeletons and the claim-table skeleton are present; the claim skeleton uses darker gray placeholders and a short minimum display interval so it is visible during normal local loading.
 - `/claim-a-package` uses the same site page frame and horizontal spacing as the standard public pages. It is a compact table with image, package, masked tracking, and action columns.
+- The claim action redirects the visitor to dashboard sign-in; ownership claims are submitted only from the authenticated dashboard flow.
 
 ### Dashboard
 
@@ -99,7 +100,7 @@ The public site must use the dedicated `/public/shop/*` endpoints for Shop. Do n
 
 ## Recent Backend Reconciliation
 
-The following backend work is present in the current working tree and must be committed with the normal release work:
+The following backend reconciliation shipped in commit `e144a63` (`fix: reconcile dashboard backend integration`):
 
 - `drizzle/migrations/2026-07-14_orders_schema_reconciliation.sql` reconciles expected order and warehouse schema fields in databases that missed earlier migrations.
 - `drizzle/migrations/2026-07-14_dispatch_batches_schema_reconciliation.sql` adds the missing actual-journey fields on `dispatch_batches` with idempotent `IF NOT EXISTS` statements.
@@ -132,7 +133,6 @@ Never copy values from `.env` files into documentation or source control. Use th
 
 ## Remaining Work
 
-- Commit the current backend reconciliation migrations and controller/CORS updates before sharing or deploying them.
 - Add dashboard UI/endpoint coverage for progressing shop interest statuses and for staff-controlled holds. The data model exists; the dedicated operational workflow is not yet exposed as a complete staff shop-management surface.
 - Update the dashboard supplier page so supplier-only validation data is fetched only when relevant, rather than relying on the backend compatibility empty state.
 - Complete responsive visual QA for the public Shop and Claim pages at desktop, tablet, and mobile widths.
@@ -141,9 +141,8 @@ Never copy values from `.env` files into documentation or source control. Use th
 ## Useful Source Documents
 
 - Backend API reference: `API_ENDPOINTS.md`
-- Backend public website change notes: `docs/public-website-api-endpoint-changes.md`
+- Archived public website migration notes: `docs/archive/public-website-api-endpoint-changes.md`
 - Backend tracking and overall progress: `context/progress-tracker.md`
 - Backend public-shop design history: `context/public-shop-build-checklist.md`
 - Dashboard rebuild specification: `docs/FE_REBUILD_SPEC.md` in the dashboard repository
-- Public website migration history: `docs/public-website-api-migration-checklist.md` in the public-website repository
-
+- Public website migration history: `docs/public-website-api-migration-checklist.md` in the public-website repository (historical; verify against the backend API reference)

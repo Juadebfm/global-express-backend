@@ -1,6 +1,6 @@
 /**
  * Audits .env (or process.env) for the secret-hygiene rules in
- * SECURITY_CHECKLIST.md (ASVS V2.5.1, V2.5.4). Run before every deploy:
+ * docs/archive/SECURITY_CHECKLIST.md (ASVS V2.5.1, V2.5.4). Run before every deploy:
  *
  *   npx tsx scripts/audit-env-secrets.ts          # audit local .env
  *   npx tsx scripts/audit-env-secrets.ts --prod   # apply stricter prod rules

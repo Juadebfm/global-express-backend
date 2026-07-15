@@ -241,8 +241,7 @@ await fetch('/api/v1/payments/initialize', {
 | Endpoint | What it is |
 |---|---|
 | `POST /api/v1/public/newsletter/subscribe` | Newsletter form |
-| `POST /api/v1/public/gallery/claims/presign` | Anonymous claim — proof upload presign |
-| `POST /api/v1/public/gallery/anonymous/:trackingNumber/claim` | Submit anonymous ownership claim |
+| `POST /api/v1/gallery/anonymous/:trackingNumber/claim` | Authenticated dashboard ownership claim |
 | `POST /api/v1/public/shop/vehicles/:listingId/inquiries` | Anonymous vehicle inquiry |
 | `POST /api/v1/public/d2d/intake` | Unauthenticated D2D intake form |
 

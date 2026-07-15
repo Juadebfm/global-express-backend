@@ -87,8 +87,9 @@ Neon's "Branches" feature spins up a separate copy off main with one click — s
 **Bonus:** Once you have a dev branch, you can also run migrations against it first as a dry run before applying them to prod:
 ```bash
 # Switch DATABASE_URL to dev branch, then:
-npx tsx scripts/run-migration.ts drizzle/migrations/<new-migration>.sql
-# If it works, switch back to prod and re-run.
+npm run db:migrate:status
+npm run db:migrate
+# If it works, switch back to prod and run the same ledger-aware command.
 ```
 
 ---

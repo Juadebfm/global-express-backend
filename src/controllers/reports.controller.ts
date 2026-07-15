@@ -24,11 +24,6 @@ export const reportsController = {
     return reply.send(successResponse(summary))
   },
 
-  async getOrdersByStatus(_request: FastifyRequest, reply: FastifyReply) {
-    const data = await reportsService.getOrdersByStatus()
-    return reply.send(successResponse(data))
-  },
-
   // ── 1. Revenue Analytics (enhanced) ─────────────────────────────────────
 
   async getRevenueAnalytics(

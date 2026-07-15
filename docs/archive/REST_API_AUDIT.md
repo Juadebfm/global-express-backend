@@ -1,4 +1,6 @@
-# REST API Standards Checklist — Global Express Backend
+# REST API Standards Checklist — Global Express Backend (Archived)
+
+> Historical assessment recorded in June 2026. Route schemas, services, and the OpenAPI document are the current contract.
 
 > Mapped against Postman REST API Best Practices, OWASP API Security Top 10 (2023), RFC 7231/9110 (HTTP), RFC 7807 (Problem Details), RFC 5988 (Web Linking), RFC 8594 (Sunset), RFC 9745 (Deprecation), Standard Webhooks (webhooks.fyi), Microsoft REST API Guidelines, Google API Design Guide.
 >

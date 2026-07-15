@@ -970,12 +970,6 @@ Common query params (where indicated): `from (ISO 8601, default 12 months ago), 
 **Success 200:** `{ "success": true, "data": { "totalOrders": number, "totalUsers": number, "totalRevenue": number } }`.
 **Errors:** 401, 403.
 
-### `GET /api/v1/reports/orders/by-status`
-**Use:** pie chart of orders by status.
-**Auth:** Bearer (admin+).
-**Success 200:** `{ "success": true, "data": [{ "status": string, "count": number }] }`.
-**Errors:** 401, 403.
-
 ### `GET /api/v1/reports/revenue`
 **Use:** revenue trend chart with period-over-period comparison.
 **Auth:** Bearer (superadmin).
@@ -1678,22 +1672,6 @@ File: [src/routes/public.routes.ts](src/routes/public.routes.ts) — All endpoin
 **Query:** `page (default 1)`, `limit (1-100, default 20)`.
 **Success 200:** `{ "success": true, "data": { "data": [<PublicShopListing>], "pagination": { "page", "limit", "total", "totalPages" } } }`.
 
-### `POST /api/v1/public/gallery/claims/presign`
-**Use:** anonymous claimant uploads proof — step 1.
-**CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header. Verify once at the start of the claim flow; the same token is **not** reused across the multi-step upload (tokens are single-use).
-**Payload:** `{ "uploadToken?": "string", "contentType": "application/pdf|image/...", "originalFileName?": "string" }`.
-**Success 200:** `{ "success": true, "data": { "uploadUrl", "r2Key", "publicUrl", "expiresInSeconds", "uploadToken" } }`.
-**Errors:** 422 (CAPTCHA).
-
-**FE Notes:** pass the returned `uploadToken` to subsequent presign + claim submission calls so the server can group multiple uploads into one claim. Re-issue a fresh Turnstile token before each presign call.
-
-### `POST /api/v1/public/gallery/anonymous/:trackingNumber/claim`
-**Use:** anonymous claimant submits an ownership claim for a gallery item.
-**CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header.
-**Payload:** `{ "itemId": "uuid", "fullName": "≥ 2 chars", "email": "...", "phone": "≥ 5 chars", "city?", "country?", "message?", "uploadToken": "string", "proofR2Keys": ["string", ... (1-5)] }`.
-**Success 201:** `{ "success": true, "data": { "item": <GalleryItem>, "claim": <Claim>, "ticket": <Ticket> } }`.
-**Errors:** 400, 404, 409 (item already claimed), 422 (CAPTCHA).
-
 ### `POST /api/v1/public/shop/vehicles/:listingId/inquiries`
 **Use:** anonymous prospect submits a vehicle inquiry without creating an account first.
 **CAPTCHA:** ✅ required — pass token in `cf-turnstile-response` header.
@@ -1750,9 +1728,9 @@ Claim fields: `id, itemId, itemTrackingNumber, itemType, itemTitle, claimType('o
 ### `POST /api/v1/gallery/anonymous/:trackingNumber/claim`
 **Use:** authenticated claimant submits ownership claim. Picks up the user's contact details from their account.
 **Auth:** Bearer.
-**Payload:** `{ "itemId": "uuid", "message?": "string", "uploadToken": "string", "proofR2Keys": ["string", ... (1-5)] }`.
+**Payload:** `{ "itemId": "uuid", "shippingMark?": "string", "message?": "string", "uploadToken?": "string", "proofR2Keys?": ["string", ... (1-5)] }`.
 **Success 201:** `{ "success": true, "data": { "item", "claim", "ticket" } }`.
-**Errors:** 401, 400, 404, 409.
+**Errors:** 401, 403, 400, 404, 409, 422.
 
 ### `POST /api/v1/shop/items/:listingId/inquiries`
 **Use:** authenticated customer inquiry for a general shop item.

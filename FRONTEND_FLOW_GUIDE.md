@@ -472,7 +472,6 @@ FE-friendly shape with `statusLabel`, `senderName`, `packageCount`. Staff+ sees 
 | Action | Method | URL | Role |
 |---|---|---|---|
 | Summary | `GET` | `/api/v1/reports/summary` | Superadmin |
-| Orders by status | `GET` | `/api/v1/reports/orders/by-status` | Admin+ |
 | Revenue analytics | `GET` | `/api/v1/reports/revenue` | Superadmin |
 | Shipment volume | `GET` | `/api/v1/reports/shipment-volume` | Admin+ |
 | Top customers | `GET` | `/api/v1/reports/top-customers` | Admin+ |

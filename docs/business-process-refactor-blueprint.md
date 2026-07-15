@@ -270,7 +270,6 @@ All endpoints below are confirmed implemented and deployed.
 | Delete image (admin+) | `DELETE /api/v1/uploads/images/:imageId` |
 | Payment records **(superadmin)** | `GET /api/v1/payments`, `GET /api/v1/payments/:id` |
 | Record offline payment (staff+) | `POST /api/v1/payments/:orderId/record-offline` |
-| Reports — order counts (admin+, IP-gated) | `GET /api/v1/reports/orders/by-status` |
 | Reports — financial **(superadmin, IP-gated)** | `GET /api/v1/reports/summary`, `GET /api/v1/reports/revenue` |
 | Internal notifications inbox (admin+) | `GET /api/v1/internal/notifications`, `GET /api/v1/internal/notifications/unread-count`, `PATCH /api/v1/internal/notifications/read-all`, `PATCH /api/v1/internal/notifications/:id/read` |
 | Broadcast notification **(superadmin)** | `POST /api/v1/notifications/broadcast` |
@@ -406,7 +405,6 @@ Company financial data (revenue, payment history) is currently visible to all op
 
 - [x] `GET /api/v1/reports/revenue` — changed to `requireSuperAdmin`.
 - [x] `GET /api/v1/reports/summary` — changed to `requireSuperAdmin`.
-- [x] `GET /api/v1/reports/orders/by-status` — kept at `requireAdminOrAbove`. Operational count only.
 
 #### 7.3 Payments — Restrict payment ledger to superadmin
 
@@ -728,7 +726,8 @@ The list endpoint must also filter out broadcasts where the current user has `is
 **Checklist:**
 
 - [x] Add `isDeleted boolean default false` to `notificationReads` in `drizzle/schema/notifications.ts`
-- [x] Run `npx drizzle-kit push --force` to apply schema
+- [x] Applied the schema using Drizzle push at the time (historical); current
+      schema changes use `npm run db:migrate`.
 - [x] Add `deleteNotification(userId, notificationId)` method to `notifications.service.ts`
 - [x] Add `bulkDeleteNotifications(userId, ids[])` method to `notifications.service.ts`
 - [x] Update `list()` query to exclude `isDeleted=true` broadcasts for the current user

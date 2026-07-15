@@ -54,5 +54,5 @@ We periodically engage external security testers under signed agreements. If you
 
 ## Related docs
 
-- [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) — ASVS L2 self-assessment status
+- [Archived ASVS L2 self-assessment](docs/archive/SECURITY_CHECKLIST.md) — historical assessment status
 - [API_ENDPOINTS.md](API_ENDPOINTS.md) — full endpoint reference (auth requirements per route)
