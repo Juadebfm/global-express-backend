@@ -75,18 +75,6 @@ export class ReportsService {
     }
   }
 
-  async getOrdersByStatus() {
-    const result = await db
-      .select({
-        status: orders.statusV2,
-        count: sql<number>`count(*)::int`,
-      })
-      .from(orders)
-      .groupBy(orders.statusV2)
-
-    return result
-  }
-
   // ── 1. Revenue Analytics (enhanced) ─────────────────────────────────────
 
   async getRevenueAnalytics(params: {

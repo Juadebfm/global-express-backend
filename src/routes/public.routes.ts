@@ -369,54 +369,6 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     },
   })
 
-  // POST /gallery/claims/presign — public proof upload URL
-  server.post('/gallery/claims/presign', {
-    preHandler: [requireCaptcha],
-    schema: {
-      tags: ['Public'],
-      summary: 'Generate presigned URL for gallery claim proof upload',
-      body: z.object({
-        uploadToken: z.string().optional(),
-        contentType: z.enum(['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp']),
-        originalFileName: z.string().optional(),
-      }),
-      response: {
-        200: z.object({
-          success: z.literal(true),
-          data: z.object({
-            uploadUrl: z.string().url(),
-            r2Key: z.string(),
-            publicUrl: z.string().url(),
-            expiresInSeconds: z.number(),
-            uploadToken: z.string(),
-          }),
-        }),
-      },
-    },
-    handler: galleryController.generateClaimPresign,
-  })
-
-  // POST /gallery/anonymous/:trackingNumber/claim — retired; claims now require auth
-  server.post('/gallery/anonymous/:trackingNumber/claim', {
-    preHandler: [],
-    schema: {
-      tags: ['Public'],
-      summary: '[RETIRED] Anonymous goods claim — sign in and use /api/v1/gallery/anonymous/:trackingNumber/claim',
-      params: z.object({ trackingNumber: z.string().min(1) }),
-      body: z.object({}).passthrough(),
-      response: {
-        410: z.object({ success: z.literal(false), message: z.string() }),
-      },
-    },
-    handler: async (_request, reply) => {
-      return reply.code(410).send({
-        success: false,
-        message:
-          'Unauthenticated claims are no longer accepted. Please sign in and submit your claim at POST /api/v1/gallery/anonymous/:trackingNumber/claim.',
-      })
-    },
-  })
-
   // POST /d2d/intake — public unauthenticated D2D intake
   server.post('/d2d/intake', {
     preHandler: [requireCaptcha],

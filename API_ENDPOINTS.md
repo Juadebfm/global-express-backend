@@ -970,12 +970,6 @@ Common query params (where indicated): `from (ISO 8601, default 12 months ago), 
 **Success 200:** `{ "success": true, "data": { "totalOrders": number, "totalUsers": number, "totalRevenue": number } }`.
 **Errors:** 401, 403.
 
-### `GET /api/v1/reports/orders/by-status`
-**Use:** pie chart of orders by status.
-**Auth:** Bearer (admin+).
-**Success 200:** `{ "success": true, "data": [{ "status": string, "count": number }] }`.
-**Errors:** 401, 403.
-
 ### `GET /api/v1/reports/revenue`
 **Use:** revenue trend chart with period-over-period comparison.
 **Auth:** Bearer (superadmin).
@@ -1677,19 +1671,6 @@ File: [src/routes/public.routes.ts](src/routes/public.routes.ts) — All endpoin
 **Use:** public general-item inventory for the marketing-site shop.
 **Query:** `page (default 1)`, `limit (1-100, default 20)`.
 **Success 200:** `{ "success": true, "data": { "data": [<PublicShopListing>], "pagination": { "page", "limit", "total", "totalPages" } } }`.
-
-### `POST /api/v1/public/gallery/claims/presign`
-**Use:** legacy public proof-upload helper. New claim journeys should redirect the visitor to the dashboard and use the authenticated endpoint below instead.
-**CAPTCHA:** ✅ required — pass a fresh token in `cf-turnstile-response` for each request.
-**Payload:** `{ "uploadToken?": "string", "contentType": "application/pdf|image/...", "originalFileName?": "string" }`.
-**Success 200:** `{ "success": true, "data": { "uploadUrl", "r2Key", "publicUrl", "expiresInSeconds", "uploadToken" } }`.
-**Errors:** 422 (CAPTCHA).
-
-**FE Notes:** do not start new public claim flows with this endpoint. The public claim submission route is retired.
-
-### `POST /api/v1/public/gallery/anonymous/:trackingNumber/claim`
-**Status:** retired. It returns `410 Gone` and instructs the caller to sign in.
-**Replacement:** `POST /api/v1/gallery/anonymous/:trackingNumber/claim` with customer authentication.
 
 ### `POST /api/v1/public/shop/vehicles/:listingId/inquiries`
 **Use:** anonymous prospect submits a vehicle inquiry without creating an account first.

@@ -270,7 +270,6 @@ All endpoints below are confirmed implemented and deployed.
 | Delete image (admin+) | `DELETE /api/v1/uploads/images/:imageId` |
 | Payment records **(superadmin)** | `GET /api/v1/payments`, `GET /api/v1/payments/:id` |
 | Record offline payment (staff+) | `POST /api/v1/payments/:orderId/record-offline` |
-| Reports — order counts (admin+, IP-gated) | `GET /api/v1/reports/orders/by-status` |
 | Reports — financial **(superadmin, IP-gated)** | `GET /api/v1/reports/summary`, `GET /api/v1/reports/revenue` |
 | Internal notifications inbox (admin+) | `GET /api/v1/internal/notifications`, `GET /api/v1/internal/notifications/unread-count`, `PATCH /api/v1/internal/notifications/read-all`, `PATCH /api/v1/internal/notifications/:id/read` |
 | Broadcast notification **(superadmin)** | `POST /api/v1/notifications/broadcast` |
@@ -406,7 +405,6 @@ Company financial data (revenue, payment history) is currently visible to all op
 
 - [x] `GET /api/v1/reports/revenue` — changed to `requireSuperAdmin`.
 - [x] `GET /api/v1/reports/summary` — changed to `requireSuperAdmin`.
-- [x] `GET /api/v1/reports/orders/by-status` — kept at `requireAdminOrAbove`. Operational count only.
 
 #### 7.3 Payments — Restrict payment ledger to superadmin
 
